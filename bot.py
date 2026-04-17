@@ -55,10 +55,9 @@ def send_to_target(target_chat_id, message, full_text, thread_id=None):
                           caption=full_text, parse_mode="MarkdownV2",
                           message_thread_id=thread_id)
         elif message.sticker:
-            # Поддерживает обычные, анимированные и видео-стикеры
+            # Анимированные стикеры поддерживаются
             bot.send_sticker(target_chat_id, message.sticker.file_id,
                            message_thread_id=thread_id)
-            # Отправляем текст только если это не просто "Медиафайл"
             if full_text and "📎 *Медиафайл*" not in full_text:
                 bot.send_message(target_chat_id, full_text, 
                                parse_mode="MarkdownV2",
@@ -66,40 +65,12 @@ def send_to_target(target_chat_id, message, full_text, thread_id=None):
         elif message.video_note:
             bot.send_video_note(target_chat_id, message.video_note.file_id,
                               message_thread_id=thread_id)
-            if full_text and "📎 *Медиафайл*" not in full_text:
-                bot.send_message(target_chat_id, full_text,
-                               parse_mode="MarkdownV2",
-                               message_thread_id=thread_id)
         elif message.animation:
             bot.send_animation(target_chat_id, message.animation.file_id,
                              caption=full_text, parse_mode="MarkdownV2",
                              message_thread_id=thread_id)
-        elif message.poll:
-            bot.send_poll(target_chat_id, message.poll.question,
-                         [opt.text for opt in message.poll.options],
-                         message_thread_id=thread_id)
-            if full_text and "📎 *Медиафайл*" not in full_text:
-                bot.send_message(target_chat_id, full_text,
-                               parse_mode="MarkdownV2",
-                               message_thread_id=thread_id)
-        elif message.location:
-            bot.send_location(target_chat_id, message.location.latitude,
-                            message.location.longitude,
-                            message_thread_id=thread_id)
-            if full_text and "📎 *Медиафайл*" not in full_text:
-                bot.send_message(target_chat_id, full_text,
-                               parse_mode="MarkdownV2",
-                               message_thread_id=thread_id)
-        elif message.contact:
-            bot.send_contact(target_chat_id, message.contact.phone_number,
-                           message.contact.first_name,
-                           last_name=message.contact.last_name,
-                           message_thread_id=thread_id)
-            if full_text and "📎 *Медиафайл*" not in full_text:
-                bot.send_message(target_chat_id, full_text,
-                               parse_mode="MarkdownV2",
-                               message_thread_id=thread_id)
         else:
+            # Текст и всё остальное
             bot.send_message(target_chat_id, full_text, 
                            parse_mode="MarkdownV2",
                            message_thread_id=thread_id)
@@ -133,17 +104,14 @@ def forward_message(message, target_chat_id, thread_id=None):
 
 # === ОБРАБОТЧИКИ ===
 
-# Из чата A → в тему канала B
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def handle_chat_a(message):
     forward_message(message, CHAT_B, CHAT_B_THREAD)
 
-# Из нужной темы канала B → в чат A
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def handle_chat_b_thread(message):
     forward_message(message, CHAT_A)
 
-# Игнорируем сообщения из других тем канала B
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id != CHAT_B_THREAD)
 def ignore_other_threads(message):
     pass
@@ -172,6 +140,5 @@ if __name__ == "__main__":
     logger.info(f"   Чат A: {CHAT_A}")
     logger.info(f"   Канал B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
-    logger.info(f"   Вебхук: {webhook_url}")
     
     app.run(host="0.0.0.0", port=port)
