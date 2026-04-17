@@ -7,15 +7,12 @@ from telebot import TeleBot, types
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
-RENDER_URL = os.environ.get("RENDER_URL", "")
 
 bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 processed_ids = set()
-DELAY = 1
 
 def get_sender_name(message):
     user = message.from_user
@@ -69,9 +66,9 @@ def forward_message(message, target_chat_id):
         else:
             bot.send_message(target_chat_id, full_text, parse_mode="MarkdownV2")
             
-        time.sleep(DELAY)
+        time.sleep(1)
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logging.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def handle_chat_a(message):
@@ -93,3 +90,9 @@ def webhook():
 @app.route("/", methods=["GET"])
 def healthcheck():
     return "OK", 200
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    bot.remove_webhook()
+    bot.set_webhook(url=f"https://{os.environ.get('RENDER_URL')}/{BOT_TOKEN}")
+    app.run(host="0.0.0.0", port=port)
