@@ -4,13 +4,11 @@ import logging
 from flask import Flask, request
 from telebot import TeleBot, types
 
-# === НАСТРОЙКИ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
-# === ИНИЦИАЛИЗАЦИЯ ===
 bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -96,21 +94,5 @@ def webhook():
 def healthcheck():
     return "OK", 200
 
-# === ЗАПУСК ===
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    
-    # Удаляем старый вебхук и устанавливаем новый
-    try:
-        bot.remove_webhook()
-        if RENDER_URL:
-            bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
-            logger.info(f"Вебхук установлен: {RENDER_URL}/{BOT_TOKEN}")
-    except Exception as e:
-        logger.error(f"Ошибка установки вебхука: {e}")
-    
-    logger.info(f"🤖 Бот запущен | Чат A: {CHAT_A} | Чат B: {CHAT_B}")
-    logger.info(f"Сервер слушает порт: {port}")
-    
-    # Запускаем Flask
-    app.run(host="0.0.0.0", port=port, debug=False)
+# Это важно! Для gunicorn нужна переменная app
+# Она уже есть выше
