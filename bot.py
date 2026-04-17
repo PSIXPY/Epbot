@@ -1,7 +1,6 @@
 import os
 import time
 import logging
-import threading
 from flask import Flask, request
 from telebot import TeleBot, types
 
@@ -9,13 +8,13 @@ from telebot import TeleBot, types
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
-RENDER_URL = os.environ.get("RENDER_URL", "https://твой-сервис.onrender.com")
+RENDER_URL = os.environ.get("RENDER_URL", "")
 
 # === ИНИЦИАЛИЗАЦИЯ ===
 bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
-logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 processed_ids = set()
 DELAY = 1
@@ -69,9 +68,6 @@ def forward_message(message, target_chat_id):
             bot.send_sticker(target_chat_id, message.sticker.file_id)
             if full_text:
                 bot.send_message(target_chat_id, full_text, parse_mode="MarkdownV2")
-        elif message.video_note:
-            bot.send_video_note(target_chat_id, message.video_note.file_id)
-            bot.send_message(target_chat_id, f"📨 **От:** {escape_md(sender)}\n\n🎥 *Видеосообщение*", parse_mode="MarkdownV2")
         else:
             bot.send_message(target_chat_id, full_text, parse_mode="MarkdownV2")
             
@@ -87,7 +83,6 @@ def handle_chat_a(message):
 def handle_chat_b(message):
     forward_message(message, CHAT_A)
 
-# === ВЕБХУК ===
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     if request.headers.get("content-type") == "application/json":
@@ -97,14 +92,25 @@ def webhook():
         return "OK", 200
     return "Bad request", 400
 
-@app.route("/healthcheck", methods=["GET"])
 @app.route("/", methods=["GET"])
 def healthcheck():
     return "OK", 200
 
+# === ЗАПУСК ===
 if __name__ == "__main__":
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
-    logger.info(f"🤖 Бот запущен | Чат A: {CHAT_A} | Чат B: {CHAT_B}")
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    
+    # Удаляем старый вебхук и устанавливаем новый
+    try:
+        bot.remove_webhook()
+        if RENDER_URL:
+            bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
+            logger.info(f"Вебхук установлен: {RENDER_URL}/{BOT_TOKEN}")
+    except Exception as e:
+        logger.error(f"Ошибка установки вебхука: {e}")
+    
+    logger.info(f"🤖 Бот запущен | Чат A: {CHAT_A} | Чат B: {CHAT_B}")
+    logger.info(f"Сервер слушает порт: {port}")
+    
+    # Запускаем Flask
+    app.run(host="0.0.0.0", port=port, debug=False)
