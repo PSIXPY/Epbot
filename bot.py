@@ -1,5 +1,7 @@
 import os
+import time
 import logging
+import threading
 from flask import Flask, request
 from telebot import TeleBot, types
 
@@ -7,18 +9,18 @@ from telebot import TeleBot, types
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
-
-# URL твоего сервиса на Render (будет позже)
 RENDER_URL = os.environ.get("RENDER_URL", "https://твой-сервис.onrender.com")
 
 # === ИНИЦИАЛИЗАЦИЯ ===
 bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 processed_ids = set()
+DELAY = 1
 
-def get_sender_name(message: types.Message) -> str:
+def get_sender_name(message):
     user = message.from_user
     if not user:
         return "Неизвестный"
@@ -29,11 +31,11 @@ def get_sender_name(message: types.Message) -> str:
         return f"{name} (@{user.username})"
     return name
 
-def escape_md(text: str) -> str:
+def escape_md(text):
     special = '_*[]()~`>#+-=|{}.!'
     return ''.join(f'\\{c}' if c in special else c for c in text)
 
-def forward_message(message: types.Message, target_chat_id: int):
+def forward_message(message, target_chat_id):
     if message.message_id in processed_ids:
         return
     processed_ids.add(message.message_id)
@@ -73,6 +75,7 @@ def forward_message(message: types.Message, target_chat_id: int):
         else:
             bot.send_message(target_chat_id, full_text, parse_mode="MarkdownV2")
             
+        time.sleep(DELAY)
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
@@ -95,15 +98,13 @@ def webhook():
     return "Bad request", 400
 
 @app.route("/healthcheck", methods=["GET"])
+@app.route("/", methods=["GET"])
 def healthcheck():
     return "OK", 200
 
-# === ЗАПУСК ===
 if __name__ == "__main__":
-    # Удаляем старый вебхук
     bot.remove_webhook()
-    # Устанавливаем новый
     bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
     logger.info(f"🤖 Бот запущен | Чат A: {CHAT_A} | Чат B: {CHAT_B}")
-    # Запускаем Flask сервер
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
