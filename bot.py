@@ -7,7 +7,7 @@ from telebot import TeleBot, types
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
-CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))  # ID темы (топика)
+CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
 bot = TeleBot(BOT_TOKEN)
@@ -55,10 +55,48 @@ def send_to_target(target_chat_id, message, full_text, thread_id=None):
                           caption=full_text, parse_mode="MarkdownV2",
                           message_thread_id=thread_id)
         elif message.sticker:
+            # Поддерживает обычные, анимированные и видео-стикеры
             bot.send_sticker(target_chat_id, message.sticker.file_id,
                            message_thread_id=thread_id)
-            if full_text:
+            # Отправляем текст только если это не просто "Медиафайл"
+            if full_text and "📎 *Медиафайл*" not in full_text:
                 bot.send_message(target_chat_id, full_text, 
+                               parse_mode="MarkdownV2",
+                               message_thread_id=thread_id)
+        elif message.video_note:
+            bot.send_video_note(target_chat_id, message.video_note.file_id,
+                              message_thread_id=thread_id)
+            if full_text and "📎 *Медиафайл*" not in full_text:
+                bot.send_message(target_chat_id, full_text,
+                               parse_mode="MarkdownV2",
+                               message_thread_id=thread_id)
+        elif message.animation:
+            bot.send_animation(target_chat_id, message.animation.file_id,
+                             caption=full_text, parse_mode="MarkdownV2",
+                             message_thread_id=thread_id)
+        elif message.poll:
+            bot.send_poll(target_chat_id, message.poll.question,
+                         [opt.text for opt in message.poll.options],
+                         message_thread_id=thread_id)
+            if full_text and "📎 *Медиафайл*" not in full_text:
+                bot.send_message(target_chat_id, full_text,
+                               parse_mode="MarkdownV2",
+                               message_thread_id=thread_id)
+        elif message.location:
+            bot.send_location(target_chat_id, message.location.latitude,
+                            message.location.longitude,
+                            message_thread_id=thread_id)
+            if full_text and "📎 *Медиафайл*" not in full_text:
+                bot.send_message(target_chat_id, full_text,
+                               parse_mode="MarkdownV2",
+                               message_thread_id=thread_id)
+        elif message.contact:
+            bot.send_contact(target_chat_id, message.contact.phone_number,
+                           message.contact.first_name,
+                           last_name=message.contact.last_name,
+                           message_thread_id=thread_id)
+            if full_text and "📎 *Медиафайл*" not in full_text:
+                bot.send_message(target_chat_id, full_text,
                                parse_mode="MarkdownV2",
                                message_thread_id=thread_id)
         else:
@@ -108,7 +146,7 @@ def handle_chat_b_thread(message):
 # Игнорируем сообщения из других тем канала B
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id != CHAT_B_THREAD)
 def ignore_other_threads(message):
-    pass  # ничего не делаем
+    pass
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
@@ -126,7 +164,6 @@ def healthcheck():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     
-    # Удаляем старый вебхук и устанавливаем новый
     bot.remove_webhook()
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     bot.set_webhook(url=webhook_url)
