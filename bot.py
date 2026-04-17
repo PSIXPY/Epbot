@@ -7,10 +7,12 @@ from telebot import TeleBot, types
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
+RENDER_URL = os.environ.get("RENDER_URL", "")
 
 bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 processed_ids = set()
 
@@ -68,7 +70,7 @@ def forward_message(message, target_chat_id):
             
         time.sleep(1)
     except Exception as e:
-        logging.error(f"Ошибка: {e}")
+        logger.error(f"Ошибка пересылки: {e}")
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def handle_chat_a(message):
@@ -93,6 +95,19 @@ def healthcheck():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    
+    # Удаляем старый вебхук
     bot.remove_webhook()
-    bot.set_webhook(url=f"https://{os.environ.get('RENDER_URL')}/{BOT_TOKEN}")
+    
+    # Устанавливаем новый вебхук
+    webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
+    logger.info(f"Установка вебхука: {webhook_url}")
+    
+    try:
+        bot.set_webhook(url=webhook_url)
+        logger.info("Вебхук успешно установлен")
+    except Exception as e:
+        logger.error(f"Ошибка установки вебхука: {e}")
+    
+    logger.info(f"🤖 Бот запущен | Чат A: {CHAT_A} | Чат B: {CHAT_B}")
     app.run(host="0.0.0.0", port=port)
