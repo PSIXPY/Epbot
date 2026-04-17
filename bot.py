@@ -93,6 +93,3 @@ def webhook():
 @app.route("/", methods=["GET"])
 def healthcheck():
     return "OK", 200
-
-# Это важно! Для gunicorn нужна переменная app
-# Она уже есть выше
