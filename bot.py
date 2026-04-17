@@ -7,6 +7,7 @@ from telebot import TeleBot, types
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
+CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))  # ID темы (топика)
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
 bot = TeleBot(BOT_TOKEN)
@@ -31,7 +32,44 @@ def escape_md(text):
     special = '_*[]()~`>#+-=|{}.!'
     return ''.join(f'\\{c}' if c in special else c for c in text)
 
-def forward_message(message, target_chat_id):
+def send_to_target(target_chat_id, message, full_text, thread_id=None):
+    try:
+        if message.photo:
+            bot.send_photo(target_chat_id, message.photo[-1].file_id, 
+                          caption=full_text, parse_mode="MarkdownV2",
+                          message_thread_id=thread_id)
+        elif message.video:
+            bot.send_video(target_chat_id, message.video.file_id, 
+                          caption=full_text, parse_mode="MarkdownV2",
+                          message_thread_id=thread_id)
+        elif message.document:
+            bot.send_document(target_chat_id, message.document.file_id, 
+                            caption=full_text, parse_mode="MarkdownV2",
+                            message_thread_id=thread_id)
+        elif message.audio:
+            bot.send_audio(target_chat_id, message.audio.file_id, 
+                          caption=full_text, parse_mode="MarkdownV2",
+                          message_thread_id=thread_id)
+        elif message.voice:
+            bot.send_voice(target_chat_id, message.voice.file_id, 
+                          caption=full_text, parse_mode="MarkdownV2",
+                          message_thread_id=thread_id)
+        elif message.sticker:
+            bot.send_sticker(target_chat_id, message.sticker.file_id,
+                           message_thread_id=thread_id)
+            if full_text:
+                bot.send_message(target_chat_id, full_text, 
+                               parse_mode="MarkdownV2",
+                               message_thread_id=thread_id)
+        else:
+            bot.send_message(target_chat_id, full_text, 
+                           parse_mode="MarkdownV2",
+                           message_thread_id=thread_id)
+        time.sleep(1)
+    except Exception as e:
+        logger.error(f"Ошибка отправки: {e}")
+
+def forward_message(message, target_chat_id, thread_id=None):
     if message.message_id in processed_ids:
         return
     processed_ids.add(message.message_id)
@@ -50,35 +88,27 @@ def forward_message(message, target_chat_id):
             content = "📎 *Медиафайл*"
         
         full_text = header + escape_md(content)
+        send_to_target(target_chat_id, message, full_text, thread_id)
         
-        if message.photo:
-            bot.send_photo(target_chat_id, message.photo[-1].file_id, caption=full_text, parse_mode="MarkdownV2")
-        elif message.video:
-            bot.send_video(target_chat_id, message.video.file_id, caption=full_text, parse_mode="MarkdownV2")
-        elif message.document:
-            bot.send_document(target_chat_id, message.document.file_id, caption=full_text, parse_mode="MarkdownV2")
-        elif message.audio:
-            bot.send_audio(target_chat_id, message.audio.file_id, caption=full_text, parse_mode="MarkdownV2")
-        elif message.voice:
-            bot.send_voice(target_chat_id, message.voice.file_id, caption=full_text, parse_mode="MarkdownV2")
-        elif message.sticker:
-            bot.send_sticker(target_chat_id, message.sticker.file_id)
-            if full_text:
-                bot.send_message(target_chat_id, full_text, parse_mode="MarkdownV2")
-        else:
-            bot.send_message(target_chat_id, full_text, parse_mode="MarkdownV2")
-            
-        time.sleep(1)
     except Exception as e:
         logger.error(f"Ошибка пересылки: {e}")
 
+# === ОБРАБОТЧИКИ ===
+
+# Из чата A → в тему канала B
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def handle_chat_a(message):
-    forward_message(message, CHAT_B)
+    forward_message(message, CHAT_B, CHAT_B_THREAD)
 
-@bot.message_handler(func=lambda m: m.chat.id == CHAT_B)
-def handle_chat_b(message):
+# Из нужной темы канала B → в чат A
+@bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
+def handle_chat_b_thread(message):
     forward_message(message, CHAT_A)
+
+# Игнорируем сообщения из других тем канала B
+@bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id != CHAT_B_THREAD)
+def ignore_other_threads(message):
+    pass  # ничего не делаем
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
@@ -96,18 +126,15 @@ def healthcheck():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     
-    # Удаляем старый вебхук
+    # Удаляем старый вебхук и устанавливаем новый
     bot.remove_webhook()
-    
-    # Устанавливаем новый вебхук
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
-    logger.info(f"Установка вебхука: {webhook_url}")
+    bot.set_webhook(url=webhook_url)
     
-    try:
-        bot.set_webhook(url=webhook_url)
-        logger.info("Вебхук успешно установлен")
-    except Exception as e:
-        logger.error(f"Ошибка установки вебхука: {e}")
+    logger.info(f"🤖 Бот запущен")
+    logger.info(f"   Чат A: {CHAT_A}")
+    logger.info(f"   Канал B: {CHAT_B}")
+    logger.info(f"   Тема B: {CHAT_B_THREAD}")
+    logger.info(f"   Вебхук: {webhook_url}")
     
-    logger.info(f"🤖 Бот запущен | Чат A: {CHAT_A} | Чат B: {CHAT_B}")
     app.run(host="0.0.0.0", port=port)
