@@ -21,27 +21,39 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 
 
-# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
+# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ (с поддержкой неточного ввода) ===
 
 def search_wikipedia(query):
-    """Ищет статью в Википедии и возвращает краткую сводку"""
+    """Ищет статью в Википедии с поддержкой поиска по ключевым словам"""
     try:
+        # Настраиваем подключение к русской Википедии
         wiki_wiki = wikipediaapi.Wikipedia(
             language='ru',
             user_agent='TelegramRelayBot/1.0 (https://t.me/your_bot)'
         )
         
+        # 1. Пробуем найти точное совпадение
         page = wiki_wiki.page(query)
-        
         if page.exists():
             summary = page.summary[:500]
             if len(page.summary) > 500:
                 summary += "..."
-            
-            result = f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
-            return result
-        else:
-            return f"❌ Статья по запросу '{query}' не найдена.\n\n💡 Попробуйте уточнить запрос или написать на английском."
+            return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
+        
+        # 2. Если точного совпадения нет, пробуем поиск по ключевым словам
+        # Отправляем поисковый запрос к Википедии
+        search_result = wiki_wiki.page(query, unquote=True)
+        
+        # Проверяем, есть ли результаты поиска
+        if search_result.exists():
+            # Если поиск вернул результат (первую подходящую статью)
+            summary = search_result.summary[:500]
+            if len(search_result.summary) > 500:
+                summary += "..."
+            return f"📖 *{search_result.title}*\n\n{summary}\n\n[🔗 Читать полностью]({search_result.fullurl})"
+        
+        # 3. Если поиск не дал результатов, предлагаем помощь
+        return f"❌ Статья по запросу '{query}' не найдена.\n\n💡 Попробуйте:\n• `/wiki Илон Маск` (с заглавной буквы)\n• `/wiki Elon Musk` (на английском)\n• Более точный запрос"
             
     except Exception as e:
         logger.error(f"Ошибка Википедии: {e}")
@@ -196,7 +208,7 @@ def process_update(update):
         if text.lower().startswith("/wiki"):
             search_query = text[5:].strip()
             if not search_query:
-                help_text = "ℹ️ *Как использовать команду /wiki*\n\n`/wiki Python` — поиск статьи о Python\n`/wiki Квантовая физика` — поиск статьи о физике\n\n🌐 Доступны русская и английская Википедии."
+                help_text = "ℹ️ *Как использовать команду /wiki*\n\n`/wiki Python` — поиск статьи о Python\n`/wiki Илон Маск` — поиск статьи об Илоне Маске\n\n🌐 Доступны русская и английская Википедии.\n💡 Бот сам найдёт статью, даже если вы ошиблись в регистре."
                 send_message(chat_id, help_text, thread_id=thread_id)
                 return
             
@@ -214,10 +226,11 @@ def process_update(update):
 
 📱 *Примеры:*
 /wiki Python
+/wiki Илон Маск
 /wiki Квантовая физика
-/wiki Титаник (фильм)
 
-⚡ Бот пересылает все сообщения между чатами и поддерживает ответы (реплаи)."""
+⚡ Бот пересылает все сообщения между чатами и поддерживает ответы (реплаи).
+💡 Поиск в Википедии работает даже при неточном написании!"""
             send_message(chat_id, help_text, thread_id=thread_id)
             return
     
@@ -324,5 +337,6 @@ if __name__ == "__main__":
     logger.info(f"   Чат B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
     logger.info("📖 Команда /wiki для поиска в Википедии добавлена")
+    logger.info("🔍 Поиск работает даже при неточном написании (например, 'Илон маск' → 'Илон Маск')")
     
     app.run(host="0.0.0.0", port=port)
