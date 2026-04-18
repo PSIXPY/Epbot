@@ -1,7 +1,7 @@
 import os
 import logging
 from flask import Flask, request
-from telebot import TeleBot, types  # <-- важно!
+from telebot import TeleBot, types
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
@@ -14,27 +14,35 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ПРОСТАЯ ПЕРЕСЫЛКА ВСЕГО
 @bot.message_handler(func=lambda m: True)
 def forward_all(message):
-    logger.info(f"СООБЩЕНИЕ | Чат: {message.chat.id} | Тип: {message.content_type} | Тред: {message.message_thread_id}")
+    logger.info(f"📥 СООБЩЕНИЕ | Чат: {message.chat.id} | Тип: {message.content_type} | Тред: {message.message_thread_id}")
     
     # Определяем куда пересылать
     if message.chat.id == CHAT_A:
         target = CHAT_B
         thread = CHAT_B_THREAD
+        logger.info(f"→ Отправляем в чат B (тема {thread})")
     elif message.chat.id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
         target = CHAT_A
         thread = None
+        logger.info(f"→ Отправляем в чат A")
     else:
-        logger.info(f"Игнорируем (не тот чат или тема)")
+        logger.info(f"⏭ Игнорируем (не тот чат или тема)")
         return
     
     try:
-        bot.forward_message(target, message.chat.id, message.message_id, message_thread_id=thread)
+        # Пересылаем оригинальное сообщение (сохраняет всё: фото, видео, голосовые)
+        bot.forward_message(
+            chat_id=target,
+            from_chat_id=message.chat.id,
+            message_id=message.message_id,
+            message_thread_id=thread
+        )
         logger.info(f"✅ Переслано в {target}")
+        
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        logger.error(f"❌ Ошибка пересылки: {e}")
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
@@ -51,7 +59,13 @@ def healthcheck():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    
     bot.remove_webhook()
     bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
-    logger.info("БОТ ЗАПУЩЕН")
+    
+    logger.info("🤖 БОТ ЗАПУЩЕН (пересылает всё)")
+    logger.info(f"   Чат A: {CHAT_A}")
+    logger.info(f"   Чат B: {CHAT_B}")
+    logger.info(f"   Тема B: {CHAT_B_THREAD}")
+    
     app.run(host="0.0.0.0", port=port)
