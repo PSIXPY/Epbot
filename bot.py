@@ -14,86 +14,104 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Базовый URL Telegram API
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
+# Хранилище связей между сообщениями (для ответов)
+message_links = {}
+
+def get_sender_name(sender):
+    """Возвращает имя отправителя"""
+    if not sender:
+        return "Неизвестный"
+    name = f"{sender.get('first_name', '')} {sender.get('last_name', '')}".strip()
+    if not name:
+        name = sender.get('username', 'Пользователь')
+    if sender.get('username'):
+        return f"{name} (@{sender['username']})"
+    return name
+
 def send_message(chat_id, text, reply_to=None, thread_id=None):
-    """Отправляет текстовое сообщение"""
     url = f"{API_URL}/sendMessage"
-    data = {
-        "chat_id": chat_id,
-        "text": text,
-        "message_thread_id": thread_id
-    }
+    data = {"chat_id": chat_id, "text": text, "message_thread_id": thread_id}
     if reply_to:
         data["reply_to_message_id"] = reply_to
     try:
         response = requests.post(url, data=data, timeout=10)
-        logger.info(f"Текст отправлен: {response.status_code}")
-        return response.json()
+        result = response.json()
+        if result.get("ok"):
+            return result["result"]["message_id"]
+        return None
     except Exception as e:
         logger.error(f"Ошибка отправки текста: {e}")
         return None
 
 def send_photo(chat_id, file_id, caption=None, reply_to=None, thread_id=None):
-    """Отправляет фото"""
     url = f"{API_URL}/sendPhoto"
-    data = {
-        "chat_id": chat_id,
-        "photo": file_id,
-        "message_thread_id": thread_id
-    }
+    data = {"chat_id": chat_id, "photo": file_id, "message_thread_id": thread_id}
     if caption:
         data["caption"] = caption
     if reply_to:
         data["reply_to_message_id"] = reply_to
     try:
         response = requests.post(url, data=data, timeout=10)
-        logger.info(f"Фото отправлено: {response.status_code}")
-        return response.json()
+        result = response.json()
+        if result.get("ok"):
+            return result["result"]["message_id"]
+        return None
     except Exception as e:
         logger.error(f"Ошибка отправки фото: {e}")
         return None
 
 def send_voice(chat_id, file_id, caption=None, reply_to=None, thread_id=None):
-    """Отправляет голосовое сообщение"""
     url = f"{API_URL}/sendVoice"
-    data = {
-        "chat_id": chat_id,
-        "voice": file_id,
-        "message_thread_id": thread_id
-    }
+    data = {"chat_id": chat_id, "voice": file_id, "message_thread_id": thread_id}
     if caption:
         data["caption"] = caption
     if reply_to:
         data["reply_to_message_id"] = reply_to
     try:
         response = requests.post(url, data=data, timeout=10)
-        logger.info(f"Голосовое отправлено: {response.status_code}")
-        return response.json()
+        result = response.json()
+        if result.get("ok"):
+            return result["result"]["message_id"]
+        return None
     except Exception as e:
         logger.error(f"Ошибка отправки голосового: {e}")
         return None
 
-def forward_message(from_chat, to_chat, message_id, thread_id=None):
-    """Пересылает сообщение"""
-    url = f"{API_URL}/forwardMessage"
-    data = {
-        "chat_id": to_chat,
-        "from_chat_id": from_chat,
-        "message_id": message_id,
-        "message_thread_id": thread_id
-    }
+def send_video(chat_id, file_id, caption=None, reply_to=None, thread_id=None):
+    url = f"{API_URL}/sendVideo"
+    data = {"chat_id": chat_id, "video": file_id, "message_thread_id": thread_id}
+    if caption:
+        data["caption"] = caption
+    if reply_to:
+        data["reply_to_message_id"] = reply_to
     try:
         response = requests.post(url, data=data, timeout=10)
-        logger.info(f"Переслано: {response.status_code}")
-        return response.json()
+        result = response.json()
+        if result.get("ok"):
+            return result["result"]["message_id"]
+        return None
     except Exception as e:
-        logger.error(f"Ошибка пересылки: {e}")
+        logger.error(f"Ошибка отправки видео: {e}")
+        return None
+
+def send_sticker(chat_id, file_id, reply_to=None, thread_id=None):
+    url = f"{API_URL}/sendSticker"
+    data = {"chat_id": chat_id, "sticker": file_id, "message_thread_id": thread_id}
+    if reply_to:
+        data["reply_to_message_id"] = reply_to
+    try:
+        response = requests.post(url, data=data, timeout=10)
+        result = response.json()
+        if result.get("ok"):
+            return result["result"]["message_id"]
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка отправки стикера: {e}")
         return None
 
 def process_update(update):
-    """Обрабатывает входящее обновление"""
     if "message" not in update:
         return
     
@@ -108,55 +126,110 @@ def process_update(update):
     if chat_id == CHAT_A:
         target = CHAT_B
         target_thread = CHAT_B_THREAD
-        logger.info(f"→ Отправляем в чат B")
+        is_from_a = True
     elif chat_id == CHAT_B and thread_id == CHAT_B_THREAD:
         target = CHAT_A
         target_thread = None
-        logger.info(f"→ Отправляем в чат A")
+        is_from_a = False
     else:
         logger.info(f"⏭ Игнорируем")
         return
     
     # Получаем отправителя
     sender = message.get("from", {})
-    sender_name = f"{sender.get('first_name', '')} {sender.get('last_name', '')}".strip()
-    if not sender_name:
-        sender_name = sender.get("username", "Пользователь")
+    sender_name = get_sender_name(sender)
     
-    caption_text = f"📨 От: {sender_name}"
+    # Проверяем, отвечает ли пользователь на чьё-то сообщение
+    reply_to_id = None
+    reply_to_name = None
     
-    # Обрабатываем разные типы сообщений
+    if "reply_to_message" in message:
+        reply_msg = message["reply_to_message"]
+        original_msg_id = reply_msg["message_id"]
+        original_chat_id = reply_msg["chat"]["id"]
+        
+        # Ищем связь в хранилище
+        link_key = f"{original_chat_id}:{original_msg_id}"
+        if link_key in message_links:
+            reply_to_id = message_links[link_key]
+            if "from" in reply_msg:
+                reply_to_name = get_sender_name(reply_msg["from"])
+    
+    # Формируем подпись
+    if reply_to_name:
+        caption_text = f"📨 {sender_name} ответил(а) {reply_to_name}"
+    else:
+        caption_text = f"📨 От: {sender_name}"
+    
+    # Получаем содержимое
+    content_text = ""
+    if "caption" in message:
+        content_text = message["caption"]
+    elif "text" in message:
+        content_text = message["text"]
+    
+    full_caption = f"{caption_text}\n\n{content_text}" if content_text else caption_text
+    
+    # Отправляем в зависимости от типа
+    sent_msg_id = None
+    
     if "photo" in message:
         file_id = message["photo"][-1]["file_id"]
-        caption = message.get("caption", "")
-        full_caption = f"{caption_text}\n\n{caption}" if caption else caption_text
-        send_photo(target, file_id, full_caption, thread_id=target_thread)
+        sent_msg_id = send_photo(target, file_id, full_caption, reply_to_id, target_thread)
     
     elif "voice" in message:
         file_id = message["voice"]["file_id"]
-        caption = message.get("caption", "")
-        full_caption = f"{caption_text}\n\n{caption}" if caption else caption_text
-        send_voice(target, file_id, full_caption, thread_id=target_thread)
+        sent_msg_id = send_voice(target, file_id, full_caption, reply_to_id, target_thread)
     
     elif "video" in message:
         file_id = message["video"]["file_id"]
-        caption = message.get("caption", "")
-        full_caption = f"{caption_text}\n\n{caption}" if caption else caption_text
-        send_photo(target, file_id, full_caption, thread_id=target_thread)
+        sent_msg_id = send_video(target, file_id, full_caption, reply_to_id, target_thread)
+    
+    elif "sticker" in message:
+        file_id = message["sticker"]["file_id"]
+        sent_msg_id = send_sticker(target, file_id, reply_to_id, target_thread)
+        # Для стикеров отправляем подпись отдельно
+        if caption_text:
+            send_message(target, caption_text, sent_msg_id, target_thread)
     
     elif "text" in message:
-        text = f"{caption_text}\n\n{message['text']}"
-        send_message(target, text, thread_id=target_thread)
+        sent_msg_id = send_message(target, full_caption, reply_to_id, target_thread)
     
     else:
-        # Пересылаем остальные типы (стикеры, документы и т.д.)
-        forward_message(chat_id, target, message_id, target_thread)
+        # Пересылаем остальные типы
+        url = f"{API_URL}/forwardMessage"
+        data = {
+            "chat_id": target,
+            "from_chat_id": chat_id,
+            "message_id": message_id,
+            "message_thread_id": target_thread
+        }
+        if reply_to_id:
+            data["reply_to_message_id"] = reply_to_id
+        response = requests.post(url, data=data, timeout=10)
+        result = response.json()
+        if result.get("ok"):
+            sent_msg_id = result["result"]["message_id"]
+    
+    # Сохраняем связь для будущих ответов
+    if sent_msg_id:
+        source_key = f"{chat_id}:{message_id}"
+        target_key = f"{target}:{sent_msg_id}"
+        message_links[source_key] = sent_msg_id
+        message_links[target_key] = message_id
+        
+        # Очищаем старые связи (оставляем последние 1000)
+        if len(message_links) > 2000:
+            keys = list(message_links.keys())[:1000]
+            for key in keys:
+                del message_links[key]
+    
+    logger.info(f"✅ Обработано")
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
-        logger.info(f"Webhook вызван")
         process_update(update)
         return "OK", 200
     except Exception as e:
@@ -167,13 +240,6 @@ def webhook():
 def healthcheck():
     return "OK", 200
 
-@app.route("/set_webhook", methods=["GET"])
-def set_webhook():
-    """Временный эндпоинт для установки вебхука"""
-    url = f"{API_URL}/setWebhook?url={RENDER_URL}/{BOT_TOKEN}"
-    response = requests.get(url)
-    return response.json()
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     
@@ -181,10 +247,9 @@ if __name__ == "__main__":
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     requests.get(f"{API_URL}/setWebhook?url={webhook_url}")
     
-    logger.info("🤖 БОТ ЗАПУЩЕН (чистый API)")
+    logger.info("🤖 БОТ ЗАПУЩЕН (с поддержкой ответов)")
     logger.info(f"   Чат A: {CHAT_A}")
     logger.info(f"   Чат B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
-    logger.info(f"   Вебхук: {webhook_url}")
     
     app.run(host="0.0.0.0", port=port)
