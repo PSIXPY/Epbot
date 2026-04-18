@@ -55,19 +55,38 @@ def send_to_target(target_chat_id, message, full_text, thread_id=None):
                           caption=full_text, parse_mode="MarkdownV2",
                           message_thread_id=thread_id)
         elif message.sticker:
-            # ПЕРЕСЫЛАЕМ стикер (это работает!)
-            bot.forward_message(
-                chat_id=target_chat_id,
-                from_chat_id=message.chat.id,
-                message_id=message.message_id,
-                message_thread_id=thread_id
-            )
+            # ОТЛАДКА СТИКЕРА
+            logger.info(f"=== НАЙДЕН СТИКЕР ===")
+            logger.info(f"File ID: {message.sticker.file_id}")
+            logger.info(f"Target чат: {target_chat_id}")
+            logger.info(f"Thread ID: {thread_id}")
+            logger.info(f"Есть ли подпись: {full_text[:50] if full_text else 'Нет'}")
+            
+            # Пересылаем стикер
+            try:
+                bot.forward_message(
+                    chat_id=target_chat_id,
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id,
+                    message_thread_id=thread_id
+                )
+                logger.info(f"✅ Стикер УСПЕШНО переслан!")
+            except Exception as e:
+                logger.error(f"❌ Ошибка при пересылке стикера: {e}")
+            
             # Отправляем подпись отдельно
             if full_text and "📎 *Медиафайл*" not in full_text:
-                time.sleep(0.3)
-                bot.send_message(target_chat_id, full_text, 
-                               parse_mode="MarkdownV2",
-                               message_thread_id=thread_id)
+                try:
+                    time.sleep(0.5)
+                    bot.send_message(target_chat_id, full_text, 
+                                   parse_mode="MarkdownV2",
+                                   message_thread_id=thread_id)
+                    logger.info(f"✅ Подпись отправлена")
+                except Exception as e:
+                    logger.error(f"❌ Ошибка отправки подписи: {e}")
+            else:
+                logger.info(f"Подпись не требуется (пустая или медиафайл)")
+                
         elif message.video_note:
             bot.send_video_note(target_chat_id, message.video_note.file_id,
                               message_thread_id=thread_id)
@@ -115,15 +134,20 @@ def forward_message(message, target_chat_id, thread_id=None):
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def handle_chat_a(message):
+    logger.info(f"Сообщение из чата A: {message.chat.id}")
     forward_message(message, CHAT_B, CHAT_B_THREAD)
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def handle_chat_b_thread(message):
+    logger.info(f"Сообщение из темы B: {message.chat.id}, Thread: {message.message_thread_id}")
     forward_message(message, CHAT_A)
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id != CHAT_B_THREAD)
 def ignore_other_threads(message):
+    logger.info(f"Игнорируем другую тему: {message.message_thread_id}")
     pass
+
+# === ВЕБХУК ===
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
@@ -149,5 +173,6 @@ if __name__ == "__main__":
     logger.info(f"   Чат A: {CHAT_A}")
     logger.info(f"   Канал B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
+    logger.info(f"   Вебхук: {webhook_url}")
     
     app.run(host="0.0.0.0", port=port)
