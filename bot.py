@@ -2,7 +2,10 @@ import os
 import logging
 import json
 import requests
+import urllib.parse
+import wikipediaapi
 from flask import Flask, request
+from datetime import datetime, timedelta
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
@@ -15,12 +18,39 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-
-# Хранилище связей между сообщениями (для ответов)
 message_links = {}
 
+
+# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
+
+def search_wikipedia(query):
+    """Ищет статью в Википедии и возвращает краткую сводку"""
+    try:
+        wiki_wiki = wikipediaapi.Wikipedia(
+            language='ru',
+            user_agent='TelegramRelayBot/1.0 (https://t.me/your_bot)'
+        )
+        
+        page = wiki_wiki.page(query)
+        
+        if page.exists():
+            summary = page.summary[:500]
+            if len(page.summary) > 500:
+                summary += "..."
+            
+            result = f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
+            return result
+        else:
+            return f"❌ Статья по запросу '{query}' не найдена.\n\n💡 Попробуйте уточнить запрос или написать на английском."
+            
+    except Exception as e:
+        logger.error(f"Ошибка Википедии: {e}")
+        return "❌ Произошла ошибка при поиске. Попробуйте позже."
+
+
+# === ОСНОВНЫЕ ФУНКЦИИ БОТА ===
+
 def get_sender_name(sender):
-    """Возвращает имя отправителя"""
     if not sender:
         return "Неизвестный"
     name = f"{sender.get('first_name', '')} {sender.get('last_name', '')}".strip()
@@ -111,6 +141,27 @@ def send_sticker(chat_id, file_id, reply_to=None, thread_id=None):
         logger.error(f"Ошибка отправки стикера: {e}")
         return None
 
+def forward_message(from_chat, to_chat, message_id, thread_id=None):
+    url = f"{API_URL}/forwardMessage"
+    data = {
+        "chat_id": to_chat,
+        "from_chat_id": from_chat,
+        "message_id": message_id,
+        "message_thread_id": thread_id
+    }
+    try:
+        response = requests.post(url, data=data, timeout=10)
+        result = response.json()
+        if result.get("ok"):
+            return result["result"]["message_id"]
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка пересылки: {e}")
+        return None
+
+
+# === ОСНОВНОЙ ОБРАБОТЧИК ===
+
 def process_update(update):
     if "message" not in update:
         return
@@ -126,11 +177,9 @@ def process_update(update):
     if chat_id == CHAT_A:
         target = CHAT_B
         target_thread = CHAT_B_THREAD
-        is_from_a = True
     elif chat_id == CHAT_B and thread_id == CHAT_B_THREAD:
         target = CHAT_A
         target_thread = None
-        is_from_a = False
     else:
         logger.info(f"⏭ Игнорируем")
         return
@@ -139,7 +188,40 @@ def process_update(update):
     sender = message.get("from", {})
     sender_name = get_sender_name(sender)
     
-    # Проверяем, отвечает ли пользователь на чьё-то сообщение
+    # === ОБРАБОТКА КОМАНД ===
+    if "text" in message:
+        text = message["text"]
+        
+        # КОМАНДА /wiki
+        if text.lower().startswith("/wiki"):
+            search_query = text[5:].strip()
+            if not search_query:
+                help_text = "ℹ️ *Как использовать команду /wiki*\n\n`/wiki Python` — поиск статьи о Python\n`/wiki Квантовая физика` — поиск статьи о физике\n\n🌐 Доступны русская и английская Википедии."
+                send_message(chat_id, help_text, thread_id=thread_id)
+                return
+            
+            send_message(chat_id, f"🔍 Ищу *{search_query}* в Википедии...\n⏳ Пожалуйста, подождите.", thread_id=thread_id)
+            result = search_wikipedia(search_query)
+            send_message(chat_id, result, thread_id=thread_id)
+            return
+        
+        # КОМАНДА /help
+        if text.lower() in ["/help", "/start"]:
+            help_text = """📖 *Доступные команды*
+
+/wiki [запрос] — поиск в Википедии
+/help — показать эту справку
+
+📱 *Примеры:*
+/wiki Python
+/wiki Квантовая физика
+/wiki Титаник (фильм)
+
+⚡ Бот пересылает все сообщения между чатами и поддерживает ответы (реплаи)."""
+            send_message(chat_id, help_text, thread_id=thread_id)
+            return
+    
+    # === ПРОВЕРКА ОТВЕТОВ (РЕПЛАЕВ) ===
     reply_to_id = None
     reply_to_name = None
     
@@ -148,7 +230,6 @@ def process_update(update):
         original_msg_id = reply_msg["message_id"]
         original_chat_id = reply_msg["chat"]["id"]
         
-        # Ищем связь в хранилище
         link_key = f"{original_chat_id}:{original_msg_id}"
         if link_key in message_links:
             reply_to_id = message_links[link_key]
@@ -170,7 +251,7 @@ def process_update(update):
     
     full_caption = f"{caption_text}\n\n{content_text}" if content_text else caption_text
     
-    # Отправляем в зависимости от типа
+    # === ОТПРАВКА В ЗАВИСИМОСТИ ОТ ТИПА ===
     sent_msg_id = None
     
     if "photo" in message:
@@ -188,7 +269,6 @@ def process_update(update):
     elif "sticker" in message:
         file_id = message["sticker"]["file_id"]
         sent_msg_id = send_sticker(target, file_id, reply_to_id, target_thread)
-        # Для стикеров отправляем подпись отдельно
         if caption_text:
             send_message(target, caption_text, sent_msg_id, target_thread)
     
@@ -196,35 +276,24 @@ def process_update(update):
         sent_msg_id = send_message(target, full_caption, reply_to_id, target_thread)
     
     else:
-        # Пересылаем остальные типы
-        url = f"{API_URL}/forwardMessage"
-        data = {
-            "chat_id": target,
-            "from_chat_id": chat_id,
-            "message_id": message_id,
-            "message_thread_id": target_thread
-        }
-        if reply_to_id:
-            data["reply_to_message_id"] = reply_to_id
-        response = requests.post(url, data=data, timeout=10)
-        result = response.json()
-        if result.get("ok"):
-            sent_msg_id = result["result"]["message_id"]
+        sent_msg_id = forward_message(chat_id, target, message_id, target_thread)
     
-    # Сохраняем связь для будущих ответов
+    # Сохраняем связь для ответов
     if sent_msg_id:
         source_key = f"{chat_id}:{message_id}"
         target_key = f"{target}:{sent_msg_id}"
         message_links[source_key] = sent_msg_id
         message_links[target_key] = message_id
         
-        # Очищаем старые связи (оставляем последние 1000)
         if len(message_links) > 2000:
             keys = list(message_links.keys())[:1000]
             for key in keys:
                 del message_links[key]
     
     logger.info(f"✅ Обработано")
+
+
+# === ВЕБХУК ===
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
@@ -240,6 +309,9 @@ def webhook():
 def healthcheck():
     return "OK", 200
 
+
+# === ЗАПУСК ===
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     
@@ -247,9 +319,10 @@ if __name__ == "__main__":
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     requests.get(f"{API_URL}/setWebhook?url={webhook_url}")
     
-    logger.info("🤖 БОТ ЗАПУЩЕН (с поддержкой ответов)")
+    logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"   Чат A: {CHAT_A}")
     logger.info(f"   Чат B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
+    logger.info("📖 Команда /wiki для поиска в Википедии добавлена")
     
     app.run(host="0.0.0.0", port=port)
