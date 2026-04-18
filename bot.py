@@ -4,14 +4,12 @@ import logging
 from flask import Flask, request
 from telebot import TeleBot, types
 
-# === КОНФИГУРАЦИЯ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
 CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
-# === ИНИЦИАЛИЗАЦИЯ ===
 bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -34,8 +32,62 @@ def escape_md(text):
     special = '_*[]()~`>#+-=|{}.!'
     return ''.join(f'\\{c}' if c in special else c for c in text)
 
+def send_to_target(target_chat_id, message, full_text, thread_id=None):
+    try:
+        if message.photo:
+            bot.send_photo(target_chat_id, message.photo[-1].file_id, 
+                          caption=full_text, parse_mode="MarkdownV2",
+                          message_thread_id=thread_id)
+        elif message.video:
+            bot.send_video(target_chat_id, message.video.file_id, 
+                          caption=full_text, parse_mode="MarkdownV2",
+                          message_thread_id=thread_id)
+        elif message.document:
+            bot.send_document(target_chat_id, message.document.file_id, 
+                            caption=full_text, parse_mode="MarkdownV2",
+                            message_thread_id=thread_id)
+        elif message.audio:
+            bot.send_audio(target_chat_id, message.audio.file_id, 
+                          caption=full_text, parse_mode="MarkdownV2",
+                          message_thread_id=thread_id)
+        elif message.voice:
+            bot.send_voice(target_chat_id, message.voice.file_id, 
+                          caption=full_text, parse_mode="MarkdownV2",
+                          message_thread_id=thread_id)
+        elif message.sticker:
+            # ПЕРЕСЫЛАЕМ стикер (это работает!)
+            bot.forward_message(
+                chat_id=target_chat_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id,
+                message_thread_id=thread_id
+            )
+            # Отправляем подпись отдельно
+            if full_text and "📎 *Медиафайл*" not in full_text:
+                time.sleep(0.3)
+                bot.send_message(target_chat_id, full_text, 
+                               parse_mode="MarkdownV2",
+                               message_thread_id=thread_id)
+        elif message.video_note:
+            bot.send_video_note(target_chat_id, message.video_note.file_id,
+                              message_thread_id=thread_id)
+            if full_text and "📎 *Медиафайл*" not in full_text:
+                bot.send_message(target_chat_id, full_text,
+                               parse_mode="MarkdownV2",
+                               message_thread_id=thread_id)
+        elif message.animation:
+            bot.send_animation(target_chat_id, message.animation.file_id,
+                             caption=full_text, parse_mode="MarkdownV2",
+                             message_thread_id=thread_id)
+        else:
+            bot.send_message(target_chat_id, full_text, 
+                           parse_mode="MarkdownV2",
+                           message_thread_id=thread_id)
+        time.sleep(1)
+    except Exception as e:
+        logger.error(f"Ошибка отправки: {e}")
+
 def forward_message(message, target_chat_id, thread_id=None):
-    """Пересылает сообщение и добавляет подпись отправителя"""
     if message.message_id in processed_ids:
         return
     processed_ids.add(message.message_id)
@@ -43,142 +95,21 @@ def forward_message(message, target_chat_id, thread_id=None):
         processed_ids.clear()
     
     try:
-        # Формируем подпись
         sender = get_sender_name(message)
-        caption_text = f"📨 **От:** {escape_md(sender)}"
+        header = f"📨 **От:** {escape_md(sender)}\n\n"
         
-        # Для стикеров: пересылаем + подпись отдельно
-        if message.sticker:
-            # Пересылаем стикер
-            bot.forward_message(
-                chat_id=target_chat_id,
-                from_chat_id=message.chat.id,
-                message_id=message.message_id,
-                message_thread_id=thread_id
-            )
-            # Отправляем подпись отдельным сообщением
-            bot.send_message(
-                target_chat_id,
-                caption_text,
-                parse_mode="MarkdownV2",
-                message_thread_id=thread_id
-            )
-        
-        # Для фото с подписью
-        elif message.photo:
-            if message.caption:
-                full_text = caption_text + "\n\n" + escape_md(message.caption)
-            else:
-                full_text = caption_text
-            bot.send_photo(
-                target_chat_id,
-                message.photo[-1].file_id,
-                caption=full_text,
-                parse_mode="MarkdownV2",
-                message_thread_id=thread_id
-            )
-        
-        # Для видео
-        elif message.video:
-            if message.caption:
-                full_text = caption_text + "\n\n" + escape_md(message.caption)
-            else:
-                full_text = caption_text
-            bot.send_video(
-                target_chat_id,
-                message.video.file_id,
-                caption=full_text,
-                parse_mode="MarkdownV2",
-                message_thread_id=thread_id
-            )
-        
-        # Для документов
-        elif message.document:
-            if message.caption:
-                full_text = caption_text + "\n\n" + escape_md(message.caption)
-            else:
-                full_text = caption_text
-            bot.send_document(
-                target_chat_id,
-                message.document.file_id,
-                caption=full_text,
-                parse_mode="MarkdownV2",
-                message_thread_id=thread_id
-            )
-        
-        # Для аудио
-        elif message.audio:
-            if message.caption:
-                full_text = caption_text + "\n\n" + escape_md(message.caption)
-            else:
-                full_text = caption_text
-            bot.send_audio(
-                target_chat_id,
-                message.audio.file_id,
-                caption=full_text,
-                parse_mode="MarkdownV2",
-                message_thread_id=thread_id
-            )
-        
-        # Для голосовых
-        elif message.voice:
-            if message.caption:
-                full_text = caption_text + "\n\n" + escape_md(message.caption)
-            else:
-                full_text = caption_text
-            bot.send_voice(
-                target_chat_id,
-                message.voice.file_id,
-                caption=full_text,
-                parse_mode="MarkdownV2",
-                message_thread_id=thread_id
-            )
-        
-        # Для GIF
-        elif message.animation:
-            if message.caption:
-                full_text = caption_text + "\n\n" + escape_md(message.caption)
-            else:
-                full_text = caption_text
-            bot.send_animation(
-                target_chat_id,
-                message.animation.file_id,
-                caption=full_text,
-                parse_mode="MarkdownV2",
-                message_thread_id=thread_id
-            )
-        
-        # Для видеосообщений (кружочки)
-        elif message.video_note:
-            bot.send_video_note(
-                target_chat_id,
-                message.video_note.file_id,
-                message_thread_id=thread_id
-            )
-            bot.send_message(
-                target_chat_id,
-                caption_text,
-                parse_mode="MarkdownV2",
-                message_thread_id=thread_id
-            )
-        
-        # Для текста и всего остального
+        if message.caption:
+            content = message.caption
+        elif message.text:
+            content = message.text
         else:
-            if message.text:
-                full_text = caption_text + "\n\n" + escape_md(message.text)
-            else:
-                full_text = caption_text
-            bot.send_message(
-                target_chat_id,
-                full_text,
-                parse_mode="MarkdownV2",
-                message_thread_id=thread_id
-            )
+            content = "📎 *Медиафайл*"
         
-        time.sleep(1)
+        full_text = header + escape_md(content)
+        send_to_target(target_chat_id, message, full_text, thread_id)
         
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"Ошибка пересылки: {e}")
 
 # === ОБРАБОТЧИКИ ===
 
@@ -193,8 +124,6 @@ def handle_chat_b_thread(message):
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id != CHAT_B_THREAD)
 def ignore_other_threads(message):
     pass
-
-# === ВЕБХУК ===
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
