@@ -1,7 +1,6 @@
 import os
 import time
 import logging
-import re
 from flask import Flask, request
 from telebot import TeleBot, types
 
@@ -28,16 +27,6 @@ def get_sender_name(user):
         return f"{name} (@{user.username})"
     return name
 
-def escape_md(text):
-    """Экранирует все спецсимволы для MarkdownV2"""
-    if not text:
-        return text
-    # Все спецсимволы Telegram MarkdownV2
-    # _ * [ ] ( ) ~ ` > # + - = | { } . !
-    special_chars = r'_*\[\]()~`>#\+\-=|{}.!'
-    # Экранируем каждый спецсимвол
-    return re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
-
 def send_message_with_reply(target_chat_id, message, thread_id=None):
     reply_to_id = None
     reply_to_name = None
@@ -53,14 +42,11 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
     
     sender_name = get_sender_name(message.from_user)
     
-    # Экранируем имена (обязательно!)
-    safe_sender = escape_md(sender_name)
-    
+    # Формируем текст БЕЗ Markdown (обычный текст)
     if reply_to_name:
-        safe_reply = escape_md(reply_to_name)
-        header = f"📨 **{safe_sender}** ответил(а) **{safe_reply}**:\n\n"
+        header = f"📨 {sender_name} ответил(а) {reply_to_name}:\n\n"
     else:
-        header = f"📨 **От:** {safe_sender}\n\n"
+        header = f"📨 От: {sender_name}\n\n"
     
     if message.caption:
         content = message.caption
@@ -69,43 +55,41 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
     else:
         content = "📎 Медиафайл"
     
-    # Экранируем содержимое
-    safe_content = escape_md(content)
-    full_text = header + safe_content
+    full_text = header + content
     
     try:
         if message.photo:
             sent = bot.send_photo(
                 target_chat_id, message.photo[-1].file_id,
-                caption=full_text, parse_mode="MarkdownV2",
+                caption=full_text,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
         elif message.video:
             sent = bot.send_video(
                 target_chat_id, message.video.file_id,
-                caption=full_text, parse_mode="MarkdownV2",
+                caption=full_text,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
         elif message.document:
             sent = bot.send_document(
                 target_chat_id, message.document.file_id,
-                caption=full_text, parse_mode="MarkdownV2",
+                caption=full_text,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
         elif message.audio:
             sent = bot.send_audio(
                 target_chat_id, message.audio.file_id,
-                caption=full_text, parse_mode="MarkdownV2",
+                caption=full_text,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
         elif message.voice:
             sent = bot.send_voice(
                 target_chat_id, message.voice.file_id,
-                caption=full_text, parse_mode="MarkdownV2",
+                caption=full_text,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
@@ -116,7 +100,6 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
                 reply_to_message_id=reply_to_id
             )
             time.sleep(0.3)
-            # Для стикеров отправляем подпись без Markdown
             bot.send_message(
                 target_chat_id, 
                 f"📨 От: {sender_name}",
@@ -126,7 +109,6 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
         else:
             sent = bot.send_message(
                 target_chat_id, full_text,
-                parse_mode="MarkdownV2",
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
@@ -182,7 +164,7 @@ if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
     
-    logger.info(f"🤖 Бот запущен с поддержкой ответов")
+    logger.info(f"🤖 Бот запущен (без Markdown)")
     logger.info(f"   Чат A: {CHAT_A}")
     logger.info(f"   Канал B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
