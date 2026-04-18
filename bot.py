@@ -31,6 +31,7 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
     reply_to_id = None
     reply_to_name = None
     
+    # Проверяем, есть ли ответ на другое сообщение
     if message.reply_to_message:
         original_msg_id = message.reply_to_message.message_id
         original_chat_id = message.reply_to_message.chat.id
@@ -42,86 +43,152 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
     
     sender_name = get_sender_name(message.from_user)
     
-    # Формируем текст БЕЗ Markdown (обычный текст)
+    # Формируем текст подписи
     if reply_to_name:
-        header = f"📨 {sender_name} ответил(а) {reply_to_name}:\n\n"
+        caption_text = f"📨 {sender_name} ответил(а) {reply_to_name}"
     else:
-        header = f"📨 От: {sender_name}\n\n"
+        caption_text = f"📨 От: {sender_name}"
     
+    # Получаем содержимое сообщения (если есть текст или подпись)
+    content_text = ""
     if message.caption:
-        content = message.caption
+        content_text = message.caption
     elif message.text:
-        content = message.text
-    else:
-        content = "📎 Медиафайл"
+        content_text = message.text
     
-    full_text = header + content
+    # Полная подпись с содержимым
+    if content_text:
+        full_caption = f"{caption_text}\n\n{content_text}"
+    else:
+        full_caption = caption_text
     
     try:
+        sent = None
+        
+        # Фото
         if message.photo:
             sent = bot.send_photo(
-                target_chat_id, message.photo[-1].file_id,
-                caption=full_text,
+                target_chat_id, 
+                message.photo[-1].file_id,
+                caption=full_caption,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
+            logger.info(f"Фото отправлено в {target_chat_id}")
+        
+        # Видео
         elif message.video:
             sent = bot.send_video(
-                target_chat_id, message.video.file_id,
-                caption=full_text,
+                target_chat_id, 
+                message.video.file_id,
+                caption=full_caption,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
+            logger.info(f"Видео отправлено в {target_chat_id}")
+        
+        # Документы
         elif message.document:
             sent = bot.send_document(
-                target_chat_id, message.document.file_id,
-                caption=full_text,
+                target_chat_id, 
+                message.document.file_id,
+                caption=full_caption,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
+            logger.info(f"Документ отправлен в {target_chat_id}")
+        
+        # Аудио
         elif message.audio:
             sent = bot.send_audio(
-                target_chat_id, message.audio.file_id,
-                caption=full_text,
+                target_chat_id, 
+                message.audio.file_id,
+                caption=full_caption,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
+            logger.info(f"Аудио отправлено в {target_chat_id}")
+        
+        # Голосовые
         elif message.voice:
             sent = bot.send_voice(
-                target_chat_id, message.voice.file_id,
-                caption=full_text,
+                target_chat_id, 
+                message.voice.file_id,
+                caption=full_caption,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
+            logger.info(f"Голосовое отправлено в {target_chat_id}")
+        
+        # Стикеры
         elif message.sticker:
             sent = bot.send_sticker(
-                target_chat_id, message.sticker.file_id,
+                target_chat_id, 
+                message.sticker.file_id,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
+            logger.info(f"Стикер отправлен в {target_chat_id}")
+            # Отправляем подпись отдельным сообщением
             time.sleep(0.3)
             bot.send_message(
                 target_chat_id, 
-                f"📨 От: {sender_name}",
+                caption_text,
                 message_thread_id=thread_id,
                 reply_to_message_id=sent.message_id
             )
-        else:
-            sent = bot.send_message(
-                target_chat_id, full_text,
+        
+        # GIF
+        elif message.animation:
+            sent = bot.send_animation(
+                target_chat_id, 
+                message.animation.file_id,
+                caption=full_caption,
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
+            logger.info(f"GIF отправлен в {target_chat_id}")
         
-        source_key = f"{message.chat.id}:{message.message_id}"
-        target_key = f"{target_chat_id}:{sent.message_id}"
-        message_links[source_key] = sent.message_id
-        message_links[target_key] = message.message_id
+        # Видеосообщения (кружочки)
+        elif message.video_note:
+            sent = bot.send_video_note(
+                target_chat_id, 
+                message.video_note.file_id,
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_id
+            )
+            logger.info(f"Видеосообщение отправлено в {target_chat_id}")
+            # Отправляем подпись отдельно
+            time.sleep(0.3)
+            bot.send_message(
+                target_chat_id, 
+                caption_text,
+                message_thread_id=thread_id,
+                reply_to_message_id=sent.message_id
+            )
         
-        if len(message_links) > 2000:
-            keys_to_remove = list(message_links.keys())[:1000]
-            for key in keys_to_remove:
-                del message_links[key]
+        # Текст и всё остальное
+        else:
+            sent = bot.send_message(
+                target_chat_id, 
+                full_caption if full_caption else caption_text,
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_id
+            )
+            logger.info(f"Текст отправлен в {target_chat_id}")
+        
+        # Сохраняем связь для ответов (только если сообщение успешно отправлено)
+        if sent:
+            source_key = f"{message.chat.id}:{message.message_id}"
+            target_key = f"{target_chat_id}:{sent.message_id}"
+            message_links[source_key] = sent.message_id
+            message_links[target_key] = message.message_id
+            
+            # Очищаем старые связи
+            if len(message_links) > 2000:
+                keys_to_remove = list(message_links.keys())[:1000]
+                for key in keys_to_remove:
+                    del message_links[key]
         
         time.sleep(0.5)
         
@@ -132,10 +199,12 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def handle_chat_a(message):
+    logger.info(f"Получено сообщение из чата A: {message.content_type}")
     send_message_with_reply(CHAT_B, message, CHAT_B_THREAD)
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def handle_chat_b(message):
+    logger.info(f"Получено сообщение из чата B: {message.content_type}")
     send_message_with_reply(CHAT_A, message)
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id != CHAT_B_THREAD)
@@ -164,7 +233,7 @@ if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
     
-    logger.info(f"🤖 Бот запущен (без Markdown)")
+    logger.info(f"🤖 Бот запущен")
     logger.info(f"   Чат A: {CHAT_A}")
     logger.info(f"   Канал B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
