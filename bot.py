@@ -16,7 +16,6 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Временное хранилище связей между сообщениями
 message_links = {}
 
 def get_sender_name(user):
@@ -33,48 +32,48 @@ def escape_md(text):
     """Экранирует все спецсимволы для MarkdownV2"""
     if not text:
         return text
-    # Спецсимволы: _ * [ ] ( ) ~ ` > # + - = | { } . !
-    special_chars = r'_*[]()~`>#+-=|{}.!'
+    # Все спецсимволы Telegram MarkdownV2
+    # _ * [ ] ( ) ~ ` > # + - = | { } . !
+    special_chars = r'_*\[\]()~`>#\+\-=|{}.!'
+    # Экранируем каждый спецсимвол
     return re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
 
 def send_message_with_reply(target_chat_id, message, thread_id=None):
-    """Отправляет сообщение с поддержкой ответа (реплая)"""
-    
     reply_to_id = None
     reply_to_name = None
     
-    # Проверяем, отвечает ли пользователь на чьё-то сообщение
     if message.reply_to_message:
         original_msg_id = message.reply_to_message.message_id
         original_chat_id = message.reply_to_message.chat.id
-        
-        # Ищем связь
         link_key = f"{original_chat_id}:{original_msg_id}"
         if link_key in message_links:
             reply_to_id = message_links[link_key]
             if message.reply_to_message.from_user:
                 reply_to_name = get_sender_name(message.reply_to_message.from_user)
     
-    # Формируем текст
     sender_name = get_sender_name(message.from_user)
     
-    if reply_to_name:
-        header = f"📨 **{escape_md(sender_name)}** ответил(а) **{escape_md(reply_to_name)}**:\n\n"
-    else:
-        header = f"📨 **От:** {escape_md(sender_name)}\n\n"
+    # Экранируем имена (обязательно!)
+    safe_sender = escape_md(sender_name)
     
-    # Получаем содержимое
+    if reply_to_name:
+        safe_reply = escape_md(reply_to_name)
+        header = f"📨 **{safe_sender}** ответил(а) **{safe_reply}**:\n\n"
+    else:
+        header = f"📨 **От:** {safe_sender}\n\n"
+    
     if message.caption:
         content = message.caption
     elif message.text:
         content = message.text
     else:
-        content = "📎 *Медиафайл*"
+        content = "📎 Медиафайл"
     
-    full_text = header + escape_md(content)
+    # Экранируем содержимое
+    safe_content = escape_md(content)
+    full_text = header + safe_content
     
     try:
-        # Отправляем в зависимости от типа
         if message.photo:
             sent = bot.send_photo(
                 target_chat_id, message.photo[-1].file_id,
@@ -116,8 +115,8 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
-            # Отправляем подпись отдельно (без Markdown, чтобы избежать ошибок)
             time.sleep(0.3)
+            # Для стикеров отправляем подпись без Markdown
             bot.send_message(
                 target_chat_id, 
                 f"📨 От: {sender_name}",
@@ -132,13 +131,11 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
                 reply_to_message_id=reply_to_id
             )
         
-        # Сохраняем связь между ID сообщений
         source_key = f"{message.chat.id}:{message.message_id}"
         target_key = f"{target_chat_id}:{sent.message_id}"
         message_links[source_key] = sent.message_id
         message_links[target_key] = message.message_id
         
-        # Очищаем старые связи
         if len(message_links) > 2000:
             keys_to_remove = list(message_links.keys())[:1000]
             for key in keys_to_remove:
@@ -159,7 +156,6 @@ def handle_chat_a(message):
 def handle_chat_b(message):
     send_message_with_reply(CHAT_A, message)
 
-# Игнорируем другие темы
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id != CHAT_B_THREAD)
 def ignore_other_threads(message):
     pass
