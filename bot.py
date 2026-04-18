@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+import re
 from flask import Flask, request
 from telebot import TeleBot, types
 
@@ -15,8 +16,7 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Временное хранилище связей между сообщениями (только в памяти)
-# При перезапуске бота очищается
+# Временное хранилище связей между сообщениями
 message_links = {}
 
 def get_sender_name(user):
@@ -30,8 +30,12 @@ def get_sender_name(user):
     return name
 
 def escape_md(text):
-    special = '_*[]()~`>#+-=|{}.!'
-    return ''.join(f'\\{c}' if c in special else c for c in text)
+    """Экранирует все спецсимволы для MarkdownV2"""
+    if not text:
+        return text
+    # Спецсимволы: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    special_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
 
 def send_message_with_reply(target_chat_id, message, thread_id=None):
     """Отправляет сообщение с поддержкой ответа (реплая)"""
@@ -44,7 +48,7 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
         original_msg_id = message.reply_to_message.message_id
         original_chat_id = message.reply_to_message.chat.id
         
-        # Ищем связь: есть ли ID этого сообщения в целевом чате
+        # Ищем связь
         link_key = f"{original_chat_id}:{original_msg_id}"
         if link_key in message_links:
             reply_to_id = message_links[link_key]
@@ -112,11 +116,11 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
                 message_thread_id=thread_id,
                 reply_to_message_id=reply_to_id
             )
-            # Отправляем подпись отдельно
+            # Отправляем подпись отдельно (без Markdown, чтобы избежать ошибок)
             time.sleep(0.3)
             bot.send_message(
-                target_chat_id, header.replace("\n\n", ""),
-                parse_mode="MarkdownV2",
+                target_chat_id, 
+                f"📨 От: {sender_name}",
                 message_thread_id=thread_id,
                 reply_to_message_id=sent.message_id
             )
@@ -128,13 +132,13 @@ def send_message_with_reply(target_chat_id, message, thread_id=None):
                 reply_to_message_id=reply_to_id
             )
         
-        # Сохраняем связь между ID сообщений (для будущих ответов)
+        # Сохраняем связь между ID сообщений
         source_key = f"{message.chat.id}:{message.message_id}"
         target_key = f"{target_chat_id}:{sent.message_id}"
         message_links[source_key] = sent.message_id
         message_links[target_key] = message.message_id
         
-        # Очищаем старые связи (оставляем последние 1000)
+        # Очищаем старые связи
         if len(message_links) > 2000:
             keys_to_remove = list(message_links.keys())[:1000]
             for key in keys_to_remove:
