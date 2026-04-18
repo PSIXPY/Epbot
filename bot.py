@@ -4,6 +4,7 @@ import json
 import requests
 import urllib.parse
 import wikipediaapi
+import random
 from flask import Flask, request
 from datetime import datetime, timedelta
 
@@ -21,17 +22,17 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 
 
-# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ (АВТОМАТИЧЕСКИЙ) ===
+# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ (с исправлением регистра) ===
 
 def search_wikipedia(query):
-    """Ищет статью в Википедии — автоматически находит лучший вариант"""
+    """Ищет статью в Википедии — автоматически исправляет регистр"""
     try:
         wiki_wiki = wikipediaapi.Wikipedia(
             language='ru',
             user_agent='TelegramRelayBot/1.0 (https://t.me/your_bot)'
         )
         
-        # 1. Точное совпадение
+        # 1. Пробуем найти точное совпадение
         page = wiki_wiki.page(query)
         if page.exists():
             summary = page.summary[:500]
@@ -39,17 +40,17 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # 2. Исправление регистра (первая буква заглавная)
-        capitalized_query = query[0].upper() + query[1:].lower()
-        if capitalized_query != query:
-            page = wiki_wiki.page(capitalized_query)
+        # 2. Пробуем с первой заглавной буквой (Илон маск → Илон Маск)
+        corrected = query[0].upper() + query[1:].lower()
+        if corrected != query:
+            page = wiki_wiki.page(corrected)
             if page.exists():
                 summary = page.summary[:500]
                 if len(page.summary) > 500:
                     summary += "..."
                 return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # 3. Поиск через API Википедии (берём первый результат)
+        # 3. Пробуем поиск через API (берём первый результат)
         search_url = "https://ru.wikipedia.org/w/api.php"
         params = {
             "action": "query",
@@ -239,7 +240,7 @@ def process_update(update):
         if text.lower().startswith("/wiki"):
             search_query = text[5:].strip()
             if not search_query:
-                help_text = "ℹ️ *Как использовать команду /wiki*\n\n`/wiki Python` — поиск статьи о Python\n`/wiki Илон маск` — найдёт статью об Илоне Маске\n\n🌐 Бот сам найдёт лучший вариант, даже если вы ошиблись в регистре!"
+                help_text = "ℹ️ *Как использовать команду /wiki*\n\n`/wiki Python` — поиск статьи о Python\n`/wiki Илон маск` — найдёт статью об Илоне Маске\n\n🌐 Бот сам исправляет регистр и находит лучший вариант!"
                 send_message(chat_id, help_text, thread_id=thread_id)
                 return
             
@@ -252,7 +253,7 @@ def process_update(update):
         if text.lower() in ["/help", "/start"]:
             help_text = """📖 *Доступные команды*
 
-/wiki [запрос] — поиск в Википедии (автоматически)
+/wiki [запрос] — поиск в Википедии
 /help — показать эту справку
 
 📱 *Примеры:*
@@ -260,8 +261,30 @@ def process_update(update):
 /wiki Илон маск
 /wiki квантовая физика
 
-⚡ Бот сам находит лучший вариант, даже при неточном написании!"""
+⚡ Бот пересылает все сообщения между чатами и поддерживает ответы (реплаи).
+🔍 Поиск в Википедии работает даже с маленькой буквы!"""
             send_message(chat_id, help_text, thread_id=thread_id)
+            return
+        
+        # ПРОСТЫЕ КОМАНДЫ
+        if text.lower() == "/roll":
+            result = random.randint(1, 100)
+            send_message(chat_id, f"🎲 Вам выпало: **{result}**", thread_id=thread_id)
+            return
+        
+        if text.lower() == "/coin":
+            result = random.choice(["Орёл", "Решка"])
+            send_message(chat_id, f"🪙 {result}!", thread_id=thread_id)
+            return
+        
+        if text.lower() == "/time":
+            now = datetime.now().strftime("%H:%M:%S")
+            send_message(chat_id, f"🕐 Текущее время: **{now}**", thread_id=thread_id)
+            return
+        
+        if text.lower() == "/date":
+            today = datetime.now().strftime("%d.%m.%Y")
+            send_message(chat_id, f"📅 Сегодня: **{today}**", thread_id=thread_id)
             return
     
     # === ПРОВЕРКА ОТВЕТОВ (РЕПЛАЕВ) ===
@@ -367,6 +390,6 @@ if __name__ == "__main__":
     logger.info(f"   Чат B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
     logger.info("📖 Команда /wiki для поиска в Википедии добавлена")
-    logger.info("🔍 Поиск работает автоматически (исправляет регистр, находит по ключевым словам)")
+    logger.info("🔍 Поиск работает даже с маленькой буквы (Илон маск → Илон Маск)")
     
     app.run(host="0.0.0.0", port=port)
