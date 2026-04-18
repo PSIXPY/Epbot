@@ -15,10 +15,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-processed_ids = set()
+# Временное хранилище связей между сообщениями (только в памяти)
+# При перезапуске бота очищается
+message_links = {}
 
-def get_sender_name(message):
-    user = message.from_user
+def get_sender_name(user):
     if not user:
         return "Неизвестный"
     name = f"{user.first_name or ''} {user.last_name or ''}".strip()
@@ -32,119 +33,131 @@ def escape_md(text):
     special = '_*[]()~`>#+-=|{}.!'
     return ''.join(f'\\{c}' if c in special else c for c in text)
 
-def send_to_target(target_chat_id, message, full_text, thread_id=None):
-    try:
-        if message.photo:
-            bot.send_photo(target_chat_id, message.photo[-1].file_id, 
-                          caption=full_text, parse_mode="MarkdownV2",
-                          message_thread_id=thread_id)
-        elif message.video:
-            bot.send_video(target_chat_id, message.video.file_id, 
-                          caption=full_text, parse_mode="MarkdownV2",
-                          message_thread_id=thread_id)
-        elif message.document:
-            bot.send_document(target_chat_id, message.document.file_id, 
-                            caption=full_text, parse_mode="MarkdownV2",
-                            message_thread_id=thread_id)
-        elif message.audio:
-            bot.send_audio(target_chat_id, message.audio.file_id, 
-                          caption=full_text, parse_mode="MarkdownV2",
-                          message_thread_id=thread_id)
-        elif message.voice:
-            bot.send_voice(target_chat_id, message.voice.file_id, 
-                          caption=full_text, parse_mode="MarkdownV2",
-                          message_thread_id=thread_id)
-        elif message.sticker:
-            # ОТЛАДКА СТИКЕРА
-            logger.info(f"=== НАЙДЕН СТИКЕР ===")
-            logger.info(f"File ID: {message.sticker.file_id}")
-            logger.info(f"Target чат: {target_chat_id}")
-            logger.info(f"Thread ID: {thread_id}")
-            logger.info(f"Есть ли подпись: {full_text[:50] if full_text else 'Нет'}")
-            
-            # Пересылаем стикер
-            try:
-                bot.forward_message(
-                    chat_id=target_chat_id,
-                    from_chat_id=message.chat.id,
-                    message_id=message.message_id,
-                    message_thread_id=thread_id
-                )
-                logger.info(f"✅ Стикер УСПЕШНО переслан!")
-            except Exception as e:
-                logger.error(f"❌ Ошибка при пересылке стикера: {e}")
-            
-            # Отправляем подпись отдельно
-            if full_text and "📎 *Медиафайл*" not in full_text:
-                try:
-                    time.sleep(0.5)
-                    bot.send_message(target_chat_id, full_text, 
-                                   parse_mode="MarkdownV2",
-                                   message_thread_id=thread_id)
-                    logger.info(f"✅ Подпись отправлена")
-                except Exception as e:
-                    logger.error(f"❌ Ошибка отправки подписи: {e}")
-            else:
-                logger.info(f"Подпись не требуется (пустая или медиафайл)")
-                
-        elif message.video_note:
-            bot.send_video_note(target_chat_id, message.video_note.file_id,
-                              message_thread_id=thread_id)
-            if full_text and "📎 *Медиафайл*" not in full_text:
-                bot.send_message(target_chat_id, full_text,
-                               parse_mode="MarkdownV2",
-                               message_thread_id=thread_id)
-        elif message.animation:
-            bot.send_animation(target_chat_id, message.animation.file_id,
-                             caption=full_text, parse_mode="MarkdownV2",
-                             message_thread_id=thread_id)
-        else:
-            bot.send_message(target_chat_id, full_text, 
-                           parse_mode="MarkdownV2",
-                           message_thread_id=thread_id)
-        time.sleep(1)
-    except Exception as e:
-        logger.error(f"Ошибка отправки: {e}")
-
-def forward_message(message, target_chat_id, thread_id=None):
-    if message.message_id in processed_ids:
-        return
-    processed_ids.add(message.message_id)
-    if len(processed_ids) > 1000:
-        processed_ids.clear()
+def send_message_with_reply(target_chat_id, message, thread_id=None):
+    """Отправляет сообщение с поддержкой ответа (реплая)"""
+    
+    reply_to_id = None
+    reply_to_name = None
+    
+    # Проверяем, отвечает ли пользователь на чьё-то сообщение
+    if message.reply_to_message:
+        original_msg_id = message.reply_to_message.message_id
+        original_chat_id = message.reply_to_message.chat.id
+        
+        # Ищем связь: есть ли ID этого сообщения в целевом чате
+        link_key = f"{original_chat_id}:{original_msg_id}"
+        if link_key in message_links:
+            reply_to_id = message_links[link_key]
+            if message.reply_to_message.from_user:
+                reply_to_name = get_sender_name(message.reply_to_message.from_user)
+    
+    # Формируем текст
+    sender_name = get_sender_name(message.from_user)
+    
+    if reply_to_name:
+        header = f"📨 **{escape_md(sender_name)}** ответил(а) **{escape_md(reply_to_name)}**:\n\n"
+    else:
+        header = f"📨 **От:** {escape_md(sender_name)}\n\n"
+    
+    # Получаем содержимое
+    if message.caption:
+        content = message.caption
+    elif message.text:
+        content = message.text
+    else:
+        content = "📎 *Медиафайл*"
+    
+    full_text = header + escape_md(content)
     
     try:
-        sender = get_sender_name(message)
-        header = f"📨 **От:** {escape_md(sender)}\n\n"
-        
-        if message.caption:
-            content = message.caption
-        elif message.text:
-            content = message.text
+        # Отправляем в зависимости от типа
+        if message.photo:
+            sent = bot.send_photo(
+                target_chat_id, message.photo[-1].file_id,
+                caption=full_text, parse_mode="MarkdownV2",
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_id
+            )
+        elif message.video:
+            sent = bot.send_video(
+                target_chat_id, message.video.file_id,
+                caption=full_text, parse_mode="MarkdownV2",
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_id
+            )
+        elif message.document:
+            sent = bot.send_document(
+                target_chat_id, message.document.file_id,
+                caption=full_text, parse_mode="MarkdownV2",
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_id
+            )
+        elif message.audio:
+            sent = bot.send_audio(
+                target_chat_id, message.audio.file_id,
+                caption=full_text, parse_mode="MarkdownV2",
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_id
+            )
+        elif message.voice:
+            sent = bot.send_voice(
+                target_chat_id, message.voice.file_id,
+                caption=full_text, parse_mode="MarkdownV2",
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_id
+            )
+        elif message.sticker:
+            sent = bot.send_sticker(
+                target_chat_id, message.sticker.file_id,
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_id
+            )
+            # Отправляем подпись отдельно
+            time.sleep(0.3)
+            bot.send_message(
+                target_chat_id, header.replace("\n\n", ""),
+                parse_mode="MarkdownV2",
+                message_thread_id=thread_id,
+                reply_to_message_id=sent.message_id
+            )
         else:
-            content = "📎 *Медиафайл*"
+            sent = bot.send_message(
+                target_chat_id, full_text,
+                parse_mode="MarkdownV2",
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_id
+            )
         
-        full_text = header + escape_md(content)
-        send_to_target(target_chat_id, message, full_text, thread_id)
+        # Сохраняем связь между ID сообщений (для будущих ответов)
+        source_key = f"{message.chat.id}:{message.message_id}"
+        target_key = f"{target_chat_id}:{sent.message_id}"
+        message_links[source_key] = sent.message_id
+        message_links[target_key] = message.message_id
+        
+        # Очищаем старые связи (оставляем последние 1000)
+        if len(message_links) > 2000:
+            keys_to_remove = list(message_links.keys())[:1000]
+            for key in keys_to_remove:
+                del message_links[key]
+        
+        time.sleep(0.5)
         
     except Exception as e:
-        logger.error(f"Ошибка пересылки: {e}")
+        logger.error(f"Ошибка отправки: {e}")
 
 # === ОБРАБОТЧИКИ ===
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def handle_chat_a(message):
-    logger.info(f"Сообщение из чата A: {message.chat.id}")
-    forward_message(message, CHAT_B, CHAT_B_THREAD)
+    send_message_with_reply(CHAT_B, message, CHAT_B_THREAD)
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
-def handle_chat_b_thread(message):
-    logger.info(f"Сообщение из темы B: {message.chat.id}, Thread: {message.message_thread_id}")
-    forward_message(message, CHAT_A)
+def handle_chat_b(message):
+    send_message_with_reply(CHAT_A, message)
 
+# Игнорируем другие темы
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id != CHAT_B_THREAD)
 def ignore_other_threads(message):
-    logger.info(f"Игнорируем другую тему: {message.message_thread_id}")
     pass
 
 # === ВЕБХУК ===
@@ -162,17 +175,16 @@ def webhook():
 def healthcheck():
     return "OK", 200
 
+# === ЗАПУСК ===
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     
     bot.remove_webhook()
-    webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
-    bot.set_webhook(url=webhook_url)
+    bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
     
-    logger.info(f"🤖 Бот запущен")
+    logger.info(f"🤖 Бот запущен с поддержкой ответов")
     logger.info(f"   Чат A: {CHAT_A}")
     logger.info(f"   Канал B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
-    logger.info(f"   Вебхук: {webhook_url}")
     
     app.run(host="0.0.0.0", port=port)
