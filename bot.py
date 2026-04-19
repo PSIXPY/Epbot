@@ -22,17 +22,17 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 
 
-# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ (улучшенная) ===
+# === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
 
 def search_wikipedia(query):
-    """Ищет статью в Википедии — автоматически исправляет регистр и ищет по частям"""
+    """Умный поиск: Википедия → поиск по содержимому → ссылки на поисковики"""
     try:
         wiki_wiki = wikipediaapi.Wikipedia(
             language='ru',
             user_agent='TelegramRelayBot/1.0 (https://t.me/your_bot)'
         )
         
-        # 1. Пробуем найти точное совпадение
+        # 1. Поиск по точному заголовку
         page = wiki_wiki.page(query)
         if page.exists():
             summary = page.summary[:500]
@@ -40,7 +40,7 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # 2. Исправляем регистр (каждое слово с заглавной буквы)
+        # 2. Исправление регистра (каждое слово с заглавной)
         words = query.split()
         corrected_words = []
         for w in words:
@@ -58,7 +58,7 @@ def search_wikipedia(query):
                     summary += "..."
                 return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # 3. Поиск через API Википедии (берём первый результат)
+        # 3. Поиск через API Википедии (по содержимому статей)
         search_url = "https://ru.wikipedia.org/w/api.php"
         params = {
             "action": "query",
@@ -66,14 +66,16 @@ def search_wikipedia(query):
             "srsearch": query,
             "format": "json",
             "utf8": 1,
-            "srlimit": 1
+            "srlimit": 3,
+            "srwhat": "text"
         }
         
         response = requests.get(search_url, params=params, timeout=10)
         if response.status_code == 200:
             data = response.json()
             if data.get("query", {}).get("search"):
-                best_match = data["query"]["search"][0]["title"]
+                results = data["query"]["search"]
+                best_match = results[0]["title"]
                 page = wiki_wiki.page(best_match)
                 if page.exists():
                     summary = page.summary[:500]
@@ -93,10 +95,24 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page.title}* (англ.)\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        return f"❌ Ничего не найдено по запросу '{query}'.\n\n💡 Попробуйте:\n• `/wiki Илон Маск` (с заглавными)\n• `/wiki Elon Musk` (на английском)"
+        # 5. Если ничего не найдено — даём ссылки на поиск в интернете
+        encoded_query = urllib.parse.quote(query)
+        google_link = f"https://www.google.com/search?q={encoded_query}"
+        yandex_link = f"https://yandex.ru/search/?text={encoded_query}"
+        duck_link = f"https://duckduckgo.com/?q={encoded_query}"
+        
+        return f"""❌ В Википедии ничего не найдено по запросу '{query}'.
+
+💡 *Результаты поиска в интернете:*
+
+🔍 [Яндекс]({yandex_link})
+🌐 [Google]({google_link})
+🦆 [DuckDuckGo]({duck_link})
+
+💬 *Совет:* Попробуйте переформулировать запрос или написать на английском."""
             
     except Exception as e:
-        logger.error(f"Ошибка Википедии: {e}")
+        logger.error(f"Ошибка поиска: {e}")
         return "❌ Произошла ошибка при поиске. Попробуйте позже."
 
 
@@ -248,7 +264,13 @@ def process_update(update):
         if text.lower().startswith("/wiki"):
             search_query = text[5:].strip()
             if not search_query:
-                help_text = "ℹ️ *Как использовать команду /wiki*\n\n`/wiki Python` — поиск статьи о Python\n`/wiki Илон маск` — найдёт статью об Илоне Маске\n\n🌐 Бот сам исправляет регистр и находит лучший вариант!"
+                help_text = """ℹ️ *Как использовать команду /wiki*
+
+`/wiki Python` — поиск статьи о Python
+`/wiki Илон маск` — найдёт статью об Илоне Маске
+`/wiki почему Хорус предал Императора` — поиск по содержимому
+
+🌐 Бот ищет в Википедии, а если не находит — даёт ссылки на Яндекс и Google!"""
                 send_message(chat_id, help_text, thread_id=thread_id)
                 return
             
@@ -261,16 +283,20 @@ def process_update(update):
         if text.lower() in ["/help", "/start"]:
             help_text = """📖 *Доступные команды*
 
-/wiki [запрос] — поиск в Википедии
+/wiki [запрос] — умный поиск в Википедии
 /help — показать эту справку
+/roll — случайное число от 1 до 100
+/coin — орёл или решка
+/time — текущее время
+/date — сегодняшняя дата
 
 📱 *Примеры:*
 /wiki Python
 /wiki Илон маск
-/wiki квантовая физика
+/wiki почему Хорус предал Императора
 
 ⚡ Бот пересылает все сообщения между чатами и поддерживает ответы (реплаи).
-🔍 Поиск в Википедии работает даже с маленькой буквы!"""
+🔍 Поиск в Википедии работает даже с маленькой буквы и по содержимому статей!"""
             send_message(chat_id, help_text, thread_id=thread_id)
             return
         
@@ -397,7 +423,6 @@ if __name__ == "__main__":
     logger.info(f"   Чат A: {CHAT_A}")
     logger.info(f"   Чат B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
-    logger.info("📖 Команда /wiki для поиска в Википедии добавлена")
-    logger.info("🔍 Поиск работает даже с маленькой буквы (Илон маск → Илон Маск)")
+    logger.info("📖 Умный поиск в Википедии: по заголовкам, содержимому и интернету")
     
     app.run(host="0.0.0.0", port=port)
