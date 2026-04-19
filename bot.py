@@ -12,6 +12,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
 CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
+SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))  # ID канала, чьи сообщения игнорируем
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
 app = Flask(__name__)
@@ -23,7 +24,6 @@ message_links = {}
 
 
 # === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
-
 def search_wikipedia(query):
     """Умный поиск: Википедия → поиск по содержимому → ссылки на поисковики"""
     try:
@@ -243,6 +243,10 @@ def process_update(update):
     
     # Определяем получателя
     if chat_id == CHAT_A:
+        # === ФИЛЬТР: сообщения от канала SOURCE_CHANNEL не пересылаем ===
+        if message.get("from") and message["from"].get("id") == SOURCE_CHANNEL:
+            logger.info(f"⏭ Игнорируем сообщение от канала {SOURCE_CHANNEL} в чате A")
+            return
         target = CHAT_B
         target_thread = CHAT_B_THREAD
     elif chat_id == CHAT_B and thread_id == CHAT_B_THREAD:
@@ -423,6 +427,8 @@ if __name__ == "__main__":
     logger.info(f"   Чат A: {CHAT_A}")
     logger.info(f"   Чат B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
+    if SOURCE_CHANNEL:
+        logger.info(f"   Фильтр: сообщения от канала {SOURCE_CHANNEL} в чате A не пересылаются")
     logger.info("📖 Умный поиск в Википедии: по заголовкам, содержимому и интернету")
     
     app.run(host="0.0.0.0", port=port)
