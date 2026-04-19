@@ -6,14 +6,14 @@ import wikipediaapi
 import random
 from flask import Flask, request
 from datetime import datetime
+from telebot import TeleBot, types
 
-# === ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_A = int(os.environ.get("CHAT_A", 0))                 # обычный чат A
-CHAT_B = int(os.environ.get("CHAT_B", 0))                 # чат-форум B
-CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))   # топик B1 (связь с чатом A)
-SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0)) # канал-источник
-CHANNEL_THREAD = int(os.environ.get("CHANNEL_THREAD", 0)) # топик B2 (для постов из канала)
+CHAT_A = int(os.environ.get("CHAT_A", 0))
+CHAT_B = int(os.environ.get("CHAT_B", 0))
+CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
+SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))
+CHANNEL_THREAD = int(os.environ.get("CHANNEL_THREAD", 0))
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
 app = Flask(__name__)
@@ -21,9 +21,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-message_links = {}  # для ответов (реплаев)
+message_links = {}
+bot = TeleBot(BOT_TOKEN)
 
-# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ОТПРАВКИ ===
+# === ФУНКЦИИ ОТПРАВКИ ===
 def send_message(chat_id, text, reply_to=None, thread_id=None):
     data = {"chat_id": chat_id, "text": text, "message_thread_id": thread_id}
     if reply_to:
@@ -98,7 +99,7 @@ def get_sender_name(sender):
         return f"{name} (@{sender['username']})"
     return name
 
-# === ПОИСК В ВИКИПЕДИИ (УМНЫЙ) ===
+# === ПОИСК В ВИКИПЕДИИ ===
 def search_wikipedia(query):
     try:
         wiki = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
@@ -137,16 +138,12 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page.title}* (англ.)\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         encoded = urllib.parse.quote(query)
-        return f"❌ В Википедии ничего не найдено по запросу '{query}'.\n💡 [Google](https://www.google.com/search?q={encoded}) | [Яндекс](https://yandex.ru/search/?text={encoded})"
+        return f"❌ В Википедии ничего не найдено.\n💡 [Google](https://www.google.com/search?q={encoded}) | [Яндекс](https://yandex.ru/search/?text={encoded})"
     except Exception as e:
         logger.error(f"Wikipedia error: {e}")
-        return "❌ Ошибка при поиске. Попробуйте позже."
+        return "❌ Ошибка при поиске."
 
-# === ОБРАБОТЧИКИ TELEGRAM (используются для пересылки) ===
-from telebot import TeleBot
-bot = TeleBot(BOT_TOKEN)  # создаём объект бота для использования декораторов
-
-# 1. Пересылка из канала → топик B2 (односторонняя)
+# === ОБРАБОТЧИКИ TELEGRAM ===
 @bot.message_handler(func=lambda m: m.chat.id == SOURCE_CHANNEL)
 def handle_channel_to_b2(message):
     logger.info(f"📢 Канал -> топик B2 ({CHANNEL_THREAD})")
@@ -171,7 +168,6 @@ def handle_channel_to_b2(message):
     except Exception as e:
         logger.error(f"Ошибка канал->B2: {e}")
 
-# 2. Пересылка из чата A → топик B1 (с фильтром сообщений от канала)
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def handle_chat_a(message):
     if message.from_user and message.from_user.id == SOURCE_CHANNEL:
@@ -179,12 +175,11 @@ def handle_chat_a(message):
         return
     forward_message(message, CHAT_B, CHAT_B_THREAD)
 
-# 3. Пересылка из топика B1 → чат A
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def handle_b1_thread(message):
     forward_message(message, CHAT_A, None)
 
-# === ОБРАБОТЧИК КОМАНД (WIKI, HELP, ROLL...) ===
+# === ОБРАБОТЧИК КОМАНД ===
 def process_update(update):
     if "message" not in update:
         return
@@ -212,7 +207,7 @@ def process_update(update):
 /coin – орёл/решка
 /time – текущее время
 /date – сегодняшняя дата
-/help – эта справка
+/help – справка
 
 🔄 *Режим пересылки:*
 • Чат A ↔ Топик B1
@@ -240,7 +235,6 @@ def webhook():
     try:
         update = request.get_json()
         process_update(update)
-        # передаём update в telebot для обработки сообщений (пересылок)
         bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
@@ -251,13 +245,11 @@ def webhook():
 def health():
     return "OK", 200
 
-# === ЗАПУСК ===
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     requests.get(f"{API_URL}/setWebhook?url={webhook_url}")
     logger.info("🚀 Бот запущен")
-    logger.info(f"Чат A: {CHAT_A}")
-    logger.info(f"Чат B: {CHAT_B}, топик B1: {CHAT_B_THREAD}, топик B2: {CHANNEL_THREAD}")
+    logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик B1: {CHAT_B_THREAD}, топик B2: {CHANNEL_THREAD}")
     logger.info(f"Канал-источник: {SOURCE_CHANNEL}")
     app.run(host="0.0.0.0", port=port)
