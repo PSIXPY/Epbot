@@ -12,8 +12,6 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
 CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
-SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))
-CHANNEL_THREAD = int(os.environ.get("CHANNEL_THREAD", 0))
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
 app = Flask(__name__)
@@ -24,7 +22,7 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 bot = TeleBot(BOT_TOKEN)
 
-# === ФУНКЦИИ ОТПРАВКИ ===
+# ---------- функции отправки ----------
 def send_message(chat_id, text, reply_to=None, thread_id=None):
     data = {"chat_id": chat_id, "text": text, "message_thread_id": thread_id}
     if reply_to:
@@ -99,7 +97,7 @@ def get_sender_name(sender):
         return f"{name} (@{sender['username']})"
     return name
 
-# === ПОИСК В ВИКИПЕДИИ ===
+# ---------- поиск в википедии ----------
 def search_wikipedia(query):
     try:
         wiki = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
@@ -143,43 +141,16 @@ def search_wikipedia(query):
         logger.error(f"Wikipedia error: {e}")
         return "❌ Ошибка при поиске."
 
-# === ОБРАБОТЧИКИ TELEGRAM ===
-@bot.message_handler(func=lambda m: m.chat.id == SOURCE_CHANNEL)
-def handle_channel_to_b2(message):
-    logger.info(f"📢 Канал -> топик B2 ({CHANNEL_THREAD})")
-    try:
-        if message.photo:
-            send_photo(CHAT_B, message.photo[-1].file_id, message.caption, thread_id=CHANNEL_THREAD)
-        elif message.video:
-            send_video(CHAT_B, message.video.file_id, message.caption, thread_id=CHANNEL_THREAD)
-        elif message.document:
-            forward_message(message.chat.id, CHAT_B, message.message_id, CHANNEL_THREAD)
-        elif message.voice:
-            send_voice(CHAT_B, message.voice.file_id, message.caption, thread_id=CHANNEL_THREAD)
-        elif message.sticker:
-            send_sticker(CHAT_B, message.sticker.file_id, thread_id=CHANNEL_THREAD)
-            if message.caption:
-                send_message(CHAT_B, message.caption, thread_id=CHANNEL_THREAD)
-        elif message.text:
-            send_message(CHAT_B, message.text, thread_id=CHANNEL_THREAD)
-        else:
-            forward_message(message.chat.id, CHAT_B, message.message_id, CHANNEL_THREAD)
-        logger.info("✅ Переслано из канала в топик B2")
-    except Exception as e:
-        logger.error(f"Ошибка канал->B2: {e}")
-
+# ---------- обработчики пересылки ----------
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def handle_chat_a(message):
-    if message.from_user and message.from_user.id == SOURCE_CHANNEL:
-        logger.info(f"⏭ Сообщение от канала {SOURCE_CHANNEL} проигнорировано в чате A")
-        return
     forward_message(message, CHAT_B, CHAT_B_THREAD)
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def handle_b1_thread(message):
     forward_message(message, CHAT_A, None)
 
-# === ОБРАБОТЧИК КОМАНД ===
+# ---------- обработчик команд ----------
 def process_update(update):
     if "message" not in update:
         return
@@ -209,10 +180,7 @@ def process_update(update):
 /date – сегодняшняя дата
 /help – справка
 
-🔄 *Режим пересылки:*
-• Чат A ↔ Топик B1
-• Канал → Топик B2
-• Сообщения от канала в чате A игнорируются"""
+🔄 *Режим пересылки:* Чат A ↔ Топик B1"""
         send_message(chat_id, help_txt, thread_id=thread_id)
         return
 
@@ -229,7 +197,7 @@ def process_update(update):
         send_message(chat_id, f"📅 {datetime.now().strftime('%d.%m.%Y')}", thread_id=thread_id)
         return
 
-# === WEBHOOK ===
+# ---------- вебхук ----------
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
@@ -245,11 +213,11 @@ def webhook():
 def health():
     return "OK", 200
 
+# ---------- запуск ----------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     requests.get(f"{API_URL}/setWebhook?url={webhook_url}")
-    logger.info("🚀 Бот запущен")
-    logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик B1: {CHAT_B_THREAD}, топик B2: {CHANNEL_THREAD}")
-    logger.info(f"Канал-источник: {SOURCE_CHANNEL}")
+    logger.info("🚀 Бот запущен (режим: чат A ↔ топик B1)")
+    logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     app.run(host="0.0.0.0", port=port)
