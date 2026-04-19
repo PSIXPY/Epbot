@@ -12,6 +12,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
 CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
+SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))  # НОВАЯ ПЕРЕМЕННАЯ
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
 app = Flask(__name__)
@@ -22,7 +23,7 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 
 
-# === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
+# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
 
 def search_wikipedia(query):
     """Умный поиск: Википедия → поиск по содержимому → ссылки на поисковики"""
@@ -40,7 +41,7 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # 2. Исправление регистра (каждое слово с заглавной)
+        # 2. Исправление регистра
         words = query.split()
         corrected_words = []
         for w in words:
@@ -58,7 +59,7 @@ def search_wikipedia(query):
                     summary += "..."
                 return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # 3. Поиск через API Википедии (по содержимому статей)
+        # 3. Поиск через API Википедии
         search_url = "https://ru.wikipedia.org/w/api.php"
         params = {
             "action": "query",
@@ -95,7 +96,7 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page.title}* (англ.)\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # 5. Если ничего не найдено — даём ссылки на поиск в интернете
+        # 5. Ссылки на поиск в интернете
         encoded_query = urllib.parse.quote(query)
         google_link = f"https://www.google.com/search?q={encoded_query}"
         yandex_link = f"https://yandex.ru/search/?text={encoded_query}"
@@ -228,6 +229,43 @@ def forward_message(from_chat, to_chat, message_id, thread_id=None):
         return None
 
 
+# === ОБРАБОТЧИК ДЛЯ КАНАЛА-ИСТОЧНИКА ===
+
+@bot.message_handler(func=lambda m: m.chat.id == SOURCE_CHANNEL)
+def handle_channel_post(message):
+    """Пересылает сообщения из открытого канала в тему форума"""
+    try:
+        logger.info(f"📥 Получено из канала {message.chat.id}")
+        
+        # Отправляем в зависимости от типа
+        if message.photo:
+            bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=message.caption, message_thread_id=CHAT_B_THREAD)
+            logger.info(f"✅ Фото переслано в тему {CHAT_B_THREAD}")
+        elif message.video:
+            bot.send_video(CHAT_B, message.video.file_id, caption=message.caption, message_thread_id=CHAT_B_THREAD)
+            logger.info(f"✅ Видео переслано в тему {CHAT_B_THREAD}")
+        elif message.document:
+            bot.send_document(CHAT_B, message.document.file_id, caption=message.caption, message_thread_id=CHAT_B_THREAD)
+            logger.info(f"✅ Документ переслан в тему {CHAT_B_THREAD}")
+        elif message.voice:
+            bot.send_voice(CHAT_B, message.voice.file_id, caption=message.caption, message_thread_id=CHAT_B_THREAD)
+            logger.info(f"✅ Голосовое переслано в тему {CHAT_B_THREAD}")
+        elif message.sticker:
+            bot.send_sticker(CHAT_B, message.sticker.file_id, message_thread_id=CHAT_B_THREAD)
+            if message.caption:
+                bot.send_message(CHAT_B, message.caption, message_thread_id=CHAT_B_THREAD)
+            logger.info(f"✅ Стикер переслан в тему {CHAT_B_THREAD}")
+        elif message.text:
+            bot.send_message(CHAT_B, message.text, message_thread_id=CHAT_B_THREAD)
+            logger.info(f"✅ Текст переслан в тему {CHAT_B_THREAD}")
+        else:
+            bot.forward_message(CHAT_B, message.chat.id, message.message_id, message_thread_id=CHAT_B_THREAD)
+            logger.info(f"✅ Сообщение переслано в тему {CHAT_B_THREAD}")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка пересылки из канала: {e}")
+
+
 # === ОСНОВНОЙ ОБРАБОТЧИК ===
 
 def process_update(update):
@@ -293,10 +331,9 @@ def process_update(update):
 📱 *Примеры:*
 /wiki Python
 /wiki Илон маск
-/wiki почему Хорус предал Императора
 
-⚡ Бот пересылает все сообщения между чатами и поддерживает ответы (реплаи).
-🔍 Поиск в Википедии работает даже с маленькой буквы и по содержимому статей!"""
+⚡ Бот пересылает сообщения между чатами, поддерживает ответы (реплаи)
+📢 Также пересылает посты из канала в тему форума!"""
             send_message(chat_id, help_text, thread_id=thread_id)
             return
         
@@ -423,6 +460,8 @@ if __name__ == "__main__":
     logger.info(f"   Чат A: {CHAT_A}")
     logger.info(f"   Чат B: {CHAT_B}")
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
+    logger.info(f"   Канал-источник: {SOURCE_CHANNEL}")
     logger.info("📖 Умный поиск в Википедии: по заголовкам, содержимому и интернету")
+    logger.info("📢 Пересылка из канала в тему форума включена")
     
     app.run(host="0.0.0.0", port=port)
