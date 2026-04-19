@@ -144,10 +144,12 @@ def search_wikipedia(query):
 # ---------- обработчики пересылки ----------
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def handle_chat_a(message):
+    logger.info(f"🔄 Пересылка из чата A в топик {CHAT_B_THREAD}")
     forward_message(message, CHAT_B, CHAT_B_THREAD)
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def handle_b1_thread(message):
+    logger.info(f"🔄 Пересылка из топика {CHAT_B_THREAD} в чат A")
     forward_message(message, CHAT_A, None)
 
 # ---------- обработчик команд ----------
@@ -157,6 +159,7 @@ def process_update(update):
     msg = update["message"]
     chat_id = msg["chat"]["id"]
     thread_id = msg.get("message_thread_id")
+    logger.info(f"📥 Получено сообщение | Чат: {chat_id} | Тред: {thread_id}")
     if "text" not in msg:
         return
     text = msg["text"]
@@ -217,7 +220,8 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
-    requests.get(f"{API_URL}/setWebhook?url={webhook_url}")
+    resp = requests.get(f"{API_URL}/setWebhook?url={webhook_url}")
+    logger.info(f"Установка вебхука: {resp.json()}")
     logger.info("🚀 Бот запущен (режим: чат A ↔ топик B1)")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     app.run(host="0.0.0.0", port=port)
