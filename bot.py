@@ -22,10 +22,10 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 
 
-# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ (с исправлением регистра) ===
+# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ (улучшенная) ===
 
 def search_wikipedia(query):
-    """Ищет статью в Википедии — автоматически исправляет регистр"""
+    """Ищет статью в Википедии — автоматически исправляет регистр и ищет по частям"""
     try:
         wiki_wiki = wikipediaapi.Wikipedia(
             language='ru',
@@ -40,8 +40,16 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # 2. Пробуем с первой заглавной буквой (Илон маск → Илон Маск)
-        corrected = query[0].upper() + query[1:].lower()
+        # 2. Исправляем регистр (каждое слово с заглавной буквы)
+        words = query.split()
+        corrected_words = []
+        for w in words:
+            if len(w) > 1:
+                corrected_words.append(w[0].upper() + w[1:].lower())
+            else:
+                corrected_words.append(w.upper())
+        corrected = " ".join(corrected_words)
+        
         if corrected != query:
             page = wiki_wiki.page(corrected)
             if page.exists():
@@ -50,7 +58,7 @@ def search_wikipedia(query):
                     summary += "..."
                 return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # 3. Пробуем поиск через API (берём первый результат)
+        # 3. Поиск через API Википедии (берём первый результат)
         search_url = "https://ru.wikipedia.org/w/api.php"
         params = {
             "action": "query",
@@ -85,7 +93,7 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page.title}* (англ.)\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        return f"❌ Ничего не найдено по запросу '{query}'."
+        return f"❌ Ничего не найдено по запросу '{query}'.\n\n💡 Попробуйте:\n• `/wiki Илон Маск` (с заглавными)\n• `/wiki Elon Musk` (на английском)"
             
     except Exception as e:
         logger.error(f"Ошибка Википедии: {e}")
