@@ -13,6 +13,7 @@ CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
 CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
 SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))  # ID канала, чьи сообщения игнорируем
+TARGET_CHANNEL = int(os.environ.get("TARGET_CHANNEL", 0))  # ID канала, где ставим реакцию 🔥
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
 app = Flask(__name__)
@@ -231,6 +232,28 @@ def forward_message(from_chat, to_chat, message_id, thread_id=None):
 # === ОСНОВНОЙ ОБРАБОТЧИК ===
 
 def process_update(update):
+    # === ОБРАБОТКА ПОСТОВ В КАНАЛЕ (СТАВИМ РЕАКЦИЮ 🔥) ===
+    if "channel_post" in update:
+        post = update["channel_post"]
+        channel_id = post["chat"]["id"]
+        
+        # Проверяем, что это нужный канал
+        if channel_id == TARGET_CHANNEL and TARGET_CHANNEL != 0:
+            message_id = post["message_id"]
+            try:
+                url = f"{API_URL}/setMessageReaction"
+                data = {
+                    "chat_id": channel_id,
+                    "message_id": message_id,
+                    "reaction": [{"type": "emoji", "emoji": "🔥"}]
+                }
+                requests.post(url, json=data, timeout=5)
+                logger.info(f"🔥 Реакция поставлена на пост {message_id} в канале {channel_id}")
+            except Exception as e:
+                logger.error(f"Ошибка при реакции на пост: {e}")
+        return  # Не обрабатываем дальше (посты из канала не пересылаем)
+
+    # === ОБЫЧНЫЕ СООБЩЕНИЯ ===
     if "message" not in update:
         return
     
@@ -429,6 +452,8 @@ if __name__ == "__main__":
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
     if SOURCE_CHANNEL:
         logger.info(f"   Фильтр: сообщения от канала {SOURCE_CHANNEL} в чате A не пересылаются")
+    if TARGET_CHANNEL:
+        logger.info(f"   Реакция 🔥 на посты в канале {TARGET_CHANNEL}")
     logger.info("📖 Умный поиск в Википедии: по заголовкам, содержимому и интернету")
     
     app.run(host="0.0.0.0", port=port)
