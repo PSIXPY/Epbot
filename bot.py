@@ -253,6 +253,7 @@ def handle_secret_text(message):
     sender_name = pending_secret[chat_id]["sender_name"]
     del pending_secret[chat_id]
     
+    # СОЗДАЁМ КНОПКУ (только для получателя)
     markup = InlineKeyboardMarkup()
     button = InlineKeyboardButton(
         text=f"📩 Скрытое сообщение от {sender_name}",
@@ -260,6 +261,7 @@ def handle_secret_text(message):
     )
     markup.add(button)
     
+    # Отправляем КНОПКУ в чат (текст сообщения НЕ ПОКАЗЫВАЕМ)
     bot.send_message(
         chat_id,
         f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}",
@@ -267,6 +269,7 @@ def handle_secret_text(message):
         parse_mode="Markdown"
     )
     
+    # Удаляем служебные сообщения
     try:
         bot.delete_message(chat_id, message.reply_to_message.message_id)
         bot.delete_message(chat_id, message.message_id)
@@ -281,16 +284,19 @@ def handle_secret_callback(call):
         bot.answer_callback_query(call.id, "❌ Ошибка формата сообщения.", show_alert=True)
         return
     
+    # Проверяем, тот ли пользователь нажал
     if call.from_user.username != target_username:
         bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
         return
     
+    # Показываем сообщение только получателю
     bot.answer_callback_query(
         call.id,
         f"📩 Сообщение: {secret_text}",
         show_alert=True
     )
     
+    # Отправляем копию в ЛС
     try:
         bot.send_message(
             call.from_user.id,
@@ -332,6 +338,11 @@ def process_update(update):
     # Игнорируем команду /msg (не пересылаем)
     if "text" in message and message["text"].lower().startswith("/msg"):
         logger.info(f"⏭ Команда /msg не пересылается")
+        return
+    
+    # Игнорируем сообщения от ForceReply (они уже обработаны)
+    if message.reply_to_message and "Скрытое сообщение для @" in message.reply_to_message.text:
+        logger.info(f"⏭ Текст для скрытого сообщения уже обработан")
         return
     
     # Определяем получателя
@@ -391,7 +402,34 @@ def process_update(update):
             send_message(chat_id, f"📅 {datetime.now().strftime('%d.%m.%Y')}", thread_id=thread_id)
             return
     
-    # Пересылка сообщений
+    # === ПРОВЕРКА ОТВЕТОВ (РЕПЛАЕВ) ===
+    reply_to_id = None
+    reply_to_name = None
+    
+    if "reply_to_message" in message:
+        reply_msg = message["reply_to_message"]
+        original_msg_id = reply_msg["message_id"]
+        original_chat_id = reply_msg["chat"]["id"]
+        
+        link_key = f"{original_chat_id}:{original_msg_id}"
+        if link_key in message_links:
+            reply_to_id = message_links[link_key]
+            if "from" in reply_msg:
+                reply_to_name = get_sender_name(reply_msg["from"])
+    
+    if reply_to_name:
+        caption_text = f"📨 {sender_name} ответил(а) {reply_to_name}"
+    else:
+        caption_text = f"📨 От: {sender_name}"
+    
+    content_text = ""
+    if "caption" in message:
+        content_text = message["caption"]
+    elif "text" in message:
+        content_text = message["text"]
+    
+    full_caption = f"{caption_text}\n\n{content_text}" if content_text else caption_text
+    
     sent_msg_id = None
     
     if "photo" in message:
@@ -449,6 +487,6 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("📩 Команда /msg для скрытых сообщений (ForceReply)")
+    logger.info("📩 Команда /msg для скрытых сообщений")
     
     app.run(host="0.0.0.0", port=port)
