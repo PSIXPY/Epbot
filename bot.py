@@ -7,19 +7,14 @@ import wikipediaapi
 import random
 from flask import Flask, request
 from datetime import datetime, timedelta
+from telebot import TeleBot, types
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
 CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
-SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))  # ID канала, чьи сообщения игнорируем
-
-# === СПИСОК КАНАЛОВ ДЛЯ РЕАКЦИИ 🔥 ===
-TARGET_CHANNELS = [
-    -1001317416582,   # eternalparadise
-    -1002185590715,   # psixonat_official
-]
-
+SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
 app = Flask(__name__)
@@ -28,26 +23,21 @@ logger = logging.getLogger(__name__)
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
-
+bot = TeleBot(BOT_TOKEN)
 
 # === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
 def search_wikipedia(query):
-    """Умный поиск: Википедия → поиск по содержимому → ссылки на поисковики"""
     try:
         wiki_wiki = wikipediaapi.Wikipedia(
             language='ru',
             user_agent='TelegramRelayBot/1.0 (https://t.me/your_bot)'
         )
-        
-        # 1. Поиск по точному заголовку
         page = wiki_wiki.page(query)
         if page.exists():
             summary = page.summary[:500]
             if len(page.summary) > 500:
                 summary += "..."
             return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
-        
-        # 2. Исправление регистра (каждое слово с заглавной)
         words = query.split()
         corrected_words = []
         for w in words:
@@ -56,7 +46,6 @@ def search_wikipedia(query):
             else:
                 corrected_words.append(w.upper())
         corrected = " ".join(corrected_words)
-        
         if corrected != query:
             page = wiki_wiki.page(corrected)
             if page.exists():
@@ -64,8 +53,6 @@ def search_wikipedia(query):
                 if len(page.summary) > 500:
                     summary += "..."
                 return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
-        
-        # 3. Поиск через API Википедии (по содержимому статей)
         search_url = "https://ru.wikipedia.org/w/api.php"
         params = {
             "action": "query",
@@ -76,21 +63,17 @@ def search_wikipedia(query):
             "srlimit": 3,
             "srwhat": "text"
         }
-        
         response = requests.get(search_url, params=params, timeout=10)
         if response.status_code == 200:
             data = response.json()
             if data.get("query", {}).get("search"):
-                results = data["query"]["search"]
-                best_match = results[0]["title"]
+                best_match = data["query"]["search"][0]["title"]
                 page = wiki_wiki.page(best_match)
                 if page.exists():
                     summary = page.summary[:500]
                     if len(page.summary) > 500:
                         summary += "..."
                     return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
-        
-        # 4. Поиск в английской Википедии
         wiki_en = wikipediaapi.Wikipedia(
             language='en',
             user_agent='TelegramRelayBot/1.0 (https://t.me/your_bot)'
@@ -101,13 +84,10 @@ def search_wikipedia(query):
             if len(page.summary) > 500:
                 summary += "..."
             return f"📖 *{page.title}* (англ.)\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
-        
-        # 5. Если ничего не найдено — даём ссылки на поиск в интернете
         encoded_query = urllib.parse.quote(query)
         google_link = f"https://www.google.com/search?q={encoded_query}"
         yandex_link = f"https://yandex.ru/search/?text={encoded_query}"
         duck_link = f"https://duckduckgo.com/?q={encoded_query}"
-        
         return f"""❌ В Википедии ничего не найдено по запросу '{query}'.
 
 💡 *Результаты поиска в интернете:*
@@ -117,7 +97,6 @@ def search_wikipedia(query):
 🦆 [DuckDuckGo]({duck_link})
 
 💬 *Совет:* Попробуйте переформулировать запрос или написать на английском."""
-            
     except Exception as e:
         logger.error(f"Ошибка поиска: {e}")
         return "❌ Произошла ошибка при поиске. Попробуйте позже."
@@ -235,16 +214,80 @@ def forward_message(from_chat, to_chat, message_id, thread_id=None):
         return None
 
 
-# === ОСНОВНОЙ ОБРАБОТЧИК ===
+# === ОБРАБОТЧИК КОМАНДЫ /msg (скрытые сообщения) ===
+@bot.message_handler(commands=['msg'])
+def send_private_msg(message):
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        bot.reply_to(message, "ℹ️ *Как отправить скрытое сообщение:*\n`/msg @username Текст сообщения`", parse_mode="Markdown")
+        return
+    
+    target_username = parts[1].lstrip("@")
+    secret_text = parts[2]
+    sender_name = message.from_user.first_name
+    sender_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    # Проверяем, есть ли такой username в чате (упрощённо)
+    markup = InlineKeyboardMarkup()
+    button = InlineKeyboardButton(
+        text=f"📩 Скрытое сообщение для @{target_username}",
+        callback_data=f"show_msg:{target_username}:{secret_text[:50]}:{sender_id}"
+    )
+    markup.add(button)
+    
+    # Отправляем кнопку в чат
+    bot.send_message(
+        chat_id,
+        f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+    
+    # Удаляем команду пользователя (если есть права)
+    try:
+        bot.delete_message(chat_id, message.message_id)
+    except:
+        pass
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("show_msg"))
+def handle_secret_message(call):
+    try:
+        _, target_username, secret_text, sender_id = call.data.split(":", 3)
+    except:
+        bot.answer_callback_query(call.id, "❌ Ошибка формата сообщения.", show_alert=True)
+        return
+    
+    # Проверяем, тот ли пользователь нажал
+    if call.from_user.username != target_username:
+        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
+        return
+    
+    # Показываем сообщение нужному пользователю
+    bot.answer_callback_query(
+        call.id,
+        f"📩 Сообщение: {secret_text}",
+        show_alert=True
+    )
+    
+    # Отправляем копию в личку (на случай, если не успел прочитать всплывашку)
+    try:
+        bot.send_message(
+            call.from_user.id,
+            f"🔒 *Скрытое сообщение* от пользователя *ID {sender_id}*:\n\n{secret_text}",
+            parse_mode="Markdown"
+        )
+    except:
+        pass
+
+
+# === ОСНОВНОЙ ОБРАБОТЧИК ===
 def process_update(update):
     # === ОБРАБОТКА ПОСТОВ В КАНАЛАХ (СТАВИМ РЕАКЦИЮ 🔥) ===
     if "channel_post" in update:
         post = update["channel_post"]
         channel_id = post["chat"]["id"]
-        
-        # Проверяем, что канал есть в списке TARGET_CHANNELS
-        if channel_id in TARGET_CHANNELS:
+        if channel_id == -1001317416582 or channel_id == -1002185590715:
             message_id = post["message_id"]
             try:
                 url = f"{API_URL}/setMessageReaction"
@@ -256,8 +299,8 @@ def process_update(update):
                 requests.post(url, json=data, timeout=5)
                 logger.info(f"🔥 Реакция поставлена на пост {message_id} в канале {channel_id}")
             except Exception as e:
-                logger.error(f"Ошибка при реакции на пост в канале {channel_id}: {e}")
-        return  # Не обрабатываем дальше (посты из каналов не пересылаем)
+                logger.error(f"Ошибка при реакции на пост: {e}")
+        return
 
     # === ОБЫЧНЫЕ СООБЩЕНИЯ ===
     if "message" not in update:
@@ -272,7 +315,6 @@ def process_update(update):
     
     # Определяем получателя
     if chat_id == CHAT_A:
-        # === ФИЛЬТР: сообщения от канала SOURCE_CHANNEL не пересылаем ===
         if message.get("from") and message["from"].get("id") == SOURCE_CHANNEL:
             logger.info(f"⏭ Игнорируем сообщение от канала {SOURCE_CHANNEL} в чате A")
             return
@@ -285,7 +327,6 @@ def process_update(update):
         logger.info(f"⏭ Игнорируем")
         return
     
-    # Получаем отправителя
     sender = message.get("from", {})
     sender_name = get_sender_name(sender)
     
@@ -293,47 +334,32 @@ def process_update(update):
     if "text" in message:
         text = message["text"]
         
-        # КОМАНДА /wiki
         if text.lower().startswith("/wiki"):
             search_query = text[5:].strip()
             if not search_query:
-                help_text = """ℹ️ *Как использовать команду /wiki*
-
-`/wiki Python` — поиск статьи о Python
-`/wiki Илон маск` — найдёт статью об Илоне Маске
-`/wiki почему Хорус предал Императора` — поиск по содержимому
-
-🌐 Бот ищет в Википедии, а если не находит — даёт ссылки на Яндекс и Google!"""
-                send_message(chat_id, help_text, thread_id=thread_id)
+                send_message(chat_id, "ℹ️ Использование: `/wiki запрос`", thread_id=thread_id)
                 return
-            
-            send_message(chat_id, f"🔍 Ищу *{search_query}* в Википедии...\n⏳ Пожалуйста, подождите.", thread_id=thread_id)
+            send_message(chat_id, f"🔍 Ищу *{search_query}* в Википедии...", thread_id=thread_id)
             result = search_wikipedia(search_query)
             send_message(chat_id, result, thread_id=thread_id)
             return
         
-        # КОМАНДА /help
         if text.lower() in ["/help", "/start"]:
             help_text = """📖 *Доступные команды*
 
-/wiki [запрос] — умный поиск в Википедии
-/help — показать эту справку
-/roll — случайное число от 1 до 100
-/coin — орёл или решка
+/wiki [запрос] — поиск в Википедии
+/msg @username текст — скрытое сообщение (увидят только получатель)
+/roll — случайное число (1-100)
+/coin — орёл/решка
 /time — текущее время
 /date — сегодняшняя дата
+/help — эта справка
 
-📱 *Примеры:*
-/wiki Python
-/wiki Илон маск
-/wiki почему Хорус предал Императора
-
-⚡ Бот пересылает все сообщения между чатами и поддерживает ответы (реплаи).
-🔍 Поиск в Википедии работает даже с маленькой буквы и по содержимому статей!"""
+⚡ Бот пересылает сообщения между чатами, поддерживает ответы (реплаи)
+🔍 Поиск в Википедии работает даже с маленькой буквы!"""
             send_message(chat_id, help_text, thread_id=thread_id)
             return
         
-        # ПРОСТЫЕ КОМАНДЫ
         if text.lower() == "/roll":
             result = random.randint(1, 100)
             send_message(chat_id, f"🎲 Вам выпало: **{result}**", thread_id=thread_id)
@@ -369,13 +395,11 @@ def process_update(update):
             if "from" in reply_msg:
                 reply_to_name = get_sender_name(reply_msg["from"])
     
-    # Формируем подпись
     if reply_to_name:
         caption_text = f"📨 {sender_name} ответил(а) {reply_to_name}"
     else:
         caption_text = f"📨 От: {sender_name}"
     
-    # Получаем содержимое
     content_text = ""
     if "caption" in message:
         content_text = message["caption"]
@@ -384,34 +408,27 @@ def process_update(update):
     
     full_caption = f"{caption_text}\n\n{content_text}" if content_text else caption_text
     
-    # === ОТПРАВКА В ЗАВИСИМОСТИ ОТ ТИПА ===
     sent_msg_id = None
     
     if "photo" in message:
         file_id = message["photo"][-1]["file_id"]
         sent_msg_id = send_photo(target, file_id, full_caption, reply_to_id, target_thread)
-    
     elif "voice" in message:
         file_id = message["voice"]["file_id"]
         sent_msg_id = send_voice(target, file_id, full_caption, reply_to_id, target_thread)
-    
     elif "video" in message:
         file_id = message["video"]["file_id"]
         sent_msg_id = send_video(target, file_id, full_caption, reply_to_id, target_thread)
-    
     elif "sticker" in message:
         file_id = message["sticker"]["file_id"]
         sent_msg_id = send_sticker(target, file_id, reply_to_id, target_thread)
         if caption_text:
             send_message(target, caption_text, sent_msg_id, target_thread)
-    
     elif "text" in message:
         sent_msg_id = send_message(target, full_caption, reply_to_id, target_thread)
-    
     else:
         sent_msg_id = forward_message(chat_id, target, message_id, target_thread)
     
-    # Сохраняем связь для ответов
     if sent_msg_id:
         source_key = f"{chat_id}:{message_id}"
         target_key = f"{target}:{sent_msg_id}"
@@ -427,15 +444,15 @@ def process_update(update):
 
 
 # === ВЕБХУК ===
-
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
         process_update(update)
+        bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
-        logger.error(f"Ошибка webhook: {e}")
+        logger.error(f"Webhook error: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
@@ -444,11 +461,8 @@ def healthcheck():
 
 
 # === ЗАПУСК ===
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    
-    # Устанавливаем вебхук
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     requests.get(f"{API_URL}/setWebhook?url={webhook_url}")
     
@@ -458,8 +472,6 @@ if __name__ == "__main__":
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
     if SOURCE_CHANNEL:
         logger.info(f"   Фильтр: сообщения от канала {SOURCE_CHANNEL} в чате A не пересылаются")
-    if TARGET_CHANNELS:
-        logger.info(f"   Реакция 🔥 на посты в каналах: {', '.join(str(c) for c in TARGET_CHANNELS)}")
-    logger.info("📖 Умный поиск в Википедии: по заголовкам, содержимому и интернету")
+    logger.info("📖 Команда /msg для скрытых сообщений (Inline-кнопки)")
     
     app.run(host="0.0.0.0", port=port)
