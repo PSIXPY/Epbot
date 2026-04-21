@@ -13,7 +13,13 @@ CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
 CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
 SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))  # ID канала, чьи сообщения игнорируем
-TARGET_CHANNEL = int(os.environ.get("TARGET_CHANNEL", 0))  # ID канала, где ставим реакцию 🔥
+
+# === СПИСОК КАНАЛОВ ДЛЯ РЕАКЦИИ 🔥 ===
+TARGET_CHANNELS = [
+    -1001317416582,   # eternalparadise
+    -1002185590715,   # psixonat_official
+]
+
 RENDER_URL = os.environ.get("RENDER_URL", "")
 
 app = Flask(__name__)
@@ -232,13 +238,13 @@ def forward_message(from_chat, to_chat, message_id, thread_id=None):
 # === ОСНОВНОЙ ОБРАБОТЧИК ===
 
 def process_update(update):
-    # === ОБРАБОТКА ПОСТОВ В КАНАЛЕ (СТАВИМ РЕАКЦИЮ 🔥) ===
+    # === ОБРАБОТКА ПОСТОВ В КАНАЛАХ (СТАВИМ РЕАКЦИЮ 🔥) ===
     if "channel_post" in update:
         post = update["channel_post"]
         channel_id = post["chat"]["id"]
         
-        # Проверяем, что это нужный канал
-        if channel_id == TARGET_CHANNEL and TARGET_CHANNEL != 0:
+        # Проверяем, что канал есть в списке TARGET_CHANNELS
+        if channel_id in TARGET_CHANNELS:
             message_id = post["message_id"]
             try:
                 url = f"{API_URL}/setMessageReaction"
@@ -250,8 +256,8 @@ def process_update(update):
                 requests.post(url, json=data, timeout=5)
                 logger.info(f"🔥 Реакция поставлена на пост {message_id} в канале {channel_id}")
             except Exception as e:
-                logger.error(f"Ошибка при реакции на пост: {e}")
-        return  # Не обрабатываем дальше (посты из канала не пересылаем)
+                logger.error(f"Ошибка при реакции на пост в канале {channel_id}: {e}")
+        return  # Не обрабатываем дальше (посты из каналов не пересылаем)
 
     # === ОБЫЧНЫЕ СООБЩЕНИЯ ===
     if "message" not in update:
@@ -452,8 +458,8 @@ if __name__ == "__main__":
     logger.info(f"   Тема B: {CHAT_B_THREAD}")
     if SOURCE_CHANNEL:
         logger.info(f"   Фильтр: сообщения от канала {SOURCE_CHANNEL} в чате A не пересылаются")
-    if TARGET_CHANNEL:
-        logger.info(f"   Реакция 🔥 на посты в канале {TARGET_CHANNEL}")
+    if TARGET_CHANNELS:
+        logger.info(f"   Реакция 🔥 на посты в каналах: {', '.join(str(c) for c in TARGET_CHANNELS)}")
     logger.info("📖 Умный поиск в Википедии: по заголовкам, содержимому и интернету")
     
     app.run(host="0.0.0.0", port=port)
