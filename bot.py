@@ -32,10 +32,7 @@ pending_secret = {}
 # === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
 def search_wikipedia(query):
     try:
-        wiki_wiki = wikipediaapi.Wikipedia(
-            language='ru',
-            user_agent='TelegramRelayBot/1.0'
-        )
+        wiki_wiki = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
         page = wiki_wiki.page(query)
         if page.exists():
             summary = page.summary[:500]
@@ -43,7 +40,6 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # Исправление регистра
         words = query.split()
         corrected_words = []
         for w in words:
@@ -60,7 +56,6 @@ def search_wikipedia(query):
                     summary += "..."
                 return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # Поиск через API
         search_url = "https://ru.wikipedia.org/w/api.php"
         params = {
             "action": "query",
@@ -83,7 +78,6 @@ def search_wikipedia(query):
                         summary += "..."
                     return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # Английская Википедия
         wiki_en = wikipediaapi.Wikipedia(language='en', user_agent='TelegramRelayBot/1.0')
         page = wiki_en.page(query)
         if page.exists():
@@ -93,9 +87,7 @@ def search_wikipedia(query):
             return f"📖 *{page.title}* (англ.)\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
         encoded_query = urllib.parse.quote(query)
-        google_link = f"https://www.google.com/search?q={encoded_query}"
-        yandex_link = f"https://yandex.ru/search/?text={encoded_query}"
-        return f"❌ В Википедии ничего не найдено.\n\n💡 [Google]({google_link}) | [Яндекс]({yandex_link})"
+        return f"❌ В Википедии ничего не найдено.\n\n💡 [Google](https://www.google.com/search?q={encoded_query}) | [Яндекс](https://yandex.ru/search/?text={encoded_query})"
     except Exception as e:
         logger.error(f"Ошибка поиска: {e}")
         return "❌ Ошибка при поиске."
@@ -252,7 +244,6 @@ def handle_secret_text(message):
     sender_name = pending_secret[chat_id]["sender_name"]
     del pending_secret[chat_id]
     
-    # Создаём кнопку
     markup = InlineKeyboardMarkup()
     button = InlineKeyboardButton(
         text=f"📩 Скрытое сообщение от {sender_name}",
@@ -260,7 +251,6 @@ def handle_secret_text(message):
     )
     markup.add(button)
     
-    # Отправляем кнопку
     bot.send_message(
         chat_id,
         f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}",
@@ -268,7 +258,6 @@ def handle_secret_text(message):
         parse_mode="Markdown"
     )
     
-    # Удаляем служебные сообщения
     try:
         bot.delete_message(chat_id, message.reply_to_message.message_id)
         bot.delete_message(chat_id, message.message_id)
@@ -333,13 +322,17 @@ def process_update(update):
     
     logger.info(f"📥 Получено | Чат: {chat_id} | Тред: {thread_id}")
     
+    # Проверяем текст (если есть)
+    message_text = message.get("text", "")
+    
     # === НЕ ПЕРЕСЫЛАЕМ КОМАНДУ /msg ===
-    if "text" in message and message["text"].lower().startswith("/msg"):
+    if message_text.lower().startswith("/msg"):
         logger.info(f"⏭ Команда /msg не пересылается")
         return
     
     # === НЕ ПЕРЕСЫЛАЕМ ТЕКСТ ДЛЯ СКРЫТЫХ СООБЩЕНИЙ ===
-    if message.reply_to_message and "Скрытое сообщение для @" in str(message.reply_to_message.text):
+    reply_to = message.get("reply_to_message")
+    if reply_to and "Скрытое сообщение для @" in reply_to.get("text", ""):
         logger.info(f"⏭ Текст для скрытого сообщения не пересылается")
         return
     
@@ -361,11 +354,9 @@ def process_update(update):
     sender_name = get_sender_name(sender)
     
     # === ОБРАБОТКА КОМАНД ===
-    if "text" in message:
-        text = message["text"]
-        
-        if text.lower().startswith("/wiki"):
-            query = text[5:].strip()
+    if message_text:
+        if message_text.lower().startswith("/wiki"):
+            query = message_text[5:].strip()
             if not query:
                 send_message(chat_id, "ℹ️ Использование: `/wiki запрос`", thread_id=thread_id)
                 return
@@ -374,7 +365,7 @@ def process_update(update):
             send_message(chat_id, result, thread_id=thread_id)
             return
         
-        if text.lower() in ["/help", "/start"]:
+        if message_text.lower() in ["/help", "/start"]:
             help_text = """📖 *Команды бота*
 
 /wiki [запрос] — поиск в Википедии
@@ -389,16 +380,16 @@ def process_update(update):
             send_message(chat_id, help_text, thread_id=thread_id)
             return
         
-        if text.lower() == "/roll":
+        if message_text.lower() == "/roll":
             send_message(chat_id, f"🎲 {random.randint(1, 100)}", thread_id=thread_id)
             return
-        if text.lower() == "/coin":
+        if message_text.lower() == "/coin":
             send_message(chat_id, f"🪙 {random.choice(['Орёл', 'Решка'])}", thread_id=thread_id)
             return
-        if text.lower() == "/time":
+        if message_text.lower() == "/time":
             send_message(chat_id, f"🕐 {datetime.now().strftime('%H:%M:%S')}", thread_id=thread_id)
             return
-        if text.lower() == "/date":
+        if message_text.lower() == "/date":
             send_message(chat_id, f"📅 {datetime.now().strftime('%d.%m.%Y')}", thread_id=thread_id)
             return
     
