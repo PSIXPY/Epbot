@@ -33,9 +33,9 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
 
-# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (с обработкой лимитов) ===
+# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (используем разрешённую модель qwen/qwen3-32b) ===
 def ask_groq(prompt):
-    """Отправляет запрос к Groq через прямой HTTP-запрос с обработкой лимитов"""
+    """Отправляет запрос к Groq — всегда возвращает текст для пользователя"""
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен. Добавьте GROQ_API_KEY в переменные окружения."
     
@@ -45,7 +45,7 @@ def ask_groq(prompt):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "llama-3.1-8b-instant",
+        "model": "qwen/qwen3-32b",  # Разрешённая модель с 60 запросами в минуту
         "messages": [
             {"role": "system", "content": "Ты — полезный и дружелюбный ассистент. Отвечай кратко и по делу."},
             {"role": "user", "content": prompt}
@@ -58,19 +58,11 @@ def ask_groq(prompt):
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
         
         elif response.status_code == 429:
-            try:
-                error_data = response.json()
-                error_message = error_data.get("error", {}).get("message", "")
-                match = re.search(r'Please try again in (\d+\.?\d*)s', error_message)
-                if match:
-                    wait_time = float(match.group(1))
-                    return f"⚠️ *Лимит запросов к ИИ исчерпан!*\n\nПожалуйста, подождите `{wait_time:.1f}` секунд и попробуйте снова."
-            except:
-                pass
-            return "⚠️ *Лимит запросов к ИИ исчерпан!*\n\nПожалуйста, подождите 30 секунд и попробуйте снова."
+            return "⚠️ *Лимит запросов к ИИ исчерпан!*\n\nПожалуйста, подождите 1 минуту и попробуйте снова."
         
         elif response.status_code == 413:
             return "❌ *Сообщение слишком длинное!*\n\nПожалуйста, задайте вопрос короче."
@@ -80,7 +72,7 @@ def ask_groq(prompt):
             return f"❌ Ошибка Groq: {error_msg}"
             
     except requests.exceptions.Timeout:
-        return "❌ Превышено время ожидания ответа от Groq."
+        return "❌ Превышено время ожидания ответа от Groq. Попробуйте позже."
     except Exception as e:
         logger.error(f"Groq API error: {e}")
         return f"❌ Ошибка при запросе к Groq: {str(e)[:100]}"
@@ -480,7 +472,7 @@ def help_command(message):
     help_text = """📖 *Команды бота*
 
 /wiki [запрос] — поиск в Википедии
-/ai [запрос] — общение с ИИ (Groq)
+/ai [запрос] — общение с ИИ (Groq / qwen3-32b)
 /roll — случайное число (1-100)
 /coin — орёл/решка
 /time — текущее время
@@ -652,7 +644,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст")
-    logger.info("🤖 Команда /ai для общения с ИИ (Groq) с обработкой лимитов")
+    logger.info("🤖 Команда /ai для общения с ИИ (Groq / qwen3-32b)")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
 
     app.run(host="0.0.0.0", port=port)
