@@ -5,6 +5,8 @@ import requests
 import urllib.parse
 import wikipediaapi
 import random
+import time
+import threading
 from flask import Flask, request
 from datetime import datetime, timedelta
 from telebot import TeleBot, types
@@ -25,7 +27,7 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 bot = TeleBot(BOT_TOKEN)
 
-# Хранилище для скрытых сообщений (ID сообщения: данные)
+# Хранилище для скрытых сообщений
 secret_messages = {}
 
 
@@ -167,6 +169,22 @@ def send_video(chat_id, file_id, caption=None, reply_to=None, thread_id=None):
         return None
 
 
+def send_audio(chat_id, file_id, caption=None, reply_to=None, thread_id=None):
+    url = f"{API_URL}/sendAudio"
+    data = {"chat_id": chat_id, "audio": file_id, "message_thread_id": thread_id}
+    if caption:
+        data["caption"] = caption
+    if reply_to:
+        data["reply_to_message_id"] = reply_to
+    try:
+        response = requests.post(url, data=data, timeout=10)
+        result = response.json()
+        return result["result"]["message_id"] if result.get("ok") else None
+    except Exception as e:
+        logger.error(f"send_audio: {e}")
+        return None
+
+
 def send_sticker(chat_id, file_id, reply_to=None, thread_id=None):
     url = f"{API_URL}/sendSticker"
     data = {"chat_id": chat_id, "sticker": file_id, "message_thread_id": thread_id}
@@ -198,7 +216,7 @@ def forward_message(from_chat, to_chat, message_id, thread_id=None):
         return None
 
 
-# === INLINE-РЕЖИМ (СКРЫТЫЕ СООБЩЕНИЯ) ===
+# === INLINE-РЕЖИМ ДЛЯ СКРЫТЫХ СООБЩЕНИЙ (С ПОДДЕРЖКОЙ МЕДИА) ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -206,29 +224,44 @@ def inline_query(query):
         if not text:
             return
         
-        # Формат: @username текст
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
             return
         
         target_username = parts[0].lstrip("@")
-        secret_text = parts[1]
+        content = parts[1]
         sender_id = query.from_user.id
         sender_name = query.from_user.first_name
-        chat_id = query.from_user.id  # временно, но нужно будет получить из контекста
         
-        # Генерируем уникальный ID для сообщения
+        # Определяем тип контента
+        content_type = "text"
+        file_id = None
+        
+        if content.startswith(("http://", "https://")):
+            lower_content = content.lower()
+            if any(ext in lower_content for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+                content_type = "photo"
+                file_id = content
+            elif any(ext in lower_content for ext in ['.mp4', '.mov', '.avi', '.mkv']):
+                content_type = "video"
+                file_id = content
+            elif any(ext in lower_content for ext in ['.mp3', '.ogg', '.wav', '.m4a']):
+                content_type = "audio"
+                file_id = content
+        
         msg_id = f"sec_{int(datetime.now().timestamp() * 1000)}_{sender_id}"
         
-        # Сохраняем сообщение
         secret_messages[msg_id] = {
-            "text": secret_text,
+            "content": content,
+            "content_type": content_type,
+            "file_id": file_id,
             "sender_id": sender_id,
             "sender_name": sender_name,
-            "target_username": target_username
+            "target_username": target_username,
+            "timestamp": datetime.now().timestamp(),
+            "expires": datetime.now().timestamp() + 300  # 5 минут
         }
         
-        # Создаём кнопку "Прочитать"
         markup = InlineKeyboardMarkup()
         button = InlineKeyboardButton(
             text="📩 Прочитать сообщение",
@@ -236,11 +269,12 @@ def inline_query(query):
         )
         markup.add(button)
         
-        # Отправляем inline-результат (при выборе сразу отправляется сообщение с кнопкой)
+        description = f"{content[:50]}..." if content_type == "text" else f"📎 Медиафайл для @{target_username}"
+        
         result = types.InlineQueryResultArticle(
             id=msg_id,
             title=f"Отправить сообщение для @{target_username}",
-            description=secret_text[:50],
+            description=description,
             input_message_content=types.InputTextMessageContent(
                 f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}\n\nНажмите на кнопку, чтобы прочитать:",
                 parse_mode="Markdown"
@@ -256,45 +290,121 @@ def inline_query(query):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("read_"))
 def handle_read_callback(call):
     try:
-        msg_id = call.data[5:]  # убираем "read_"
+        msg_id = call.data[5:]
         
         if msg_id not in secret_messages:
             bot.answer_callback_query(call.id, "❌ Сообщение устарело или уже прочитано.", show_alert=True)
             return
         
         data = secret_messages[msg_id]
-        secret_text = data["text"]
+        content = data["content"]
+        content_type = data["content_type"]
+        file_id = data["file_id"]
         sender_id = data["sender_id"]
         sender_name = data["sender_name"]
         target_username = data["target_username"]
         
-        # Проверяем, что нажал именно получатель
+        # Проверка на получателя
         if call.from_user.username != target_username:
             bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
+            return
+        
+        # Проверка на устаревание
+        if datetime.now().timestamp() > data.get("expires", datetime.now().timestamp() + 300):
+            bot.answer_callback_query(call.id, "❌ Сообщение устарело.", show_alert=True)
+            del secret_messages[msg_id]
             return
         
         # Удаляем из хранилища
         del secret_messages[msg_id]
         
-        # Показываем сообщение
-        bot.answer_callback_query(
-            call.id,
-            f"📩 Сообщение от {sender_name}: {secret_text}",
-            show_alert=True
-        )
+        # Удаляем кнопку из чата
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
+        
+        # Отправляем контент в зависимости от типа
+        if content_type == "text":
+            bot.answer_callback_query(
+                call.id,
+                f"📩 Сообщение от {sender_name}: {content}",
+                show_alert=True
+            )
+        else:
+            bot.answer_callback_query(call.id, f"📩 Сообщение от {sender_name}", show_alert=False)
         
         # Отправляем копию в ЛС
         try:
+            if content_type == "text":
+                bot.send_message(
+                    call.from_user.id,
+                    f"🔒 *Скрытое сообщение* от *{sender_name}*:\n\n{content}",
+                    parse_mode="Markdown"
+                )
+            elif content_type == "photo":
+                bot.send_photo(
+                    call.from_user.id,
+                    file_id if file_id else content,
+                    caption=f"🔒 *Скрытое сообщение* от *{sender_name}*",
+                    parse_mode="Markdown"
+                )
+            elif content_type == "video":
+                bot.send_video(
+                    call.from_user.id,
+                    file_id if file_id else content,
+                    caption=f"🔒 *Скрытое сообщение* от *{sender_name}*",
+                    parse_mode="Markdown"
+                )
+            elif content_type == "audio":
+                bot.send_audio(
+                    call.from_user.id,
+                    file_id if file_id else content,
+                    caption=f"🔒 *Скрытое сообщение* от *{sender_name}*",
+                    parse_mode="Markdown"
+                )
+            else:
+                bot.send_message(
+                    call.from_user.id,
+                    f"🔒 *Скрытое сообщение* от *{sender_name}*:\n\n{content}",
+                    parse_mode="Markdown"
+                )
+            
+            # Уведомление отправителю
             bot.send_message(
-                call.from_user.id,
-                f"🔒 *Скрытое сообщение* от *{sender_name}*:\n\n{secret_text}",
+                sender_id,
+                f"✅ @{target_username} прочитал(а) ваше скрытое сообщение",
                 parse_mode="Markdown"
             )
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Send to DM error: {e}")
+            bot.send_message(
+                call.from_user.id,
+                f"🔒 *Скрытое сообщение* от *{sender_name}*:\n\n{content}",
+                parse_mode="Markdown"
+            )
+            
     except Exception as e:
         logger.error(f"Read callback error: {e}")
         bot.answer_callback_query(call.id, "❌ Ошибка при открытии сообщения.", show_alert=True)
+
+
+# === ОЧИСТКА УСТАРЕВШИХ СООБЩЕНИЙ (РАЗ В 24 ЧАСА) ===
+def clean_expired_messages():
+    while True:
+        time.sleep(86400)  # 24 часа = 86400 секунд
+        now = datetime.now().timestamp()
+        expired = [msg_id for msg_id, data in secret_messages.items() 
+                   if data.get("expires", now + 300) < now]
+        for msg_id in expired:
+            del secret_messages[msg_id]
+        if expired:
+            logger.info(f"🧹 Удалено {len(expired)} устаревших скрытых сообщений (очистка раз в 24 часа)")
+        else:
+            logger.info("🧹 Очистка скрытых сообщений: устаревших нет")
+
+# Запуск очистки в фоновом потоке
+threading.Thread(target=clean_expired_messages, daemon=True).start()
 
 
 # === ОБЫЧНЫЕ КОМАНДЫ ===
@@ -321,8 +431,9 @@ def help_command(message):
 /help — эта справка
 
 📩 *Скрытые сообщения:*
-Напишите в чате: `@имя_бота @получатель текст`
-Выберите результат — сообщение отправится с кнопкой "Прочитать"
+• Текст: `@имя_бота @получатель текст`
+• Фото: `@имя_бота @получатель https://example.com/photo.jpg`
+• Видео: `@имя_бота @получатель https://example.com/video.mp4`
 
 🔄 Обычные сообщения пересылаются между чатами"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
@@ -489,7 +600,8 @@ if __name__ == "__main__":
 
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст")
+    logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст/ссылка")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
+    logger.info("🧹 Очистка устаревших сообщений: раз в 24 часа")
 
     app.run(host="0.0.0.0", port=port)
