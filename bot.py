@@ -25,9 +25,8 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 bot = TeleBot(BOT_TOKEN)
 
-# Хранилища для скрытых сообщений
-pending_messages = {}  # {msg_id: data}
-pending_show = {}      # {show_id: data}
+# Хранилище для скрытых сообщений (ID сообщения: данные)
+secret_messages = {}
 
 
 # === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
@@ -199,7 +198,7 @@ def forward_message(from_chat, to_chat, message_id, thread_id=None):
         return None
 
 
-# === INLINE-РЕЖИМ ДЛЯ СКРЫТЫХ СООБЩЕНИЙ ===
+# === INLINE-РЕЖИМ (СКРЫТЫЕ СООБЩЕНИЯ) ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -207,6 +206,7 @@ def inline_query(query):
         if not text:
             return
         
+        # Формат: @username текст
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
             return
@@ -215,29 +215,35 @@ def inline_query(query):
         secret_text = parts[1]
         sender_id = query.from_user.id
         sender_name = query.from_user.first_name
+        chat_id = query.from_user.id  # временно, но нужно будет получить из контекста
         
-        # Генерируем уникальный ID
-        msg_id = f"{sender_id}_{int(datetime.now().timestamp() * 1000)}"
-        pending_messages[msg_id] = {
-            "target": target_username,
+        # Генерируем уникальный ID для сообщения
+        msg_id = f"sec_{int(datetime.now().timestamp() * 1000)}_{sender_id}"
+        
+        # Сохраняем сообщение
+        secret_messages[msg_id] = {
             "text": secret_text,
             "sender_id": sender_id,
-            "sender_name": sender_name
+            "sender_name": sender_name,
+            "target_username": target_username
         }
         
+        # Создаём кнопку "Прочитать"
         markup = InlineKeyboardMarkup()
         button = InlineKeyboardButton(
-            text=f"📩 Отправить @{target_username}",
-            callback_data=f"send_{msg_id}"
+            text="📩 Прочитать сообщение",
+            callback_data=f"read_{msg_id}"
         )
         markup.add(button)
         
+        # Отправляем inline-результат (при выборе сразу отправляется сообщение с кнопкой)
         result = types.InlineQueryResultArticle(
             id=msg_id,
             title=f"Отправить сообщение для @{target_username}",
             description=secret_text[:50],
             input_message_content=types.InputTextMessageContent(
-                f"🔐 Вы отправляете скрытое сообщение для @{target_username}"
+                f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}\n\nНажмите на кнопку, чтобы прочитать:",
+                parse_mode="Markdown"
             ),
             reply_markup=markup
         )
@@ -247,78 +253,33 @@ def inline_query(query):
         logger.error(f"Inline error: {e}")
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("send_"))
-def handle_inline_send(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith("read_"))
+def handle_read_callback(call):
     try:
-        msg_id = call.data[5:]  # убираем "send_"
-        if msg_id not in pending_messages:
-            bot.answer_callback_query(call.id, "❌ Сообщение устарело. Попробуйте снова.", show_alert=True)
-            return
+        msg_id = call.data[5:]  # убираем "read_"
         
-        data = pending_messages[msg_id]
-        target_username = data["target"]
-        secret_text = data["text"]
-        sender_id = data["sender_id"]
-        sender_name = data["sender_name"]
-        chat_id = call.message.chat.id
-        
-        # Удаляем из хранилища
-        del pending_messages[msg_id]
-        
-        # Генерируем ID для кнопки получателя
-        show_id = f"show_{sender_id}_{int(datetime.now().timestamp() * 1000)}"
-        pending_show[show_id] = {
-            "text": secret_text,
-            "sender_id": sender_id,
-            "sender_name": sender_name,
-            "target_username": target_username
-        }
-        
-        markup = InlineKeyboardMarkup()
-        button = InlineKeyboardButton(
-            text=f"📩 Скрытое сообщение от {sender_name}",
-            callback_data=show_id
-        )
-        markup.add(button)
-        
-        bot.send_message(
-            chat_id,
-            f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}",
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
-        
-        bot.answer_callback_query(call.id, "✅ Сообщение отправлено!", show_alert=False)
-    except Exception as e:
-        logger.error(f"send callback error: {e}")
-        bot.answer_callback_query(call.id, "❌ Ошибка при отправке.", show_alert=True)
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("show_"))
-def handle_show_callback(call):
-    try:
-        show_id = call.data
-        if show_id not in pending_show:
+        if msg_id not in secret_messages:
             bot.answer_callback_query(call.id, "❌ Сообщение устарело или уже прочитано.", show_alert=True)
             return
         
-        data = pending_show[show_id]
+        data = secret_messages[msg_id]
         secret_text = data["text"]
         sender_id = data["sender_id"]
         sender_name = data["sender_name"]
+        target_username = data["target_username"]
         
-        # Проверка: сообщение может прочитать только тот, кому оно отправлено
-        if call.from_user.id != sender_id:
+        # Проверяем, что нажал именно получатель
+        if call.from_user.username != target_username:
             bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
             return
         
         # Удаляем из хранилища
-        del pending_show[show_id]
+        del secret_messages[msg_id]
         
         # Показываем сообщение
         bot.answer_callback_query(
             call.id,
-            f"📩 Сообщение: {secret_text}",
+            f"📩 Сообщение от {sender_name}: {secret_text}",
             show_alert=True
         )
         
@@ -329,10 +290,10 @@ def handle_show_callback(call):
                 f"🔒 *Скрытое сообщение* от *{sender_name}*:\n\n{secret_text}",
                 parse_mode="Markdown"
             )
-        except Exception as e:
-            logger.error(f"Send to DM error: {e}")
+        except:
+            pass
     except Exception as e:
-        logger.error(f"show callback error: {e}")
+        logger.error(f"Read callback error: {e}")
         bot.answer_callback_query(call.id, "❌ Ошибка при открытии сообщения.", show_alert=True)
 
 
@@ -361,7 +322,7 @@ def help_command(message):
 
 📩 *Скрытые сообщения:*
 Напишите в чате: `@имя_бота @получатель текст`
-Выберите результат и нажмите "Отправить"
+Выберите результат — сообщение отправится с кнопкой "Прочитать"
 
 🔄 Обычные сообщения пересылаются между чатами"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
