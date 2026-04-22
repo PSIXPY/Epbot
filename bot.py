@@ -25,9 +25,6 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 bot = TeleBot(BOT_TOKEN)
 
-# Контекст для временного хранения данных скрытых сообщений
-context = {}
-
 
 # === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
 def search_wikipedia(query):
@@ -198,101 +195,74 @@ def forward_message(from_chat, to_chat, message_id, thread_id=None):
         return None
 
 
-# === СКРЫТЫЕ СООБЩЕНИЯ ===
-@bot.message_handler(commands=['msg'])
-def start_secret_message(message):
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ Использование: `/msg @username`", parse_mode="Markdown")
+# === INLINE-РЕЖИМ ДЛЯ СКРЫТЫХ СООБЩЕНИЙ ===
+@bot.inline_handler(func=lambda query: True)
+def inline_query(query):
+    try:
+        text = query.query.strip()
+        if not text:
+            return
+        
+        # Формат: @username текст
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            return
+        
+        target_username = parts[0].lstrip("@")
+        secret_text = parts[1]
+        sender_id = query.from_user.id
+        sender_name = query.from_user.first_name
+        
+        # Создаём кнопку
+        markup = InlineKeyboardMarkup()
+        button = InlineKeyboardButton(
+            text=f"📩 Отправить скрытое сообщение",
+            callback_data=f"inline_send:{target_username}:{secret_text[:50]}:{sender_id}:{sender_name}"
+        )
+        markup.add(button)
+        
+        # Результат inline-запроса
+        result = types.InlineQueryResultArticle(
+            id="1",
+            title=f"Отправить сообщение для @{target_username}",
+            description=secret_text[:50],
+            input_message_content=types.InputTextMessageContent(
+                f"🔐 Вы отправляете скрытое сообщение для @{target_username}"
+            ),
+            reply_markup=markup
+        )
+        
+        bot.answer_inline_query(query.id, [result], cache_time=0)
+    except Exception as e:
+        logger.error(f"Inline error: {e}")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("inline_send"))
+def handle_inline_send(call):
+    try:
+        _, target_username, secret_text, sender_id, sender_name = call.data.split(":", 4)
+    except:
+        bot.answer_callback_query(call.id, "❌ Ошибка формата.", show_alert=True)
         return
     
-    target_username = parts[1].lstrip("@")
-    chat_id = message.chat.id
-    sender_id = message.from_user.id
-    sender_name = message.from_user.first_name
-    message_id = message.message_id
+    chat_id = call.message.chat.id
     
-    # Удаляем команду пользователя
-    try:
-        bot.delete_message(chat_id, message_id)
-    except:
-        pass
-    
+    # Создаём кнопку для получателя
     markup = InlineKeyboardMarkup()
     button = InlineKeyboardButton(
-        text=f"📩 Написать скрытое сообщение для @{target_username}",
-        callback_data=f"ask_msg:{target_username}:{sender_id}:{sender_name}"
+        text=f"📩 Скрытое сообщение от {sender_name}",
+        callback_data=f"show_msg:{target_username}:{secret_text}:{sender_id}"
     )
     markup.add(button)
     
     bot.send_message(
         chat_id,
-        f"🔐 *Скрытое сообщение*\nНажмите на кнопку, чтобы написать сообщение для @{target_username}",
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("ask_msg"))
-def ask_for_secret_text(call):
-    try:
-        _, target_username, sender_id, sender_name = call.data.split(":", 3)
-    except:
-        bot.answer_callback_query(call.id, "❌ Ошибка.", show_alert=True)
-        return
-    
-    bot.answer_callback_query(
-        call.id,
-        text="Введите текст скрытого сообщения:",
-        show_alert=False
-    )
-    
-    context[call.from_user.id] = {
-        "target": target_username,
-        "sender_id": sender_id,
-        "sender_name": sender_name,
-        "chat_id": call.message.chat.id
-    }
-    
-    bot.send_message(
-        call.message.chat.id,
-        f"✏️ Напишите текст сообщения для @{target_username} (просто отправьте его следующим сообщением):",
-        parse_mode="Markdown"
-    )
-
-
-@bot.message_handler(func=lambda m: m.from_user.id in context)
-def process_secret_text(message):
-    user_id = message.from_user.id
-    secret_text = message.text
-    chat_id = message.chat.id
-    
-    data = context[user_id]
-    target_username = data["target"]
-    sender_id = data["sender_id"]
-    sender_name = data["sender_name"]
-    target_chat_id = data["chat_id"]
-    del context[user_id]
-    
-    # Удаляем сообщение с текстом
-    try:
-        bot.delete_message(chat_id, message.message_id)
-    except:
-        pass
-    
-    markup = InlineKeyboardMarkup()
-    button = InlineKeyboardButton(
-        text=f"📩 Скрытое сообщение от {sender_name}",
-        callback_data=f"show_msg:{target_username}:{secret_text[:50]}:{sender_id}"
-    )
-    markup.add(button)
-    
-    bot.send_message(
-        target_chat_id,
         f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}",
         reply_markup=markup,
         parse_mode="Markdown"
     )
+    
+    bot.answer_callback_query(call.id, "✅ Сообщение отправлено!", show_alert=False)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("show_msg"))
@@ -300,7 +270,7 @@ def handle_secret_callback(call):
     try:
         _, target_username, secret_text, sender_id = call.data.split(":", 3)
     except:
-        bot.answer_callback_query(call.id, "❌ Ошибка формата сообщения.", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Ошибка формата.", show_alert=True)
         return
     
     if call.from_user.username != target_username:
@@ -323,9 +293,59 @@ def handle_secret_callback(call):
         pass
 
 
-# === ОСНОВНОЙ ОБРАБОТЧИК ===
+# === ОБЫЧНЫЕ КОМАНДЫ ===
+@bot.message_handler(commands=['wiki'])
+def wiki_command(message):
+    query = message.text[5:].strip()
+    if not query:
+        bot.reply_to(message, "ℹ️ Использование: `/wiki запрос`", parse_mode="Markdown")
+        return
+    bot.reply_to(message, f"🔍 Ищу *{query}* в Википедии...", parse_mode="Markdown")
+    result = search_wikipedia(query)
+    bot.send_message(message.chat.id, result, parse_mode="Markdown")
+
+
+@bot.message_handler(commands=['help', 'start'])
+def help_command(message):
+    help_text = """📖 *Команды бота*
+
+/wiki [запрос] — поиск в Википедии
+/roll — случайное число (1-100)
+/coin — орёл/решка
+/time — текущее время
+/date — сегодняшняя дата
+/help — эта справка
+
+📩 *Скрытые сообщения:*
+Напишите в чате: `@имя_бота @получатель текст`
+Выберите результат и нажмите "Отправить"
+
+🔄 Обычные сообщения пересылаются между чатами"""
+    bot.reply_to(message, help_text, parse_mode="Markdown")
+
+
+@bot.message_handler(commands=['roll'])
+def roll_command(message):
+    bot.reply_to(message, f"🎲 {random.randint(1, 100)}")
+
+
+@bot.message_handler(commands=['coin'])
+def coin_command(message):
+    bot.reply_to(message, f"🪙 {random.choice(['Орёл', 'Решка'])}")
+
+
+@bot.message_handler(commands=['time'])
+def time_command(message):
+    bot.reply_to(message, f"🕐 {datetime.now().strftime('%H:%M:%S')}")
+
+
+@bot.message_handler(commands=['date'])
+def date_command(message):
+    bot.reply_to(message, f"📅 {datetime.now().strftime('%d.%m.%Y')}")
+
+
+# === ОСНОВНОЙ ОБРАБОТЧИК ДЛЯ ПЕРЕСЫЛКИ ===
 def process_update(update):
-    # Обработка постов в каналах
     if "channel_post" in update:
         post = update["channel_post"]
         channel_id = post["chat"]["id"]
@@ -356,13 +376,13 @@ def process_update(update):
 
     # Команды не пересылаем
     if message_text.startswith("/"):
-        logger.info(f"⏭ Команда {message_text} не пересылается")
+        logger.info(f"⏭ Команда не пересылается")
         return
 
     # Определяем получателя
     if chat_id == CHAT_A:
         if message.get("from") and message["from"].get("id") == SOURCE_CHANNEL:
-            logger.info(f"⏭ Игнорируем сообщение от канала {SOURCE_CHANNEL}")
+            logger.info(f"⏭ Игнорируем сообщение от канала")
             return
         target = CHAT_B
         target_thread = CHAT_B_THREAD
@@ -376,47 +396,7 @@ def process_update(update):
     sender = message.get("from", {})
     sender_name = get_sender_name(sender)
 
-    # === ОБРАБОТКА КОМАНД ===
-    if message_text:
-        if message_text.lower().startswith("/wiki"):
-            query = message_text[5:].strip()
-            if not query:
-                send_message(chat_id, "ℹ️ Использование: `/wiki запрос`", thread_id=thread_id)
-                return
-            send_message(chat_id, f"🔍 Ищу *{query}* в Википедии...", thread_id=thread_id)
-            result = search_wikipedia(query)
-            send_message(chat_id, result, thread_id=thread_id)
-            return
-
-        if message_text.lower() in ["/help", "/start"]:
-            help_text = """📖 *Команды бота*
-
-/wiki [запрос] — поиск в Википедии
-/msg @username — скрытое сообщение
-/roll — случайное число (1-100)
-/coin — орёл/решка
-/time — текущее время
-/date — сегодняшняя дата
-/help — эта справка
-
-🔄 Обычные сообщения пересылаются между чатами"""
-            send_message(chat_id, help_text, thread_id=thread_id)
-            return
-
-        if message_text.lower() == "/roll":
-            send_message(chat_id, f"🎲 {random.randint(1, 100)}", thread_id=thread_id)
-            return
-        if message_text.lower() == "/coin":
-            send_message(chat_id, f"🪙 {random.choice(['Орёл', 'Решка'])}", thread_id=thread_id)
-            return
-        if message_text.lower() == "/time":
-            send_message(chat_id, f"🕐 {datetime.now().strftime('%H:%M:%S')}", thread_id=thread_id)
-            return
-        if message_text.lower() == "/date":
-            send_message(chat_id, f"📅 {datetime.now().strftime('%d.%m.%Y')}", thread_id=thread_id)
-            return
-
-    # === ПЕРЕСЫЛКА ОБЫЧНЫХ СООБЩЕНИЙ ===
+    # Пересылка обычных сообщений
     reply_to_id = None
     reply_to_name = None
 
@@ -483,9 +463,7 @@ def process_update(update):
 def webhook():
     try:
         update = request.get_json()
-        # Сначала обрабатываем команды через telebot
         bot.process_new_updates([types.Update.de_json(update)])
-        # Потом обрабатываем пересылку
         process_update(update)
         return "OK", 200
     except Exception as e:
@@ -506,7 +484,7 @@ if __name__ == "__main__":
 
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("📩 Команда /msg @username — скрытые сообщения через кнопку")
+    logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
 
     app.run(host="0.0.0.0", port=port)
