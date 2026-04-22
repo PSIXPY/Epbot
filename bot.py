@@ -25,6 +25,10 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 bot = TeleBot(BOT_TOKEN)
 
+# Временные хранилища для скрытых сообщений
+pending_messages = {}
+pending_show = {}
+
 
 # === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
 def search_wikipedia(query):
@@ -203,7 +207,6 @@ def inline_query(query):
         if not text:
             return
         
-        # Формат: @username текст
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
             return
@@ -213,15 +216,21 @@ def inline_query(query):
         sender_id = query.from_user.id
         sender_name = query.from_user.first_name
         
-        # Создаём кнопку
+        msg_id = f"{sender_id}_{int(datetime.now().timestamp())}"
+        pending_messages[msg_id] = {
+            "target": target_username,
+            "text": secret_text,
+            "sender_id": sender_id,
+            "sender_name": sender_name
+        }
+        
         markup = InlineKeyboardMarkup()
         button = InlineKeyboardButton(
-            text=f"📩 Отправить скрытое сообщение",
-            callback_data=f"inline_send:{target_username}:{secret_text[:50]}:{sender_id}:{sender_name}"
+            text=f"📩 Отправить @{target_username}",
+            callback_data=f"send:{msg_id}"
         )
         markup.add(button)
         
-        # Результат inline-запроса
         result = types.InlineQueryResultArticle(
             id="1",
             title=f"Отправить сообщение для @{target_username}",
@@ -237,60 +246,87 @@ def inline_query(query):
         logger.error(f"Inline error: {e}")
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("inline_send"))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("send:"))
 def handle_inline_send(call):
     try:
-        _, target_username, secret_text, sender_id, sender_name = call.data.split(":", 4)
-    except:
-        bot.answer_callback_query(call.id, "❌ Ошибка формата.", show_alert=True)
-        return
-    
-    chat_id = call.message.chat.id
-    
-    # Создаём кнопку для получателя
-    markup = InlineKeyboardMarkup()
-    button = InlineKeyboardButton(
-        text=f"📩 Скрытое сообщение от {sender_name}",
-        callback_data=f"show_msg:{target_username}:{secret_text}:{sender_id}"
-    )
-    markup.add(button)
-    
-    bot.send_message(
-        chat_id,
-        f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}",
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
-    
-    bot.answer_callback_query(call.id, "✅ Сообщение отправлено!", show_alert=False)
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("show_msg"))
-def handle_secret_callback(call):
-    try:
-        _, target_username, secret_text, sender_id = call.data.split(":", 3)
-    except:
-        bot.answer_callback_query(call.id, "❌ Ошибка формата.", show_alert=True)
-        return
-    
-    if call.from_user.username != target_username:
-        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
-        return
-    
-    bot.answer_callback_query(
-        call.id,
-        f"📩 Сообщение: {secret_text}",
-        show_alert=True
-    )
-    
-    try:
+        msg_id = call.data.split(":", 1)[1]
+        if msg_id not in pending_messages:
+            bot.answer_callback_query(call.id, "❌ Сообщение устарело. Попробуйте снова.", show_alert=True)
+            return
+        
+        data = pending_messages[msg_id]
+        target_username = data["target"]
+        secret_text = data["text"]
+        sender_id = data["sender_id"]
+        sender_name = data["sender_name"]
+        chat_id = call.message.chat.id
+        
+        del pending_messages[msg_id]
+        
+        show_msg_id = f"show:{target_username}:{sender_id}:{int(datetime.now().timestamp())}"
+        pending_show[show_msg_id] = {
+            "text": secret_text,
+            "sender_id": sender_id,
+            "sender_name": sender_name
+        }
+        
+        markup = InlineKeyboardMarkup()
+        button = InlineKeyboardButton(
+            text=f"📩 Скрытое сообщение от {sender_name}",
+            callback_data=show_msg_id
+        )
+        markup.add(button)
+        
         bot.send_message(
-            call.from_user.id,
-            f"🔒 *Скрытое сообщение* от *ID {sender_id}*:\n\n{secret_text}",
+            chat_id,
+            f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}",
+            reply_markup=markup,
             parse_mode="Markdown"
         )
-    except:
-        pass
+        
+        bot.answer_callback_query(call.id, "✅ Сообщение отправлено!", show_alert=False)
+    except Exception as e:
+        logger.error(f"send callback error: {e}")
+        bot.answer_callback_query(call.id, "❌ Ошибка при отправке.", show_alert=True)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("show:"))
+def handle_show_callback(call):
+    try:
+        show_id = call.data
+        if show_id not in pending_show:
+            bot.answer_callback_query(call.id, "❌ Сообщение устарело или уже прочитано.", show_alert=True)
+            return
+        
+        data = pending_show[show_id]
+        secret_text = data["text"]
+        sender_id = data["sender_id"]
+        sender_name = data["sender_name"]
+        
+        # Проверка: сообщение может прочитать только тот, кому оно отправлено
+        if call.from_user.id != sender_id:
+            bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
+            return
+        
+        del pending_show[show_id]
+        
+        bot.answer_callback_query(
+            call.id,
+            f"📩 Сообщение: {secret_text}",
+            show_alert=True
+        )
+        
+        try:
+            bot.send_message(
+                call.from_user.id,
+                f"🔒 *Скрытое сообщение* от *{sender_name}*:\n\n{secret_text}",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+    except Exception as e:
+        logger.error(f"show callback error: {e}")
+        bot.answer_callback_query(call.id, "❌ Ошибка при открытии сообщения.", show_alert=True)
 
 
 # === ОБЫЧНЫЕ КОМАНДЫ ===
@@ -346,6 +382,7 @@ def date_command(message):
 
 # === ОСНОВНОЙ ОБРАБОТЧИК ДЛЯ ПЕРЕСЫЛКИ ===
 def process_update(update):
+    # Обработка постов в каналах (реакция 🔥)
     if "channel_post" in update:
         post = update["channel_post"]
         channel_id = post["chat"]["id"]
