@@ -203,61 +203,60 @@ def forward_message(from_chat, to_chat, message_id, thread_id=None):
 def start_secret_message(message):
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        bot.reply_to(
-            message,
-            "ℹ️ *Как отправить скрытое сообщение:*\n`/msg @username`\n\nПосле этого напишите текст сообщения.",
-            parse_mode="Markdown"
-        )
+        bot.reply_to(message, "ℹ️ Использование: `/msg @username`", parse_mode="Markdown")
         return
-    
+
     target_username = parts[1].lstrip("@")
     chat_id = message.chat.id
     sender_id = message.from_user.id
     sender_name = message.from_user.first_name
-    
+
+    # Сохраняем данные
     pending_secret[chat_id] = {
         "target": target_username,
         "sender_id": sender_id,
         "sender_name": sender_name
     }
-    
+
+    # Отправляем сообщение с ForceReply
     markup = types.ForceReply(selective=True)
     bot.send_message(
         chat_id,
-        f"🔐 *Скрытое сообщение для @{target_username}*\n\nНапишите текст ниже:",
-        reply_markup=markup,
-        parse_mode="Markdown"
+        f"🔐 Скрытое сообщение для @{target_username}\n\nНапишите текст ниже:",
+        reply_markup=markup
     )
 
 
-@bot.message_handler(func=lambda m: m.reply_to_message and "Скрытое сообщение для @" in m.reply_to_message.text)
+@bot.message_handler(func=lambda m: m.reply_to_message is not None)
 def handle_secret_text(message):
     chat_id = message.chat.id
     secret_text = message.text
-    
+
+    # Проверяем, есть ли ожидание в этом чате
     if chat_id not in pending_secret:
-        bot.reply_to(message, "❌ Ошибка: не найден получатель. Попробуйте снова `/msg @username`")
         return
-    
+
     target_username = pending_secret[chat_id]["target"]
     sender_id = pending_secret[chat_id]["sender_id"]
     sender_name = pending_secret[chat_id]["sender_name"]
     del pending_secret[chat_id]
-    
+
+    # Создаём кнопку
     markup = InlineKeyboardMarkup()
     button = InlineKeyboardButton(
         text=f"📩 Скрытое сообщение от {sender_name}",
         callback_data=f"show_msg:{target_username}:{secret_text[:50]}:{sender_id}"
     )
     markup.add(button)
-    
+
+    # Отправляем кнопку
     bot.send_message(
         chat_id,
-        f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}",
-        reply_markup=markup,
-        parse_mode="Markdown"
+        f"🔔 Новое скрытое сообщение от {sender_name} для @{target_username}",
+        reply_markup=markup
     )
-    
+
+    # Удаляем служебные сообщения
     try:
         bot.delete_message(chat_id, message.reply_to_message.message_id)
         bot.delete_message(chat_id, message.message_id)
@@ -272,17 +271,17 @@ def handle_secret_callback(call):
     except:
         bot.answer_callback_query(call.id, "❌ Ошибка формата сообщения.", show_alert=True)
         return
-    
+
     if call.from_user.username != target_username:
         bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
         return
-    
+
     bot.answer_callback_query(
         call.id,
         f"📩 Сообщение: {secret_text}",
         show_alert=True
     )
-    
+
     try:
         bot.send_message(
             call.from_user.id,
@@ -295,7 +294,7 @@ def handle_secret_callback(call):
 
 # === ОСНОВНОЙ ОБРАБОТЧИК ===
 def process_update(update):
-    # Обработка постов в каналах
+    # Обработка постов в каналах (реакция 🔥)
     if "channel_post" in update:
         post = update["channel_post"]
         channel_id = post["chat"]["id"]
@@ -314,28 +313,28 @@ def process_update(update):
 
     if "message" not in update:
         return
-    
+
     message = update["message"]
     chat_id = message["chat"]["id"]
     message_id = message["message_id"]
     thread_id = message.get("message_thread_id")
-    
-    logger.info(f"📥 Получено | Чат: {chat_id} | Тред: {thread_id}")
-    
+
+    logger.info(f"📥 Получено | Чат: {chat_id}")
+
     # Проверяем текст (если есть)
     message_text = message.get("text", "")
-    
+
     # === НЕ ПЕРЕСЫЛАЕМ КОМАНДУ /msg ===
     if message_text.lower().startswith("/msg"):
         logger.info(f"⏭ Команда /msg не пересылается")
         return
-    
+
     # === НЕ ПЕРЕСЫЛАЕМ ТЕКСТ ДЛЯ СКРЫТЫХ СООБЩЕНИЙ ===
     reply_to = message.get("reply_to_message")
     if reply_to and "Скрытое сообщение для @" in reply_to.get("text", ""):
         logger.info(f"⏭ Текст для скрытого сообщения не пересылается")
         return
-    
+
     # Определяем получателя для обычных сообщений
     if chat_id == CHAT_A:
         if message.get("from") and message["from"].get("id") == SOURCE_CHANNEL:
@@ -349,10 +348,10 @@ def process_update(update):
     else:
         logger.info(f"⏭ Игнорируем")
         return
-    
+
     sender = message.get("from", {})
     sender_name = get_sender_name(sender)
-    
+
     # === ОБРАБОТКА КОМАНД ===
     if message_text:
         if message_text.lower().startswith("/wiki"):
@@ -364,7 +363,7 @@ def process_update(update):
             result = search_wikipedia(query)
             send_message(chat_id, result, thread_id=thread_id)
             return
-        
+
         if message_text.lower() in ["/help", "/start"]:
             help_text = """📖 *Команды бота*
 
@@ -379,7 +378,7 @@ def process_update(update):
 🔄 Обычные сообщения пересылаются между чатами"""
             send_message(chat_id, help_text, thread_id=thread_id)
             return
-        
+
         if message_text.lower() == "/roll":
             send_message(chat_id, f"🎲 {random.randint(1, 100)}", thread_id=thread_id)
             return
@@ -392,37 +391,37 @@ def process_update(update):
         if message_text.lower() == "/date":
             send_message(chat_id, f"📅 {datetime.now().strftime('%d.%m.%Y')}", thread_id=thread_id)
             return
-    
+
     # === ПЕРЕСЫЛКА ОБЫЧНЫХ СООБЩЕНИЙ ===
     reply_to_id = None
     reply_to_name = None
-    
+
     if "reply_to_message" in message:
         reply_msg = message["reply_to_message"]
         original_msg_id = reply_msg["message_id"]
         original_chat_id = reply_msg["chat"]["id"]
-        
+
         link_key = f"{original_chat_id}:{original_msg_id}"
         if link_key in message_links:
             reply_to_id = message_links[link_key]
             if "from" in reply_msg:
                 reply_to_name = get_sender_name(reply_msg["from"])
-    
+
     if reply_to_name:
         caption_text = f"📨 {sender_name} ответил(а) {reply_to_name}"
     else:
         caption_text = f"📨 От: {sender_name}"
-    
+
     content_text = ""
     if "caption" in message:
         content_text = message["caption"]
     elif "text" in message:
         content_text = message["text"]
-    
+
     full_caption = f"{caption_text}\n\n{content_text}" if content_text else caption_text
-    
+
     sent_msg_id = None
-    
+
     if "photo" in message:
         file_id = message["photo"][-1]["file_id"]
         sent_msg_id = send_photo(target, file_id, full_caption, reply_to_id, target_thread)
@@ -441,7 +440,7 @@ def process_update(update):
         sent_msg_id = send_message(target, full_caption, reply_to_id, target_thread)
     else:
         sent_msg_id = forward_message(chat_id, target, message_id, target_thread)
-    
+
     if sent_msg_id:
         source_key = f"{chat_id}:{message_id}"
         target_key = f"{target}:{sent_msg_id}"
@@ -451,7 +450,7 @@ def process_update(update):
             keys = list(message_links.keys())[:1000]
             for key in keys:
                 del message_links[key]
-    
+
     logger.info(f"✅ Обработано")
 
 
@@ -478,10 +477,10 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     requests.get(f"{API_URL}/setWebhook?url={webhook_url}")
-    
+
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("📩 Команда /msg для скрытых сообщений")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
-    
+
     app.run(host="0.0.0.0", port=port)
