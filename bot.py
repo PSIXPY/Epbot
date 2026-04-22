@@ -33,17 +33,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
 
-# === ФУНКЦИЯ ДЛЯ ОЧИСТКИ ТЕГОВ /think ===
-def clean_think_tags(text):
-    """Удаляет теги /think ... /think и оставляет только финальный ответ"""
-    if not text:
-        return text
-    cleaned = re.sub(r'/think.*?/think', '', text, flags=re.DOTALL)
-    cleaned = re.sub(r'\n\s*\n', '\n', cleaned).strip()
-    return cleaned if cleaned else text
-
-
-# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (чёткие ответы без рассуждений) ===
+# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (с полной очисткой тегов /think) ===
 def ask_groq(prompt):
     """Отправляет запрос к Groq — чёткие ответы без лишних рассуждений"""
     if not GROQ_API_KEY:
@@ -78,7 +68,17 @@ def ask_groq(prompt):
         if response.status_code == 200:
             result = response.json()
             answer = result["choices"][0]["message"]["content"]
-            answer = clean_think_tags(answer)
+            
+            # Полная очистка от тегов /think
+            # Удаляем /think ... /think (включая пустые)
+            answer = re.sub(r'/think\s*\n?\s*/think', '', answer, flags=re.DOTALL)
+            # Удаляем /think с содержимым
+            answer = re.sub(r'/think.*?/think', '', answer, flags=re.DOTALL)
+            # Удаляем одиночные /think
+            answer = re.sub(r'/think\s*\n?', '', answer)
+            # Убираем лишние пустые строки
+            answer = re.sub(r'\n\s*\n', '\n', answer).strip()
+            
             return answer if answer else "🤔 Не удалось сформулировать ответ."
         
         elif response.status_code == 429:
@@ -413,7 +413,7 @@ def handle_read_callback(call):
                 bot.send_video(
                     call.from_user.id,
                     file_id if file_id else content,
-                    caption=f"🔒 *Скрытоe сообщение* от *{sender_name}*",
+                    caption=f"🔒 *Скрытое сообщение* от *{sender_name}*",
                     parse_mode="Markdown"
                 )
             elif content_type == "audio":
@@ -664,7 +664,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст")
-    logger.info("🤖 Команда /ai для общения с ИИ (Groq / qwen3-32b) — чёткие ответы без рассуждений")
+    logger.info("🤖 Команда /ai для общения с ИИ (Groq / qwen3-32b) — с полной очисткой тегов /think")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
 
     app.run(host="0.0.0.0", port=port)
