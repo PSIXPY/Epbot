@@ -25,9 +25,9 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 bot = TeleBot(BOT_TOKEN)
 
-# Временные хранилища для скрытых сообщений
-pending_messages = {}
-pending_show = {}
+# Хранилища для скрытых сообщений
+pending_messages = {}  # {msg_id: data}
+pending_show = {}      # {show_id: data}
 
 
 # === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
@@ -216,7 +216,8 @@ def inline_query(query):
         sender_id = query.from_user.id
         sender_name = query.from_user.first_name
         
-        msg_id = f"{sender_id}_{int(datetime.now().timestamp())}"
+        # Генерируем уникальный ID
+        msg_id = f"{sender_id}_{int(datetime.now().timestamp() * 1000)}"
         pending_messages[msg_id] = {
             "target": target_username,
             "text": secret_text,
@@ -227,12 +228,12 @@ def inline_query(query):
         markup = InlineKeyboardMarkup()
         button = InlineKeyboardButton(
             text=f"📩 Отправить @{target_username}",
-            callback_data=f"send:{msg_id}"
+            callback_data=f"send_{msg_id}"
         )
         markup.add(button)
         
         result = types.InlineQueryResultArticle(
-            id="1",
+            id=msg_id,
             title=f"Отправить сообщение для @{target_username}",
             description=secret_text[:50],
             input_message_content=types.InputTextMessageContent(
@@ -246,10 +247,10 @@ def inline_query(query):
         logger.error(f"Inline error: {e}")
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("send:"))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("send_"))
 def handle_inline_send(call):
     try:
-        msg_id = call.data.split(":", 1)[1]
+        msg_id = call.data[5:]  # убираем "send_"
         if msg_id not in pending_messages:
             bot.answer_callback_query(call.id, "❌ Сообщение устарело. Попробуйте снова.", show_alert=True)
             return
@@ -261,19 +262,22 @@ def handle_inline_send(call):
         sender_name = data["sender_name"]
         chat_id = call.message.chat.id
         
+        # Удаляем из хранилища
         del pending_messages[msg_id]
         
-        show_msg_id = f"show:{target_username}:{sender_id}:{int(datetime.now().timestamp())}"
-        pending_show[show_msg_id] = {
+        # Генерируем ID для кнопки получателя
+        show_id = f"show_{sender_id}_{int(datetime.now().timestamp() * 1000)}"
+        pending_show[show_id] = {
             "text": secret_text,
             "sender_id": sender_id,
-            "sender_name": sender_name
+            "sender_name": sender_name,
+            "target_username": target_username
         }
         
         markup = InlineKeyboardMarkup()
         button = InlineKeyboardButton(
             text=f"📩 Скрытое сообщение от {sender_name}",
-            callback_data=show_msg_id
+            callback_data=show_id
         )
         markup.add(button)
         
@@ -290,7 +294,7 @@ def handle_inline_send(call):
         bot.answer_callback_query(call.id, "❌ Ошибка при отправке.", show_alert=True)
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("show:"))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("show_"))
 def handle_show_callback(call):
     try:
         show_id = call.data
@@ -308,22 +312,25 @@ def handle_show_callback(call):
             bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
             return
         
+        # Удаляем из хранилища
         del pending_show[show_id]
         
+        # Показываем сообщение
         bot.answer_callback_query(
             call.id,
             f"📩 Сообщение: {secret_text}",
             show_alert=True
         )
         
+        # Отправляем копию в ЛС
         try:
             bot.send_message(
                 call.from_user.id,
                 f"🔒 *Скрытое сообщение* от *{sender_name}*:\n\n{secret_text}",
                 parse_mode="Markdown"
             )
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Send to DM error: {e}")
     except Exception as e:
         logger.error(f"show callback error: {e}")
         bot.answer_callback_query(call.id, "❌ Ошибка при открытии сообщения.", show_alert=True)
