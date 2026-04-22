@@ -25,6 +25,9 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 bot = TeleBot(BOT_TOKEN)
 
+# Контекст для временного хранения данных скрытых сообщений
+context = {}
+
 
 # === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
 def search_wikipedia(query):
@@ -195,25 +198,88 @@ def forward_message(from_chat, to_chat, message_id, thread_id=None):
         return None
 
 
-# === СКРЫТЫЕ СООБЩЕНИЯ (ОДНОЙ КОМАНДОЙ) ===
+# === СКРЫТЫЕ СООБЩЕНИЯ ===
 @bot.message_handler(commands=['msg'])
-def secret_message(message):
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 3:
-        bot.reply_to(
-            message,
-            "ℹ️ *Как отправить скрытое сообщение:*\n`/msg @username Текст сообщения`",
-            parse_mode="Markdown"
-        )
+def start_secret_message(message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        bot.reply_to(message, "ℹ️ Использование: `/msg @username`", parse_mode="Markdown")
         return
     
     target_username = parts[1].lstrip("@")
-    secret_text = parts[2]
     chat_id = message.chat.id
     sender_id = message.from_user.id
     sender_name = message.from_user.first_name
+    message_id = message.message_id
     
-    # Создаём кнопку
+    # Удаляем команду пользователя
+    try:
+        bot.delete_message(chat_id, message_id)
+    except:
+        pass
+    
+    markup = InlineKeyboardMarkup()
+    button = InlineKeyboardButton(
+        text=f"📩 Написать скрытое сообщение для @{target_username}",
+        callback_data=f"ask_msg:{target_username}:{sender_id}:{sender_name}"
+    )
+    markup.add(button)
+    
+    bot.send_message(
+        chat_id,
+        f"🔐 *Скрытое сообщение*\nНажмите на кнопку, чтобы написать сообщение для @{target_username}",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("ask_msg"))
+def ask_for_secret_text(call):
+    try:
+        _, target_username, sender_id, sender_name = call.data.split(":", 3)
+    except:
+        bot.answer_callback_query(call.id, "❌ Ошибка.", show_alert=True)
+        return
+    
+    bot.answer_callback_query(
+        call.id,
+        text="Введите текст скрытого сообщения:",
+        show_alert=False
+    )
+    
+    context[call.from_user.id] = {
+        "target": target_username,
+        "sender_id": sender_id,
+        "sender_name": sender_name,
+        "chat_id": call.message.chat.id
+    }
+    
+    bot.send_message(
+        call.message.chat.id,
+        f"✏️ Напишите текст сообщения для @{target_username} (просто отправьте его следующим сообщением):",
+        parse_mode="Markdown"
+    )
+
+
+@bot.message_handler(func=lambda m: m.from_user.id in context)
+def process_secret_text(message):
+    user_id = message.from_user.id
+    secret_text = message.text
+    chat_id = message.chat.id
+    
+    data = context[user_id]
+    target_username = data["target"]
+    sender_id = data["sender_id"]
+    sender_name = data["sender_name"]
+    target_chat_id = data["chat_id"]
+    del context[user_id]
+    
+    # Удаляем сообщение с текстом
+    try:
+        bot.delete_message(chat_id, message.message_id)
+    except:
+        pass
+    
     markup = InlineKeyboardMarkup()
     button = InlineKeyboardButton(
         text=f"📩 Скрытое сообщение от {sender_name}",
@@ -221,19 +287,12 @@ def secret_message(message):
     )
     markup.add(button)
     
-    # Отправляем кнопку в чат
     bot.send_message(
-        chat_id,
+        target_chat_id,
         f"🔔 *Новое скрытое сообщение* от {sender_name} для @{target_username}",
         reply_markup=markup,
         parse_mode="Markdown"
     )
-    
-    # Удаляем команду пользователя
-    try:
-        bot.delete_message(chat_id, message.message_id)
-    except:
-        pass
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("show_msg"))
@@ -266,7 +325,7 @@ def handle_secret_callback(call):
 
 # === ОСНОВНОЙ ОБРАБОТЧИК ===
 def process_update(update):
-    # Обработка постов в каналах (реакция 🔥)
+    # Обработка постов в каналах
     if "channel_post" in update:
         post = update["channel_post"]
         channel_id = post["chat"]["id"]
@@ -295,12 +354,12 @@ def process_update(update):
 
     message_text = message.get("text", "")
 
-    # === НЕ ПЕРЕСЫЛАЕМ КОМАНДУ /msg ===
-    if message_text.lower().startswith("/msg"):
-        logger.info(f"⏭ Команда /msg не пересылается")
+    # Команды не пересылаем
+    if message_text.startswith("/"):
+        logger.info(f"⏭ Команда {message_text} не пересылается")
         return
 
-    # Определяем получателя для обычных сообщений
+    # Определяем получателя
     if chat_id == CHAT_A:
         if message.get("from") and message["from"].get("id") == SOURCE_CHANNEL:
             logger.info(f"⏭ Игнорируем сообщение от канала {SOURCE_CHANNEL}")
@@ -333,7 +392,7 @@ def process_update(update):
             help_text = """📖 *Команды бота*
 
 /wiki [запрос] — поиск в Википедии
-/msg @username Текст — скрытое сообщение
+/msg @username — скрытое сообщение
 /roll — случайное число (1-100)
 /coin — орёл/решка
 /time — текущее время
@@ -424,8 +483,10 @@ def process_update(update):
 def webhook():
     try:
         update = request.get_json()
-        process_update(update)
+        # Сначала обрабатываем команды через telebot
         bot.process_new_updates([types.Update.de_json(update)])
+        # Потом обрабатываем пересылку
+        process_update(update)
         return "OK", 200
     except Exception as e:
         logger.error(f"Webhook error: {e}")
@@ -445,7 +506,7 @@ if __name__ == "__main__":
 
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("📩 Команда /msg @username Текст — скрытое сообщение")
+    logger.info("📩 Команда /msg @username — скрытые сообщения через кнопку")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
 
     app.run(host="0.0.0.0", port=port)
