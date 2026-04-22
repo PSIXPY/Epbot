@@ -33,7 +33,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
 
-# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (с полной очисткой тегов /think) ===
+# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (с полной очисткой всех тегов think) ===
 def ask_groq(prompt):
     """Отправляет запрос к Groq — чёткие ответы без лишних рассуждений"""
     if not GROQ_API_KEY:
@@ -52,7 +52,7 @@ def ask_groq(prompt):
                 "content": (
                     "Ты — полезный, дружелюбный ассистент. "
                     "Отвечай кратко, по существу и без лишних рассуждений. "
-                    "Не используй теги /think, не описывай свой процесс мышления. "
+                    "Не используй теги /think, <think>, не описывай свой процесс мышления. "
                     "Просто давай чёткий ответ на вопрос пользователя."
                 )
             },
@@ -69,13 +69,18 @@ def ask_groq(prompt):
             result = response.json()
             answer = result["choices"][0]["message"]["content"]
             
-            # Полная очистка от тегов /think
-            # Удаляем /think ... /think (включая пустые)
-            answer = re.sub(r'/think\s*\n?\s*/think', '', answer, flags=re.DOTALL)
-            # Удаляем /think с содержимым
+            # Полная очистка от всех видов тегов think
+            # Удаляем <think>...</think>
+            answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL)
+            # Удаляем /think ... /think
             answer = re.sub(r'/think.*?/think', '', answer, flags=re.DOTALL)
-            # Удаляем одиночные /think
-            answer = re.sub(r'/think\s*\n?', '', answer)
+            # Удаляем пустые теги
+            answer = re.sub(r'<think>\s*</think>', '', answer)
+            answer = re.sub(r'/think\s*/think', '', answer)
+            # Удаляем одиночные теги
+            answer = re.sub(r'<think/?>', '', answer)
+            answer = re.sub(r'</think>', '', answer)
+            answer = re.sub(r'/think', '', answer)
             # Убираем лишние пустые строки
             answer = re.sub(r'\n\s*\n', '\n', answer).strip()
             
@@ -664,7 +669,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст")
-    logger.info("🤖 Команда /ai для общения с ИИ (Groq / qwen3-32b) — с полной очисткой тегов /think")
+    logger.info("🤖 Команда /ai для общения с ИИ (Groq / qwen3-32b) — с полной очисткой всех тегов think")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
 
     app.run(host="0.0.0.0", port=port)
