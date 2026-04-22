@@ -11,6 +11,7 @@ from flask import Flask, request
 from datetime import datetime, timedelta
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from groq import Groq  # Добавляем библиотеку Groq
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
@@ -18,6 +19,7 @@ CHAT_B = int(os.environ.get("CHAT_B", 0))
 CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
 SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))
 RENDER_URL = os.environ.get("RENDER_URL", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")  # Добавляем ключ Groq
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -27,8 +29,36 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 bot = TeleBot(BOT_TOKEN)
 
+# Инициализируем клиент Groq
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
 # Хранилище для скрытых сообщений
 secret_messages = {}
+
+
+# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ ===
+def ask_groq(prompt):
+    """Отправляет запрос к Groq и возвращает ответ"""
+    if not groq_client:
+        return "❌ Groq API не настроен. Добавьте GROQ_API_KEY в переменные окружения."
+    
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",  # Быстрая и качественная модель
+            messages=[
+                {"role": "system", "content": "Ты — полезный и дружелюбный ассистент. Отвечай кратко и по делу."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=500,
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Groq API error: {e}")
+        # Обрабатываем ошибку лимита
+        if "rate_limit" in str(e).lower():
+            return "⚠️ Превышен лимит запросов к Groq. Попробуйте позже или завтра."
+        return f"❌ Ошибка при запросе к Groq: {str(e)[:100]}"
 
 
 # === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
@@ -216,7 +246,7 @@ def forward_message(from_chat, to_chat, message_id, thread_id=None):
         return None
 
 
-# === INLINE-РЕЖИМ ДЛЯ СКРЫТЫХ СООБЩЕНИЙ (С ПОДДЕРЖКОЙ МЕДИА) ===
+# === INLINE-РЕЖИМ ДЛЯ СКРЫТЫХ СООБЩЕНИЙ ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -233,7 +263,6 @@ def inline_query(query):
         sender_id = query.from_user.id
         sender_name = query.from_user.first_name
         
-        # Определяем тип контента
         content_type = "text"
         file_id = None
         
@@ -259,7 +288,7 @@ def inline_query(query):
             "sender_name": sender_name,
             "target_username": target_username,
             "timestamp": datetime.now().timestamp(),
-            "expires": datetime.now().timestamp() + 300  # 5 минут
+            "expires": datetime.now().timestamp() + 300
         }
         
         markup = InlineKeyboardMarkup()
@@ -304,27 +333,22 @@ def handle_read_callback(call):
         sender_name = data["sender_name"]
         target_username = data["target_username"]
         
-        # Проверка на получателя
         if call.from_user.username != target_username:
             bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
             return
         
-        # Проверка на устаревание
         if datetime.now().timestamp() > data.get("expires", datetime.now().timestamp() + 300):
             bot.answer_callback_query(call.id, "❌ Сообщение устарело.", show_alert=True)
             del secret_messages[msg_id]
             return
         
-        # Удаляем из хранилища
         del secret_messages[msg_id]
         
-        # Удаляем кнопку из чата
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except:
             pass
         
-        # Отправляем контент в зависимости от типа
         if content_type == "text":
             bot.answer_callback_query(
                 call.id,
@@ -334,7 +358,6 @@ def handle_read_callback(call):
         else:
             bot.answer_callback_query(call.id, f"📩 Сообщение от {sender_name}", show_alert=False)
         
-        # Отправляем копию в ЛС
         try:
             if content_type == "text":
                 bot.send_message(
@@ -370,7 +393,6 @@ def handle_read_callback(call):
                     parse_mode="Markdown"
                 )
             
-            # Уведомление отправителю
             bot.send_message(
                 sender_id,
                 f"✅ @{target_username} прочитал(а) ваше скрытое сообщение",
@@ -392,7 +414,7 @@ def handle_read_callback(call):
 # === ОЧИСТКА УСТАРЕВШИХ СООБЩЕНИЙ (РАЗ В 24 ЧАСА) ===
 def clean_expired_messages():
     while True:
-        time.sleep(86400)  # 24 часа = 86400 секунд
+        time.sleep(86400)
         now = datetime.now().timestamp()
         expired = [msg_id for msg_id, data in secret_messages.items() 
                    if data.get("expires", now + 300) < now]
@@ -403,11 +425,28 @@ def clean_expired_messages():
         else:
             logger.info("🧹 Очистка скрытых сообщений: устаревших нет")
 
-# Запуск очистки в фоновом потоке
 threading.Thread(target=clean_expired_messages, daemon=True).start()
 
 
 # === ОБЫЧНЫЕ КОМАНДЫ ===
+@bot.message_handler(commands=['ai'])
+def ai_command(message):
+    """Обработка команды /ai для общения с Groq"""
+    prompt = message.text[3:].strip()
+    if not prompt:
+        bot.reply_to(message, "ℹ️ Напишите запрос после команды. Пример: `/ai Как дела?`", parse_mode="Markdown")
+        return
+    
+    # Отправляем уведомление о начале обработки
+    bot.reply_to(message, "🤖 Думаю...", parse_mode="Markdown")
+    
+    # Получаем ответ от Groq
+    answer = ask_groq(prompt)
+    
+    # Отправляем ответ
+    bot.send_message(message.chat.id, answer, parse_mode="Markdown", message_thread_id=message.message_thread_id)
+
+
 @bot.message_handler(commands=['wiki'])
 def wiki_command(message):
     query = message.text[5:].strip()
@@ -424,6 +463,7 @@ def help_command(message):
     help_text = """📖 *Команды бота*
 
 /wiki [запрос] — поиск в Википедии
+/ai [запрос] — общение с ИИ (Groq)
 /roll — случайное число (1-100)
 /coin — орёл/решка
 /time — текущее время
@@ -431,9 +471,7 @@ def help_command(message):
 /help — эта справка
 
 📩 *Скрытые сообщения:*
-• Текст: `@имя_бота @получатель текст`
-• Фото: `@имя_бота @получатель https://example.com/photo.jpg`
-• Видео: `@имя_бота @получатель https://example.com/video.mp4`
+`@имя_бота @получатель текст`
 
 🔄 Обычные сообщения пересылаются между чатами"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
@@ -461,7 +499,6 @@ def date_command(message):
 
 # === ОСНОВНОЙ ОБРАБОТЧИК ДЛЯ ПЕРЕСЫЛКИ ===
 def process_update(update):
-    # Обработка постов в каналах (реакция 🔥)
     if "channel_post" in update:
         post = update["channel_post"]
         channel_id = post["chat"]["id"]
@@ -490,12 +527,10 @@ def process_update(update):
 
     message_text = message.get("text", "")
 
-    # Команды не пересылаем
     if message_text.startswith("/"):
         logger.info(f"⏭ Команда не пересылается")
         return
 
-    # Определяем получателя
     if chat_id == CHAT_A:
         if message.get("from") and message["from"].get("id") == SOURCE_CHANNEL:
             logger.info(f"⏭ Игнорируем сообщение от канала")
@@ -512,7 +547,6 @@ def process_update(update):
     sender = message.get("from", {})
     sender_name = get_sender_name(sender)
 
-    # Пересылка обычных сообщений
     reply_to_id = None
     reply_to_name = None
 
@@ -601,7 +635,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст/ссылка")
+    logger.info("🤖 Команда /ai для общения с ИИ (Groq)")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
-    logger.info("🧹 Очистка устаревших сообщений: раз в 24 часа")
 
     app.run(host="0.0.0.0", port=port)
