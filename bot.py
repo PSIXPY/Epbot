@@ -11,7 +11,6 @@ from flask import Flask, request
 from datetime import datetime, timedelta
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from groq import Groq  # Добавляем библиотеку Groq
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
@@ -19,7 +18,7 @@ CHAT_B = int(os.environ.get("CHAT_B", 0))
 CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
 SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))
 RENDER_URL = os.environ.get("RENDER_URL", "")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")  # Добавляем ключ Groq
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -29,35 +28,46 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 bot = TeleBot(BOT_TOKEN)
 
-# Инициализируем клиент Groq
-groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
-
 # Хранилище для скрытых сообщений
 secret_messages = {}
 
 
-# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ ===
+# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (через requests) ===
 def ask_groq(prompt):
-    """Отправляет запрос к Groq и возвращает ответ"""
-    if not groq_client:
+    """Отправляет запрос к Groq через прямой HTTP-запрос (без библиотеки)"""
+    if not GROQ_API_KEY:
         return "❌ Groq API не настроен. Добавьте GROQ_API_KEY в переменные окружения."
     
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "llama-3.1-8b-instant",
+        "messages": [
+            {"role": "system", "content": "Ты — полезный и дружелюбный ассистент. Отвечай кратко и по делу."},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 500,
+        "temperature": 0.7
+    }
+    
     try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",  # Быстрая и качественная модель
-            messages=[
-                {"role": "system", "content": "Ты — полезный и дружелюбный ассистент. Отвечай кратко и по делу."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=500,
-            temperature=0.7
-        )
-        return response.choices[0].message.content
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        result = response.json()
+        
+        if response.status_code == 200:
+            return result["choices"][0]["message"]["content"]
+        elif response.status_code == 429:
+            return "⚠️ Превышен лимит запросов к Groq. Попробуйте позже или завтра."
+        else:
+            error_msg = result.get("error", {}).get("message", "Неизвестная ошибка")
+            return f"❌ Ошибка Groq: {error_msg}"
+    except requests.exceptions.Timeout:
+        return "❌ Превышено время ожидания ответа от Groq."
     except Exception as e:
         logger.error(f"Groq API error: {e}")
-        # Обрабатываем ошибку лимита
-        if "rate_limit" in str(e).lower():
-            return "⚠️ Превышен лимит запросов к Groq. Попробуйте позже или завтра."
         return f"❌ Ошибка при запросе к Groq: {str(e)[:100]}"
 
 
@@ -411,7 +421,7 @@ def handle_read_callback(call):
         bot.answer_callback_query(call.id, "❌ Ошибка при открытии сообщения.", show_alert=True)
 
 
-# === ОЧИСТКА УСТАРЕВШИХ СООБЩЕНИЙ (РАЗ В 24 ЧАСА) ===
+# === ОЧИСТКА УСТАРЕВШИХ СООБЩЕНИЙ ===
 def clean_expired_messages():
     while True:
         time.sleep(86400)
@@ -421,9 +431,7 @@ def clean_expired_messages():
         for msg_id in expired:
             del secret_messages[msg_id]
         if expired:
-            logger.info(f"🧹 Удалено {len(expired)} устаревших скрытых сообщений (очистка раз в 24 часа)")
-        else:
-            logger.info("🧹 Очистка скрытых сообщений: устаревших нет")
+            logger.info(f"🧹 Удалено {len(expired)} устаревших скрытых сообщений")
 
 threading.Thread(target=clean_expired_messages, daemon=True).start()
 
@@ -431,19 +439,13 @@ threading.Thread(target=clean_expired_messages, daemon=True).start()
 # === ОБЫЧНЫЕ КОМАНДЫ ===
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
-    """Обработка команды /ai для общения с Groq"""
     prompt = message.text[3:].strip()
     if not prompt:
         bot.reply_to(message, "ℹ️ Напишите запрос после команды. Пример: `/ai Как дела?`", parse_mode="Markdown")
         return
     
-    # Отправляем уведомление о начале обработки
     bot.reply_to(message, "🤖 Думаю...", parse_mode="Markdown")
-    
-    # Получаем ответ от Groq
     answer = ask_groq(prompt)
-    
-    # Отправляем ответ
     bot.send_message(message.chat.id, answer, parse_mode="Markdown", message_thread_id=message.message_thread_id)
 
 
@@ -497,7 +499,7 @@ def date_command(message):
     bot.reply_to(message, f"📅 {datetime.now().strftime('%d.%m.%Y')}")
 
 
-# === ОСНОВНОЙ ОБРАБОТЧИК ДЛЯ ПЕРЕСЫЛКИ ===
+# === ОСНОВНОЙ ОБРАБОТЧИК ===
 def process_update(update):
     if "channel_post" in update:
         post = update["channel_post"]
@@ -634,7 +636,7 @@ if __name__ == "__main__":
 
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст/ссылка")
+    logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст")
     logger.info("🤖 Команда /ai для общения с ИИ (Groq)")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
 
