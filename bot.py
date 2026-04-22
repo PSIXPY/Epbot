@@ -38,17 +38,14 @@ def clean_think_tags(text):
     """Удаляет теги /think ... /think и оставляет только финальный ответ"""
     if not text:
         return text
-    # Удаляем содержимое между /think и /think
     cleaned = re.sub(r'/think.*?/think', '', text, flags=re.DOTALL)
-    # Убираем лишние пустые строки
     cleaned = re.sub(r'\n\s*\n', '\n', cleaned).strip()
-    # Если после очистки ничего не осталось, возвращаем исходный текст
     return cleaned if cleaned else text
 
 
-# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (с очисткой тегов) ===
+# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (чёткие ответы без рассуждений) ===
 def ask_groq(prompt):
-    """Отправляет запрос к Groq — всегда возвращает текст для пользователя"""
+    """Отправляет запрос к Groq — чёткие ответы без лишних рассуждений"""
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен. Добавьте GROQ_API_KEY в переменные окружения."
     
@@ -60,11 +57,19 @@ def ask_groq(prompt):
     data = {
         "model": "qwen/qwen3-32b",
         "messages": [
-            {"role": "system", "content": "Ты — полезный и дружелюбный ассистент. Отвечай кратко и по делу, без лишних рассуждений."},
+            {
+                "role": "system",
+                "content": (
+                    "Ты — полезный, дружелюбный ассистент. "
+                    "Отвечай кратко, по существу и без лишних рассуждений. "
+                    "Не используй теги /think, не описывай свой процесс мышления. "
+                    "Просто давай чёткий ответ на вопрос пользователя."
+                )
+            },
             {"role": "user", "content": prompt}
         ],
         "max_tokens": 500,
-        "temperature": 0.7
+        "temperature": 0.2
     }
     
     try:
@@ -73,7 +78,8 @@ def ask_groq(prompt):
         if response.status_code == 200:
             result = response.json()
             answer = result["choices"][0]["message"]["content"]
-            return clean_think_tags(answer)
+            answer = clean_think_tags(answer)
+            return answer if answer else "🤔 Не удалось сформулировать ответ."
         
         elif response.status_code == 429:
             return "⚠️ *Лимит запросов к ИИ исчерпан!*\n\nПожалуйста, подождите 1 минуту и попробуйте снова."
@@ -407,7 +413,7 @@ def handle_read_callback(call):
                 bot.send_video(
                     call.from_user.id,
                     file_id if file_id else content,
-                    caption=f"🔒 *Скрытое сообщение* от *{sender_name}*",
+                    caption=f"🔒 *Скрытоe сообщение* от *{sender_name}*",
                     parse_mode="Markdown"
                 )
             elif content_type == "audio":
@@ -658,7 +664,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст")
-    logger.info("🤖 Команда /ai для общения с ИИ (Groq / qwen3-32b) с очисткой тегов /think")
+    logger.info("🤖 Команда /ai для общения с ИИ (Groq / qwen3-32b) — чёткие ответы без рассуждений")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
 
     app.run(host="0.0.0.0", port=port)
