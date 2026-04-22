@@ -33,7 +33,20 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
 
-# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (используем разрешённую модель qwen/qwen3-32b) ===
+# === ФУНКЦИЯ ДЛЯ ОЧИСТКИ ТЕГОВ /think ===
+def clean_think_tags(text):
+    """Удаляет теги /think ... /think и оставляет только финальный ответ"""
+    if not text:
+        return text
+    # Удаляем содержимое между /think и /think
+    cleaned = re.sub(r'/think.*?/think', '', text, flags=re.DOTALL)
+    # Убираем лишние пустые строки
+    cleaned = re.sub(r'\n\s*\n', '\n', cleaned).strip()
+    # Если после очистки ничего не осталось, возвращаем исходный текст
+    return cleaned if cleaned else text
+
+
+# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (с очисткой тегов) ===
 def ask_groq(prompt):
     """Отправляет запрос к Groq — всегда возвращает текст для пользователя"""
     if not GROQ_API_KEY:
@@ -45,9 +58,9 @@ def ask_groq(prompt):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "qwen/qwen3-32b",  # Разрешённая модель с 60 запросами в минуту
+        "model": "qwen/qwen3-32b",
         "messages": [
-            {"role": "system", "content": "Ты — полезный и дружелюбный ассистент. Отвечай кратко и по делу."},
+            {"role": "system", "content": "Ты — полезный и дружелюбный ассистент. Отвечай кратко и по делу, без лишних рассуждений."},
             {"role": "user", "content": prompt}
         ],
         "max_tokens": 500,
@@ -59,7 +72,8 @@ def ask_groq(prompt):
         
         if response.status_code == 200:
             result = response.json()
-            return result["choices"][0]["message"]["content"]
+            answer = result["choices"][0]["message"]["content"]
+            return clean_think_tags(answer)
         
         elif response.status_code == 429:
             return "⚠️ *Лимит запросов к ИИ исчерпан!*\n\nПожалуйста, подождите 1 минуту и попробуйте снова."
@@ -644,7 +658,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст")
-    logger.info("🤖 Команда /ai для общения с ИИ (Groq / qwen3-32b)")
+    logger.info("🤖 Команда /ai для общения с ИИ (Groq / qwen3-32b) с очисткой тегов /think")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
 
     app.run(host="0.0.0.0", port=port)
