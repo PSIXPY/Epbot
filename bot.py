@@ -77,6 +77,7 @@ def ask_groq(prompt):
             answer = re.sub(r'</think>', '', answer)
             answer = re.sub(r'/think', '', answer)
             answer = re.sub(r'\n\s*\n', '\n', answer).strip()
+            answer = re.sub(r'^\s+', '', answer)
             
             return answer if answer else "🤔 Не удалось сформулировать ответ."
         
@@ -513,7 +514,7 @@ def help_command(message):
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
 
-# === ОСНОВНОЙ ОБРАБОТЧИК (только пересылка, команды не трогает) ===
+# === ОСНОВНОЙ ОБРАБОТЧИК (только пересылка, НЕ обрабатывает команды) ===
 def process_update(update):
     # Обработка постов в каналах (реакция 🔥)
     if "channel_post" in update:
@@ -542,12 +543,9 @@ def process_update(update):
 
     message_text = message.get("text", "")
 
-    # Команды пропускаем (не пересылаем)
+    # КОМАНДЫ НЕ ПЕРЕСЫЛАЕМ
     if message_text.startswith("/"):
-        logger.info(f"⏭ Команда {message_text} не пересылается")
         return
-
-    logger.info(f"📥 Пересылка | Чат: {chat_id}")
 
     # Определяем получателя
     if chat_id == CHAT_A:
@@ -557,7 +555,6 @@ def process_update(update):
         target = CHAT_A
         target_thread = None
     else:
-        logger.info(f"⏭ Игнорируем")
         return
 
     sender = message.get("from", {})
@@ -621,8 +618,6 @@ def process_update(update):
             keys = list(message_links.keys())[:1000]
             for key in keys:
                 del message_links[key]
-
-    logger.info(f"✅ Переслано")
 
 
 # === ВЕБХУК ===
