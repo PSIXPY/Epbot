@@ -17,7 +17,6 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
 CHAT_B = int(os.environ.get("CHAT_B", 0))
 CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
-SOURCE_CHANNEL = int(os.environ.get("SOURCE_CHANNEL", 0))
 RENDER_URL = os.environ.get("RENDER_URL", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
@@ -33,7 +32,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
 
-# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ (с полной очисткой всех тегов think) ===
+# === ФУНКЦИЯ ДЛЯ РАБОТЫ С GROQ ===
 def ask_groq(prompt):
     """Отправляет запрос к Groq — чёткие ответы без лишних рассуждений"""
     if not GROQ_API_KEY:
@@ -69,19 +68,14 @@ def ask_groq(prompt):
             result = response.json()
             answer = result["choices"][0]["message"]["content"]
             
-            # Полная очистка от всех видов тегов think
-            # Удаляем <think>...</think>
+            # Очистка от тегов think
             answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL)
-            # Удаляем /think ... /think
             answer = re.sub(r'/think.*?/think', '', answer, flags=re.DOTALL)
-            # Удаляем пустые теги
             answer = re.sub(r'<think>\s*</think>', '', answer)
             answer = re.sub(r'/think\s*/think', '', answer)
-            # Удаляем одиночные теги
             answer = re.sub(r'<think/?>', '', answer)
             answer = re.sub(r'</think>', '', answer)
             answer = re.sub(r'/think', '', answer)
-            # Убираем лишние пустые строки
             answer = re.sub(r'\n\s*\n', '\n', answer).strip()
             
             return answer if answer else "🤔 Не удалось сформулировать ответ."
@@ -103,7 +97,7 @@ def ask_groq(prompt):
         return f"❌ Ошибка при запросе к Groq: {str(e)[:100]}"
 
 
-# === УМНАЯ ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
+# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
 def search_wikipedia(query):
     try:
         wiki_wiki = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
@@ -468,7 +462,7 @@ def clean_expired_messages():
 threading.Thread(target=clean_expired_messages, daemon=True).start()
 
 
-# === ОБЫЧНЫЕ КОМАНДЫ ===
+# === ОБЫЧНЫЕ КОМАНДЫ (telebot) ===
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
     prompt = message.text[3:].strip()
@@ -492,47 +486,9 @@ def wiki_command(message):
     bot.send_message(message.chat.id, result, parse_mode="Markdown", message_thread_id=message.message_thread_id)
 
 
-@bot.message_handler(commands=['help', 'start'])
-def help_command(message):
-    help_text = """📖 *Команды бота*
-
-/wiki [запрос] — поиск в Википедии
-/ai [запрос] — общение с ИИ (Groq / qwen3-32b)
-/roll — случайное число (1-100)
-/coin — орёл/решка
-/time — текущее время
-/date — сегодняшняя дата
-/help — эта справка
-
-📩 *Скрытые сообщения:*
-`@имя_бота @получатель текст`
-
-🔄 Обычные сообщения пересылаются между чатами"""
-    bot.reply_to(message, help_text, parse_mode="Markdown")
-
-
-@bot.message_handler(commands=['roll'])
-def roll_command(message):
-    bot.reply_to(message, f"🎲 {random.randint(1, 100)}")
-
-
-@bot.message_handler(commands=['coin'])
-def coin_command(message):
-    bot.reply_to(message, f"🪙 {random.choice(['Орёл', 'Решка'])}")
-
-
-@bot.message_handler(commands=['time'])
-def time_command(message):
-    bot.reply_to(message, f"🕐 {datetime.now().strftime('%H:%M:%S')}")
-
-
-@bot.message_handler(commands=['date'])
-def date_command(message):
-    bot.reply_to(message, f"📅 {datetime.now().strftime('%d.%m.%Y')}")
-
-
 # === ОСНОВНОЙ ОБРАБОТЧИК ===
 def process_update(update):
+    # Обработка постов в каналах (реакция 🔥)
     if "channel_post" in update:
         post = update["channel_post"]
         channel_id = post["chat"]["id"]
@@ -561,14 +517,36 @@ def process_update(update):
 
     message_text = message.get("text", "")
 
-    if message_text.startswith("/"):
-        logger.info(f"⏭ Команда не пересылается")
+    # === ОБРАБОТКА КОМАНД (прямо здесь) ===
+    if message_text == "/coin":
+        send_message(chat_id, f"🪙 {random.choice(['Орёл', 'Решка'])}", thread_id=thread_id)
+        return
+    if message_text == "/roll":
+        send_message(chat_id, f"🎲 {random.randint(1, 100)}", thread_id=thread_id)
+        return
+    if message_text == "/help" or message_text == "/start":
+        help_text = """📖 *Команды бота*
+
+/wiki [запрос] — поиск в Википедии
+/ai [запрос] — общение с ИИ (Groq)
+/roll — случайное число (1-100)
+/coin — орёл/решка
+/help — эта справка
+
+📩 *Скрытые сообщения:*
+`@имя_бота @получатель текст`
+
+🔄 Обычные сообщения пересылаются между чатами"""
+        send_message(chat_id, help_text, thread_id=thread_id)
         return
 
+    # === КОМАНДЫ /wiki И /ai (не пересылаем) ===
+    if message_text.startswith("/wiki") or message_text.startswith("/ai"):
+        logger.info(f"⏭ Команда {message_text} не пересылается")
+        return
+
+    # === ПЕРЕСЫЛКА ОБЫЧНЫХ СООБЩЕНИЙ ===
     if chat_id == CHAT_A:
-        if message.get("from") and message["from"].get("id") == SOURCE_CHANNEL:
-            logger.info(f"⏭ Игнорируем сообщение от канала")
-            return
         target = CHAT_B
         target_thread = CHAT_B_THREAD
     elif chat_id == CHAT_B and thread_id == CHAT_B_THREAD:
@@ -669,7 +647,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("📩 Скрытые сообщения: @имя_бота @получатель текст")
-    logger.info("🤖 Команда /ai для общения с ИИ (Groq / qwen3-32b) — с полной очисткой всех тегов think")
+    logger.info("🤖 Команды: /ai, /wiki, /roll, /coin, /help")
     logger.info("🔄 Обычные сообщения пересылаются между чатами")
 
     app.run(host="0.0.0.0", port=port)
