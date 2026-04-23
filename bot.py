@@ -462,7 +462,7 @@ def clean_expired_messages():
 threading.Thread(target=clean_expired_messages, daemon=True).start()
 
 
-# === ОБЫЧНЫЕ КОМАНДЫ (telebot) ===
+# === ОБЫЧНЫЕ КОМАНДЫ ===
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
     prompt = message.text[3:].strip()
@@ -513,7 +513,7 @@ def help_command(message):
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
 
-# === ОСНОВНОЙ ОБРАБОТЧИК (только пересылка, без команд) ===
+# === ОСНОВНОЙ ОБРАБОТЧИК (только пересылка, команды не трогает) ===
 def process_update(update):
     # Обработка постов в каналах (реакция 🔥)
     if "channel_post" in update:
@@ -540,16 +540,16 @@ def process_update(update):
     message_id = message["message_id"]
     thread_id = message.get("message_thread_id")
 
-    logger.info(f"📥 Получено | Чат: {chat_id}")
-
     message_text = message.get("text", "")
 
-    # Команды не пересылаем
+    # Команды пропускаем (не пересылаем)
     if message_text.startswith("/"):
         logger.info(f"⏭ Команда {message_text} не пересылается")
         return
 
-    # Пересылка обычных сообщений
+    logger.info(f"📥 Пересылка | Чат: {chat_id}")
+
+    # Определяем получателя
     if chat_id == CHAT_A:
         target = CHAT_B
         target_thread = CHAT_B_THREAD
@@ -563,6 +563,7 @@ def process_update(update):
     sender = message.get("from", {})
     sender_name = get_sender_name(sender)
 
+    # Проверка ответов (реплаев)
     reply_to_id = None
     reply_to_name = None
 
@@ -621,7 +622,7 @@ def process_update(update):
             for key in keys:
                 del message_links[key]
 
-    logger.info(f"✅ Обработано")
+    logger.info(f"✅ Переслано")
 
 
 # === ВЕБХУК ===
