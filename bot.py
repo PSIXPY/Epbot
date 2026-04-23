@@ -9,7 +9,7 @@ import time
 import threading
 import re
 from flask import Flask, request
-from datetime import datetime, timedelta
+from datetime import datetime
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 message_links = {}
 bot = TeleBot(BOT_TOKEN)
+
+# Принудительно устанавливаем вебхук для telebot
+bot.remove_webhook()
+bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
 
 # Хранилище для скрытых сообщений
 secret_messages = {}
@@ -514,7 +518,7 @@ def help_command(message):
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
 
-# === ОСНОВНОЙ ОБРАБОТЧИК (только пересылка, НЕ обрабатывает команды) ===
+# === ОСНОВНОЙ ОБРАБОТЧИК (только пересылка) ===
 def process_update(update):
     # Обработка постов в каналах (реакция 🔥)
     if "channel_post" in update:
@@ -543,7 +547,7 @@ def process_update(update):
 
     message_text = message.get("text", "")
 
-    # КОМАНДЫ НЕ ПЕРЕСЫЛАЕМ
+    # Команды не пересылаем
     if message_text.startswith("/"):
         return
 
@@ -641,6 +645,8 @@ def healthcheck():
 # === ЗАПУСК ===
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    
+    # Устанавливаем вебхук для Flask бота
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     requests.get(f"{API_URL}/setWebhook?url={webhook_url}")
 
