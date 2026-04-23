@@ -114,7 +114,7 @@ def help_cmd(message):
 
 /wiki [запрос] — поиск в Википедии
 /ai [запрос] — общение с ИИ
-/roll — случайное число
+/roll — случайное число (1-100)
 /coin — орёл/решка
 /help — справка
 
@@ -124,13 +124,11 @@ def help_cmd(message):
 # === ПЕРЕСЫЛКА СООБЩЕНИЙ ===
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def forward_to_b(message):
-    # Пересылаем в топик B
     bot.forward_message(CHAT_B, message.chat.id, message.message_id, message_thread_id=CHAT_B_THREAD)
     logger.info(f"Переслано из A в B")
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def forward_to_a(message):
-    # Пересылаем в чат A
     bot.forward_message(CHAT_A, message.chat.id, message.message_id)
     logger.info(f"Переслано из B в A")
 
@@ -154,7 +152,6 @@ def inline_query(query):
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
             return
-        
         target = parts[0].lstrip("@")
         content = parts[1]
         msg_id = f"sec_{int(datetime.now().timestamp() * 1000)}"
@@ -198,12 +195,25 @@ def read_secret(call):
     bot.answer_callback_query(call.id, f"📩 {data['content']}", show_alert=True)
 
 
+# === ОЧИСТКА УСТАРЕВШИХ ===
+def clean_expired():
+    while True:
+        time.sleep(86400)
+        now = datetime.now().timestamp()
+        expired = [mid for mid, d in secret_messages.items() if d.get("expires", now) < now]
+        for mid in expired:
+            del secret_messages[mid]
+
+threading.Thread(target=clean_expired, daemon=True).start()
+
+
 # === ВЕБХУК ===
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
-        update = types.Update.de_json(request.get_json())
-        bot.process_new_updates([update])
+        update = request.get_json()
+        logger.info(f"🔔 Получен update: {update}")
+        bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
         logger.error(f"Webhook error: {e}")
@@ -218,10 +228,15 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
-    requests.get(f"{API_URL}/setWebhook?url={webhook_url}")
+    
+    # Удаляем старый вебхук
+    bot.remove_webhook()
+    # Устанавливаем новый
+    bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
+    logger.info(f"Вебхук: {webhook_url}")
     logger.info("Команды: /ai, /wiki, /roll, /coin, /help")
     
     app.run(host="0.0.0.0", port=port)
