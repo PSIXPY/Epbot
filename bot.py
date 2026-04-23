@@ -6,6 +6,7 @@ import random
 import time
 import threading
 import re
+import urllib.parse
 from datetime import datetime
 from flask import Flask, request
 from telebot import TeleBot, types
@@ -56,28 +57,52 @@ def ask_groq(prompt):
         return f"❌ Ошибка: {str(e)[:100]}"
 
 
-# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
+# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ (со ссылками на Google/Яндекс) ===
 def search_wikipedia(query):
     try:
         wiki = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
         page = wiki.page(query)
         if page.exists():
-            return f"📖 *{page.title}*\n\n{page.summary[:500]}\n\n[🔗 {page.fullurl}]"
+            summary = page.summary[:500]
+            if len(page.summary) > 500:
+                summary += "..."
+            return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
+        # Поиск через API Википедии
         resp = requests.get("https://ru.wikipedia.org/w/api.php", params={
             "action": "query", "list": "search", "srsearch": query,
             "format": "json", "srlimit": 1, "srwhat": "text"
         }, timeout=10)
+        
         if resp.status_code == 200:
             data = resp.json()
             if data.get("query", {}).get("search"):
                 best = data["query"]["search"][0]["title"]
                 page = wiki.page(best)
                 if page.exists():
-                    return f"📖 *{page.title}*\n\n{page.summary[:500]}\n\n[🔗 {page.fullurl}]"
-        return f"❌ Ничего не найдено по запросу '{query}'."
+                    summary = page.summary[:500]
+                    if len(page.summary) > 500:
+                        summary += "..."
+                    return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
+        
+        # Ссылки на поисковики
+        encoded_query = urllib.parse.quote(query)
+        google_link = f"https://www.google.com/search?q={encoded_query}"
+        yandex_link = f"https://yandex.ru/search/?text={encoded_query}"
+        
+        return f"""❌ *Ничего не найдено в Википедии* по запросу: "{query}"
+
+💡 *Попробуйте поискать в интернете:*
+
+🔍 [Google]({google_link})
+🌐 [Яндекс]({yandex_link})
+
+💬 *Совет:* Для Википедии используйте название статьи, а не вопрос.
+Например: `/wiki Тефнут` вместо `/wiki кто такая тефнут`"""
+        
     except Exception as e:
-        return f"❌ Ошибка: {e}"
+        logger.error(f"Wikipedia error: {e}")
+        return f"❌ Ошибка при поиске: {str(e)[:100]}"
 
 
 # === КОМАНДЫ ===
@@ -110,15 +135,19 @@ def coin_cmd(message):
 
 @bot.message_handler(commands=['help', 'start'])
 def help_cmd(message):
-    bot.reply_to(message, """📖 *Команды бота*
+    help_text = """📖 *Команды бота*
 
-/wiki [запрос] — поиск в Википедии
+/wiki [запрос] — поиск в Википедии (если не найдёт — даст ссылки на Google/Яндекс)
 /ai [запрос] — общение с ИИ
 /roll — случайное число (1-100)
 /coin — орёл/решка
-/help — справка
+/help — эта справка
 
-📩 Скрытые сообщения: `@бот @получатель текст`""", parse_mode="Markdown")
+📩 *Скрытые сообщения:*
+`@имя_бота @получатель текст`
+
+🔄 *Автоматически:* пересылка сообщений между чатами и 🔥 на новые посты в каналах"""
+    bot.reply_to(message, help_text, parse_mode="Markdown")
 
 
 # === ПЕРЕСЫЛКА СООБЩЕНИЙ ===
@@ -212,7 +241,7 @@ threading.Thread(target=clean_expired, daemon=True).start()
 def webhook():
     try:
         update = request.get_json()
-        logger.info(f"🔔 Получен update: {update}")
+        logger.info(f"🔔 Получен update")
         bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
@@ -229,9 +258,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     
-    # Удаляем старый вебхук
     bot.remove_webhook()
-    # Устанавливаем новый
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
