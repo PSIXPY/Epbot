@@ -486,7 +486,34 @@ def wiki_command(message):
     bot.send_message(message.chat.id, result, parse_mode="Markdown", message_thread_id=message.message_thread_id)
 
 
-# === ОСНОВНОЙ ОБРАБОТЧИК ===
+@bot.message_handler(commands=['roll'])
+def roll_command(message):
+    bot.reply_to(message, f"🎲 {random.randint(1, 100)}")
+
+
+@bot.message_handler(commands=['coin'])
+def coin_command(message):
+    bot.reply_to(message, f"🪙 {random.choice(['Орёл', 'Решка'])}")
+
+
+@bot.message_handler(commands=['help', 'start'])
+def help_command(message):
+    help_text = """📖 *Команды бота*
+
+/wiki [запрос] — поиск в Википедии
+/ai [запрос] — общение с ИИ (Groq)
+/roll — случайное число (1-100)
+/coin — орёл/решка
+/help — эта справка
+
+📩 *Скрытые сообщения:*
+`@имя_бота @получатель текст`
+
+🔄 Обычные сообщения пересылаются между чатами"""
+    bot.reply_to(message, help_text, parse_mode="Markdown")
+
+
+# === ОСНОВНОЙ ОБРАБОТЧИК (только пересылка, без команд) ===
 def process_update(update):
     # Обработка постов в каналах (реакция 🔥)
     if "channel_post" in update:
@@ -517,35 +544,12 @@ def process_update(update):
 
     message_text = message.get("text", "")
 
-    # === ОБРАБОТКА КОМАНД (прямо здесь) ===
-    if message_text == "/coin":
-        send_message(chat_id, f"🪙 {random.choice(['Орёл', 'Решка'])}", thread_id=thread_id)
-        return
-    if message_text == "/roll":
-        send_message(chat_id, f"🎲 {random.randint(1, 100)}", thread_id=thread_id)
-        return
-    if message_text == "/help" or message_text == "/start":
-        help_text = """📖 *Команды бота*
-
-/wiki [запрос] — поиск в Википедии
-/ai [запрос] — общение с ИИ (Groq)
-/roll — случайное число (1-100)
-/coin — орёл/решка
-/help — эта справка
-
-📩 *Скрытые сообщения:*
-`@имя_бота @получатель текст`
-
-🔄 Обычные сообщения пересылаются между чатами"""
-        send_message(chat_id, help_text, thread_id=thread_id)
-        return
-
-    # === КОМАНДЫ /wiki И /ai (не пересылаем) ===
-    if message_text.startswith("/wiki") or message_text.startswith("/ai"):
+    # Команды не пересылаем
+    if message_text.startswith("/"):
         logger.info(f"⏭ Команда {message_text} не пересылается")
         return
 
-    # === ПЕРЕСЫЛКА ОБЫЧНЫХ СООБЩЕНИЙ ===
+    # Пересылка обычных сообщений
     if chat_id == CHAT_A:
         target = CHAT_B
         target_thread = CHAT_B_THREAD
