@@ -12,6 +12,10 @@ from datetime import datetime
 from flask import Flask, request
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import PyPDF2
+import docx
+from io import BytesIO
+from bs4 import BeautifulSoup
 
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -30,21 +34,104 @@ bot = TeleBot(BOT_TOKEN)
 message_links = {}
 secret_messages = {}
 
-# Для кэширования ответов AI
+# === КЭШ И ИСТОРИЯ ===
 ai_cache = {}
-CACHE_TTL = 3600  # 1 час
-
-# Для истории диалогов
+CACHE_TTL = 3600
 user_histories = {}
-MAX_HISTORY = 10  # храним последние 10 сообщений на пользователя
+MAX_HISTORY = 10
 
 
-# === ФУНКЦИЯ ДЛЯ GROQ (с историей, кэшем и увеличенными токенами) ===
-def ask_groq(user_id, prompt):
+# === ФУНКЦИЯ WEB-ПОИСКА ===
+def web_search(query):
+    """Поиск в интернете через DuckDuckGo (без API)"""
+    try:
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        results = soup.find_all('a', class_='result__a', limit=5)
+        
+        if not results:
+            return None
+        
+        search_results = []
+        for result in results:
+            title = result.get_text()
+            link = result.get('href')
+            if link and not link.startswith('/'):
+                search_results.append(f"• [{title}]({link})")
+        
+        if search_results:
+            return "🔍 *Результаты поиска:*\n\n" + "\n".join(search_results)
+        return None
+    except Exception as e:
+        logger.error(f"Web search error: {e}")
+        return None
+
+
+# === АНАЛИЗ ИЗОБРАЖЕНИЙ (GROQ VISION) ===
+def analyze_image(image_url, prompt):
+    """Анализирует изображение через Groq Vision API"""
+    if not GROQ_API_KEY:
+        return "❌ Groq API не настроен для анализа изображений."
+    
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    
+    data = {
+        "model": "llama-3.2-11b-vision-preview",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt or "Опиши это изображение подробно"},
+                    {"type": "image_url", "image_url": {"url": image_url}}
+                ]
+            }
+        ],
+        "max_tokens": 500
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"]
+        return f"❌ Ошибка анализа: {response.status_code}"
+    except Exception as e:
+        return f"❌ Ошибка: {str(e)[:100]}"
+
+
+# === ЧТЕНИЕ ФАЙЛОВ ===
+def extract_text_from_file(file_bytes, filename):
+    """Извлекает текст из PDF, DOCX или TXT"""
+    try:
+        if filename.endswith('.pdf'):
+            reader = PyPDF2.PdfReader(BytesIO(file_bytes))
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+            return text[:3000]  # Ограничиваем длину
+        elif filename.endswith('.docx'):
+            doc = docx.Document(BytesIO(file_bytes))
+            text = "\n".join([para.text for para in doc.paragraphs])
+            return text[:3000]
+        elif filename.endswith('.txt'):
+            return file_bytes.decode('utf-8')[:3000]
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"File extraction error: {e}")
+        return None
+
+
+# === GROQ API (с поддержкой контекста) ===
+def ask_groq(user_id, prompt, system_prompt=None):
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен."
     
-    # === КЭШИРОВАНИЕ ===
+    # === КЭШ ===
     cache_key = hashlib.md5(prompt.lower().encode()).hexdigest()
     if cache_key in ai_cache:
         cached_time, cached_answer = ai_cache[cache_key]
@@ -54,20 +141,18 @@ def ask_groq(user_id, prompt):
     
     now = time.time()
     
-    # === ИСТОРИЯ ДИАЛОГОВ ===
+    # === ИСТОРИЯ ===
     if user_id not in user_histories:
         user_histories[user_id] = {"messages": [], "created": now}
     
-    # Добавляем вопрос в историю
     user_histories[user_id]["messages"].append({"role": "user", "content": prompt, "timestamp": now})
     
-    # Оставляем только последние MAX_HISTORY сообщений
     if len(user_histories[user_id]["messages"]) > MAX_HISTORY:
         user_histories[user_id]["messages"] = user_histories[user_id]["messages"][-MAX_HISTORY:]
     
-    # Формируем сообщения с историей
+    default_system = "Ты — полезный, дружелюбный ассистент. Отвечай кратко, по существу, учитывая контекст."
     messages = [
-        {"role": "system", "content": "Ты — полезный, дружелюбный ассистент. Отвечай кратко, по существу, учитывая контекст предыдущих сообщений."}
+        {"role": "system", "content": system_prompt or default_system}
     ] + [{"role": msg["role"], "content": msg["content"]} for msg in user_histories[user_id]["messages"]]
     
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -75,7 +160,7 @@ def ask_groq(user_id, prompt):
     data = {
         "model": "qwen/qwen3-32b",
         "messages": messages,
-        "max_tokens": 800,  # УВЕЛИЧЕНО с 500 до 800
+        "max_tokens": 800,
         "temperature": 0.2
     }
     
@@ -83,14 +168,10 @@ def ask_groq(user_id, prompt):
         response = requests.post(url, headers=headers, json=data, timeout=30)
         if response.status_code == 200:
             answer = response.json()["choices"][0]["message"]["content"]
-            # Очистка от тегов think
             answer = re.sub(r'<think>.*?</think>|/think.*?/think|<think/?>|</think>|/think', '', answer, flags=re.DOTALL)
             answer = answer.strip()
             
-            # Сохраняем ответ в историю
             user_histories[user_id]["messages"].append({"role": "assistant", "content": answer, "timestamp": now})
-            
-            # Сохраняем в кэш
             ai_cache[cache_key] = (time.time(), answer)
             
             return answer if answer else "🤔 Не удалось сформулировать ответ."
@@ -101,31 +182,24 @@ def ask_groq(user_id, prompt):
         return f"❌ Ошибка: {str(e)[:100]}"
 
 
-# === АВТООЧИСТКА ИСТОРИИ (РАЗ В ЧАС, УДАЛЕНИЕ СТАРШЕ 2 ДНЕЙ) ===
+# === АВТООЧИСТКА ИСТОРИИ ===
 def clean_expired_histories():
-    """Очищает историю пользователей старше 2 дней"""
     while True:
-        time.sleep(3600)  # Проверяем раз в час
+        time.sleep(3600)
         now = time.time()
         expired_users = []
         for user_id, data in user_histories.items():
-            # Если история старше 2 дней (172800 секунд)
             if now - data.get("created", now) > 172800:
                 expired_users.append(user_id)
             else:
-                # Удаляем старые сообщения внутри истории
                 original_count = len(data["messages"])
                 data["messages"] = [msg for msg in data["messages"] 
                                     if now - msg.get("timestamp", now) < 172800]
-                if len(data["messages"]) != original_count:
-                    logger.info(f"🧹 Удалено {original_count - len(data['messages'])} старых сообщений у пользователя {user_id}")
-        
         for user_id in expired_users:
             del user_histories[user_id]
         if expired_users:
-            logger.info(f"🧹 Полностью удалена история {len(expired_users)} пользователей (старше 2 дней)")
+            logger.info(f"🧹 Удалена история {len(expired_users)} пользователей")
 
-# Запускаем очистку в фоновом потоке
 threading.Thread(target=clean_expired_histories, daemon=True).start()
 
 
@@ -165,13 +239,10 @@ def search_wikipedia(query):
 💡 *Попробуйте поискать в интернете:*
 
 🔍 [Google]({google_link})
-🌐 [Яндекс]({yandex_link})
-
-💬 *Совет:* Для Википедии используйте название статьи, а не вопрос."""
+🌐 [Яндекс]({yandex_link})"""
         
     except Exception as e:
-        logger.error(f"Wikipedia error: {e}")
-        return f"❌ Ошибка при поиске: {str(e)[:100]}"
+        return f"❌ Ошибка: {str(e)[:100]}"
 
 
 # === КОМАНДЫ ===
@@ -181,10 +252,66 @@ def ai_cmd(message):
     if not prompt:
         bot.reply_to(message, "ℹ️ `/ai Как дела?`", parse_mode="Markdown")
         return
+    
+    # Проверяем, нужно ли делать веб-поиск
+    if "найди" in prompt.lower() or "поищи" in prompt.lower() or "google" in prompt.lower():
+        search_results = web_search(prompt)
+        if search_results:
+            bot.reply_to(message, search_results, parse_mode="Markdown", disable_web_page_preview=True)
+            return
+    
     user_id = message.from_user.id
     msg = bot.reply_to(message, "🤖 Думаю...", parse_mode="Markdown")
     answer = ask_groq(user_id, prompt)
     bot.edit_message_text(answer, message.chat.id, msg.message_id, parse_mode="Markdown")
+
+
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    """Анализ изображений"""
+    if not message.caption or not message.caption.lower().startswith('/ai'):
+        return
+    
+    prompt = message.caption[4:].strip()
+    if not prompt:
+        prompt = "Опиши это изображение"
+    
+    msg = bot.reply_to(message, "🖼️ Анализирую изображение...")
+    
+    file_id = message.photo[-1].file_id
+    file_info = bot.get_file(file_id)
+    file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+    
+    result = analyze_image(file_url, prompt)
+    bot.edit_message_text(result, message.chat.id, msg.message_id, parse_mode="Markdown")
+
+
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    """Чтение файлов (PDF, DOCX, TXT)"""
+    if not message.caption or not message.caption.lower().startswith('/ai'):
+        return
+    
+    file_name = message.document.file_name
+    if not (file_name.endswith('.pdf') or file_name.endswith('.docx') or file_name.endswith('.txt')):
+        bot.reply_to(message, "❌ Поддерживаются только PDF, DOCX и TXT файлы.")
+        return
+    
+    prompt = message.caption[4:].strip() or "Извлеки и кратко опиши содержимое файла"
+    
+    msg = bot.reply_to(message, "📄 Читаю файл...")
+    
+    file_info = bot.get_file(message.document.file_id)
+    file_bytes = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
+    
+    text = extract_text_from_file(file_bytes, file_name)
+    if text:
+        user_id = message.from_user.id
+        answer = ask_groq(user_id, f"{prompt}\n\nСодержимое файла:\n{text}")
+        bot.edit_message_text(answer, message.chat.id, msg.message_id, parse_mode="Markdown")
+    else:
+        bot.edit_message_text("❌ Не удалось извлечь текст из файла.", message.chat.id, msg.message_id)
+
 
 @bot.message_handler(commands=['wiki'])
 def wiki_cmd(message):
@@ -195,31 +322,38 @@ def wiki_cmd(message):
     result = search_wikipedia(query)
     bot.reply_to(message, result, parse_mode="Markdown")
 
+
 @bot.message_handler(commands=['roll'])
 def roll_cmd(message):
     bot.reply_to(message, f"🎲 {random.randint(1, 100)}")
 
+
 @bot.message_handler(commands=['coin'])
 def coin_cmd(message):
     bot.reply_to(message, f"🪙 {random.choice(['Орёл', 'Решка'])}")
+
 
 @bot.message_handler(commands=['help', 'start'])
 def help_cmd(message):
     help_text = """📖 *Команды бота*
 
 /wiki [запрос] — поиск в Википедии
-/ai [запрос] — общение с ИИ (с памятью 2 дня)
+/ai [вопрос] — общение с ИИ (с памятью 2 дня)
+/ai найди [запрос] — поиск в интернете
+/ai [описание] (с фото) — анализ изображений
+/ai [вопрос] (с файлом) — чтение PDF/DOCX/TXT
 /roll — случайное число (1-100)
 /coin — орёл/решка
+/clear_history — очистить историю диалога
 /help — эта справка
 
-📩 *Скрытые сообщения:*
-`@имя_бота @получатель текст`
+📩 *Скрытые сообщения:* `@бот @получатель текст`
 
 🔄 *Автоматически:* пересылка сообщений между чатами и 🔥 на новые посты в каналах
 
-🧠 *AI запоминает:* последние 10 сообщений диалога (история хранится 2 дня)"""
+🧠 *AI запоминает:* последние 10 сообщений (история 2 дня)"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
+
 
 @bot.message_handler(commands=['clear_history'])
 def clear_history(message):
@@ -237,13 +371,14 @@ def forward_to_b(message):
     bot.forward_message(CHAT_B, message.chat.id, message.message_id, message_thread_id=CHAT_B_THREAD)
     logger.info(f"Переслано из A в B")
 
+
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def forward_to_a(message):
     bot.forward_message(CHAT_A, message.chat.id, message.message_id)
     logger.info(f"Переслано из B в A")
 
 
-# === ПОСТЫ В КАНАЛАХ (реакция 🔥) ===
+# === ПОСТЫ В КАНАЛАХ ===
 @bot.channel_post_handler(func=lambda m: m.chat.id in [-1001317416582, -1002185590715])
 def channel_reaction(message):
     try:
@@ -286,6 +421,7 @@ def inline_query(query):
     except Exception as e:
         logger.error(f"Inline error: {e}")
 
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("read_"))
 def read_secret(call):
     msg_id = call.data[5:]
@@ -305,7 +441,7 @@ def read_secret(call):
     bot.answer_callback_query(call.id, f"📩 {data['content']}", show_alert=True)
 
 
-# === ОЧИСТКА УСТАРЕВШИХ СКРЫТЫХ СООБЩЕНИЙ ===
+# === ОЧИСТКА УСТАРЕВШИХ ===
 def clean_expired_secrets():
     while True:
         time.sleep(86400)
@@ -313,30 +449,24 @@ def clean_expired_secrets():
         expired = [mid for mid, d in secret_messages.items() if d.get("expires", now) < now]
         for mid in expired:
             del secret_messages[mid]
-        if expired:
-            logger.info(f"🧹 Удалено {len(expired)} устаревших скрытых сообщений")
 
 threading.Thread(target=clean_expired_secrets, daemon=True).start()
 
 
 # === ПРОГРЕВ БОТА ===
 def warmup():
-    """Прогревает бота, чтобы первый запрос не был холодным"""
     logger.info("🔥 Прогреваю бота...")
-    
     if GROQ_API_KEY:
         try:
-            test_result = ask_groq(0, "ok")
-            logger.info(f"✅ Groq API прогрето")
-        except Exception as e:
-            logger.warning(f"⚠️ Groq API не прогрето: {e}")
-    
+            ask_groq(0, "ok")
+            logger.info("✅ Groq API прогрето")
+        except:
+            pass
     try:
         bot.get_me()
         logger.info("✅ Telegram API прогрето")
-    except Exception as e:
-        logger.warning(f"⚠️ Telegram API не прогрето: {e}")
-    
+    except:
+        pass
     logger.info("🔥 Бот готов к работе!")
 
 
@@ -351,6 +481,7 @@ def webhook():
         logger.error(f"Webhook error: {e}")
         return "OK", 200
 
+
 @app.route("/", methods=["GET"])
 def health():
     return "OK", 200
@@ -358,19 +489,17 @@ def health():
 
 # === ЗАПУСК ===
 if __name__ == "__main__":
-    # Прогреваем бота перед запуском
     warmup()
-    
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     
     bot.remove_webhook()
     bot.set_webhook(url=webhook_url)
     
-    logger.info("🤖 БОТ ЗАПУЩЕН")
+    logger.info("🤖 БОТ ЗАПУЩЕН (с веб-поиском, анализом изображений и чтением файлов)")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info(f"Вебхук: {webhook_url}")
-    logger.info("Команды: /ai, /wiki, /roll, /coin, /help, /clear_history")
-    logger.info("🧠 AI: история 2 дня, кэш 1 час, max_tokens=800")
+    logger.info("📩 /ai найди [запрос] — веб-поиск")
+    logger.info("🖼️ /ai [описание] (с фото) — анализ изображений")
+    logger.info("📄 /ai [вопрос] (с файлом) — чтение файлов")
     
     app.run(host="0.0.0.0", port=port)
