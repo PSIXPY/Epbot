@@ -57,7 +57,7 @@ def ask_groq(prompt):
         return f"❌ Ошибка: {str(e)[:100]}"
 
 
-# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ (со ссылками на Google/Яндекс) ===
+# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
 def search_wikipedia(query):
     try:
         wiki = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
@@ -68,7 +68,6 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # Поиск через API Википедии
         resp = requests.get("https://ru.wikipedia.org/w/api.php", params={
             "action": "query", "list": "search", "srsearch": query,
             "format": "json", "srlimit": 1, "srwhat": "text"
@@ -85,7 +84,6 @@ def search_wikipedia(query):
                         summary += "..."
                     return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
         
-        # Ссылки на поисковики
         encoded_query = urllib.parse.quote(query)
         google_link = f"https://www.google.com/search?q={encoded_query}"
         yandex_link = f"https://yandex.ru/search/?text={encoded_query}"
@@ -97,8 +95,7 @@ def search_wikipedia(query):
 🔍 [Google]({google_link})
 🌐 [Яндекс]({yandex_link})
 
-💬 *Совет:* Для Википедии используйте название статьи, а не вопрос.
-Например: `/wiki Тефнут` вместо `/wiki кто такая тефнут`"""
+💬 *Совет:* Для Википедии используйте название статьи, а не вопрос."""
         
     except Exception as e:
         logger.error(f"Wikipedia error: {e}")
@@ -137,7 +134,7 @@ def coin_cmd(message):
 def help_cmd(message):
     help_text = """📖 *Команды бота*
 
-/wiki [запрос] — поиск в Википедии (если не найдёт — даст ссылки на Google/Яндекс)
+/wiki [запрос] — поиск в Википедии
 /ai [запрос] — общение с ИИ
 /roll — случайное число (1-100)
 /coin — орёл/решка
@@ -236,12 +233,32 @@ def clean_expired():
 threading.Thread(target=clean_expired, daemon=True).start()
 
 
+# === ПРОГРЕВ БОТА ===
+def warmup():
+    """Прогревает бота, чтобы первый запрос не был холодным"""
+    logger.info("🔥 Прогреваю бота...")
+    
+    if GROQ_API_KEY:
+        try:
+            test_result = ask_groq("ok")
+            logger.info(f"✅ Groq API прогрето")
+        except Exception as e:
+            logger.warning(f"⚠️ Groq API не прогрето: {e}")
+    
+    try:
+        bot.get_me()
+        logger.info("✅ Telegram API прогрето")
+    except Exception as e:
+        logger.warning(f"⚠️ Telegram API не прогрето: {e}")
+    
+    logger.info("🔥 Бот готов к работе!")
+
+
 # === ВЕБХУК ===
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
-        logger.info(f"🔔 Получен update")
         bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
@@ -255,6 +272,9 @@ def health():
 
 # === ЗАПУСК ===
 if __name__ == "__main__":
+    # Прогреваем бота перед запуском
+    warmup()
+    
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     
