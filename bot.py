@@ -7,6 +7,7 @@ import time
 import threading
 import re
 import urllib.parse
+import hashlib
 from datetime import datetime
 from flask import Flask, request
 from telebot import TeleBot, types
@@ -29,18 +30,52 @@ bot = TeleBot(BOT_TOKEN)
 message_links = {}
 secret_messages = {}
 
+# Для кэширования ответов AI
+ai_cache = {}
+CACHE_TTL = 3600  # 1 час
 
-# === ФУНКЦИЯ ДЛЯ GROQ ===
-def ask_groq(prompt):
+# Для истории диалогов
+user_histories = {}
+MAX_HISTORY = 10  # храним последние 10 сообщений на пользователя
+
+
+# === ФУНКЦИЯ ДЛЯ GROQ (с историей, кэшем и увеличенными токенами) ===
+def ask_groq(user_id, prompt):
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен."
+    
+    # === КЭШИРОВАНИЕ ===
+    cache_key = hashlib.md5(prompt.lower().encode()).hexdigest()
+    if cache_key in ai_cache:
+        cached_time, cached_answer = ai_cache[cache_key]
+        if time.time() - cached_time < CACHE_TTL:
+            logger.info(f"💾 Кэш: ответ на '{prompt[:30]}...' взят из кэша")
+            return cached_answer
+    
+    now = time.time()
+    
+    # === ИСТОРИЯ ДИАЛОГОВ ===
+    if user_id not in user_histories:
+        user_histories[user_id] = {"messages": [], "created": now}
+    
+    # Добавляем вопрос в историю
+    user_histories[user_id]["messages"].append({"role": "user", "content": prompt, "timestamp": now})
+    
+    # Оставляем только последние MAX_HISTORY сообщений
+    if len(user_histories[user_id]["messages"]) > MAX_HISTORY:
+        user_histories[user_id]["messages"] = user_histories[user_id]["messages"][-MAX_HISTORY:]
+    
+    # Формируем сообщения с историей
+    messages = [
+        {"role": "system", "content": "Ты — полезный, дружелюбный ассистент. Отвечай кратко, по существу, учитывая контекст предыдущих сообщений."}
+    ] + [{"role": msg["role"], "content": msg["content"]} for msg in user_histories[user_id]["messages"]]
     
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     data = {
         "model": "qwen/qwen3-32b",
-        "messages": [{"role": "system", "content": "Отвечай кратко, по существу."}, {"role": "user", "content": prompt}],
-        "max_tokens": 500,
+        "messages": messages,
+        "max_tokens": 800,  # УВЕЛИЧЕНО с 500 до 800
         "temperature": 0.2
     }
     
@@ -48,13 +83,50 @@ def ask_groq(prompt):
         response = requests.post(url, headers=headers, json=data, timeout=30)
         if response.status_code == 200:
             answer = response.json()["choices"][0]["message"]["content"]
+            # Очистка от тегов think
             answer = re.sub(r'<think>.*?</think>|/think.*?/think|<think/?>|</think>|/think', '', answer, flags=re.DOTALL)
-            return answer.strip() or "🤔 Не удалось сформулировать ответ."
+            answer = answer.strip()
+            
+            # Сохраняем ответ в историю
+            user_histories[user_id]["messages"].append({"role": "assistant", "content": answer, "timestamp": now})
+            
+            # Сохраняем в кэш
+            ai_cache[cache_key] = (time.time(), answer)
+            
+            return answer if answer else "🤔 Не удалось сформулировать ответ."
         elif response.status_code == 429:
             return "⚠️ Лимит запросов к ИИ исчерпан! Подождите 1 минуту."
         return f"❌ Ошибка Groq: {response.status_code}"
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
+
+
+# === АВТООЧИСТКА ИСТОРИИ (РАЗ В ЧАС, УДАЛЕНИЕ СТАРШЕ 2 ДНЕЙ) ===
+def clean_expired_histories():
+    """Очищает историю пользователей старше 2 дней"""
+    while True:
+        time.sleep(3600)  # Проверяем раз в час
+        now = time.time()
+        expired_users = []
+        for user_id, data in user_histories.items():
+            # Если история старше 2 дней (172800 секунд)
+            if now - data.get("created", now) > 172800:
+                expired_users.append(user_id)
+            else:
+                # Удаляем старые сообщения внутри истории
+                original_count = len(data["messages"])
+                data["messages"] = [msg for msg in data["messages"] 
+                                    if now - msg.get("timestamp", now) < 172800]
+                if len(data["messages"]) != original_count:
+                    logger.info(f"🧹 Удалено {original_count - len(data['messages'])} старых сообщений у пользователя {user_id}")
+        
+        for user_id in expired_users:
+            del user_histories[user_id]
+        if expired_users:
+            logger.info(f"🧹 Полностью удалена история {len(expired_users)} пользователей (старше 2 дней)")
+
+# Запускаем очистку в фоновом потоке
+threading.Thread(target=clean_expired_histories, daemon=True).start()
 
 
 # === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
@@ -109,8 +181,9 @@ def ai_cmd(message):
     if not prompt:
         bot.reply_to(message, "ℹ️ `/ai Как дела?`", parse_mode="Markdown")
         return
+    user_id = message.from_user.id
     msg = bot.reply_to(message, "🤖 Думаю...", parse_mode="Markdown")
-    answer = ask_groq(prompt)
+    answer = ask_groq(user_id, prompt)
     bot.edit_message_text(answer, message.chat.id, msg.message_id, parse_mode="Markdown")
 
 @bot.message_handler(commands=['wiki'])
@@ -135,7 +208,7 @@ def help_cmd(message):
     help_text = """📖 *Команды бота*
 
 /wiki [запрос] — поиск в Википедии
-/ai [запрос] — общение с ИИ
+/ai [запрос] — общение с ИИ (с памятью 2 дня)
 /roll — случайное число (1-100)
 /coin — орёл/решка
 /help — эта справка
@@ -143,8 +216,19 @@ def help_cmd(message):
 📩 *Скрытые сообщения:*
 `@имя_бота @получатель текст`
 
-🔄 *Автоматически:* пересылка сообщений между чатами и 🔥 на новые посты в каналах"""
+🔄 *Автоматически:* пересылка сообщений между чатами и 🔥 на новые посты в каналах
+
+🧠 *AI запоминает:* последние 10 сообщений диалога (история хранится 2 дня)"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
+
+@bot.message_handler(commands=['clear_history'])
+def clear_history(message):
+    user_id = message.from_user.id
+    if user_id in user_histories:
+        del user_histories[user_id]
+        bot.reply_to(message, "🗑️ История ваших диалогов очищена!")
+    else:
+        bot.reply_to(message, "📭 У вас нет сохранённой истории.")
 
 
 # === ПЕРЕСЫЛКА СООБЩЕНИЙ ===
@@ -221,16 +305,18 @@ def read_secret(call):
     bot.answer_callback_query(call.id, f"📩 {data['content']}", show_alert=True)
 
 
-# === ОЧИСТКА УСТАРЕВШИХ ===
-def clean_expired():
+# === ОЧИСТКА УСТАРЕВШИХ СКРЫТЫХ СООБЩЕНИЙ ===
+def clean_expired_secrets():
     while True:
         time.sleep(86400)
         now = datetime.now().timestamp()
         expired = [mid for mid, d in secret_messages.items() if d.get("expires", now) < now]
         for mid in expired:
             del secret_messages[mid]
+        if expired:
+            logger.info(f"🧹 Удалено {len(expired)} устаревших скрытых сообщений")
 
-threading.Thread(target=clean_expired, daemon=True).start()
+threading.Thread(target=clean_expired_secrets, daemon=True).start()
 
 
 # === ПРОГРЕВ БОТА ===
@@ -240,7 +326,7 @@ def warmup():
     
     if GROQ_API_KEY:
         try:
-            test_result = ask_groq("ok")
+            test_result = ask_groq(0, "ok")
             logger.info(f"✅ Groq API прогрето")
         except Exception as e:
             logger.warning(f"⚠️ Groq API не прогрето: {e}")
@@ -284,6 +370,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info(f"Вебхук: {webhook_url}")
-    logger.info("Команды: /ai, /wiki, /roll, /coin, /help")
+    logger.info("Команды: /ai, /wiki, /roll, /coin, /help, /clear_history")
+    logger.info("🧠 AI: история 2 дня, кэш 1 час, max_tokens=800")
     
     app.run(host="0.0.0.0", port=port)
