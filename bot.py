@@ -212,7 +212,7 @@ def help_command(message):
 /roll — случайное число (1-100)
 /coin — орёл/решка
 
-📩 *Скрытые сообщения:* `@бот @получатель текст`
+📩 *Скрытые сообщения:* `@бот @получатель текст` (хранятся 3 часа)
 
 🔄 *Автоматически:* пересылка сообщений между чатами и 🔥 на новые посты в каналах"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
@@ -394,7 +394,7 @@ def channel_reaction(message):
             logger.error(f"Ошибка реакции (API): {e2}")
 
 
-# === СКРЫТЫЕ СООБЩЕНИЯ ===
+# === СКРЫТЫЕ СООБЩЕНИЯ (3 ЧАСА, БЕЗ КОПИИ В ЛС) ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -406,20 +406,25 @@ def inline_query(query):
             return
         target = parts[0].lstrip("@")
         content = parts[1]
-        msg_id = f"sec_{int(datetime.now().timestamp() * 1000)}"
+        msg_id = f"sec_{int(datetime.now().timestamp() * 1000)}_{query.from_user.id}"
         
         secret_messages[msg_id] = {
-            "target": target, "content": content, "sender": query.from_user.first_name,
-            "expires": datetime.now().timestamp() + 300
+            "target": target,
+            "content": content,
+            "sender": query.from_user.first_name,
+            "sender_id": query.from_user.id,
+            "expires": datetime.now().timestamp() + 10800  # 3 часа
         }
         
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"read_{msg_id}"))
+        markup.add(InlineKeyboardButton("📩 Прочитать сообщение", callback_data=f"read_{msg_id}"))
         
         result = types.InlineQueryResultArticle(
-            id=msg_id, title=f"Отправить @{target}", description=content[:50],
+            id=msg_id,
+            title=f"Отправить @{target}",
+            description=content[:50],
             input_message_content=types.InputTextMessageContent(
-                f"🔔 *Скрытое сообщение* от {query.from_user.first_name} для @{target}",
+                f"🔔 *Скрытое сообщение* от {query.from_user.first_name} для @{target}\n\n(сообщение будет доступно 3 часа)",
                 parse_mode="Markdown"
             ),
             reply_markup=markup
@@ -432,29 +437,51 @@ def inline_query(query):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("read_"))
 def read_secret(call):
     msg_id = call.data[5:]
+    
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение устарело", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение устарело или уже прочитано.", show_alert=True)
         return
+    
     data = secret_messages[msg_id]
-    if call.from_user.username != data["target"]:
-        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
+    target_username = data["target"]
+    content = data["content"]
+    sender_name = data["sender"]
+    expires = data["expires"]
+    
+    if call.from_user.username != target_username:
+        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
         return
-    if datetime.now().timestamp() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Сообщение устарело", show_alert=True)
+    
+    if datetime.now().timestamp() > expires:
+        bot.answer_callback_query(call.id, "❌ Сообщение устарело (хранится 3 часа).", show_alert=True)
         del secret_messages[msg_id]
         return
+    
+    bot.answer_callback_query(
+        call.id,
+        f"📩 Сообщение от {sender_name}:\n\n{content}",
+        show_alert=True
+    )
+    
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
+    
     del secret_messages[msg_id]
-    bot.delete_message(call.message.chat.id, call.message.message_id)
-    bot.answer_callback_query(call.id, f"📩 {data['content']}", show_alert=True)
+    logger.info(f"📩 Скрытое сообщение {msg_id} прочитано и удалено")
 
 
 def clean_expired_secrets():
+    """Очищает устаревшие скрытые сообщения (раз в час)"""
     while True:
-        time.sleep(86400)
+        time.sleep(3600)
         now = datetime.now().timestamp()
         expired = [mid for mid, d in secret_messages.items() if d.get("expires", now) < now]
         for mid in expired:
             del secret_messages[mid]
+        if expired:
+            logger.info(f"🧹 Удалено {len(expired)} устаревших скрытых сообщений")
 
 threading.Thread(target=clean_expired_secrets, daemon=True).start()
 
@@ -488,6 +515,6 @@ if __name__ == "__main__":
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("Команды: /ai, /wiki, /roll, /coin, /help")
     logger.info("🔥 Автореакции на каналы")
-    logger.info("📩 Скрытые сообщения: @бот @получатель текст")
+    logger.info("📩 Скрытые сообщения: хранятся 3 часа, без копии в ЛС")
     
     app.run(host="0.0.0.0", port=port)
