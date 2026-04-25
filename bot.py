@@ -8,7 +8,7 @@ import threading
 import re
 import urllib.parse
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask, request
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -31,22 +31,16 @@ logger = logging.getLogger(__name__)
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 bot = TeleBot(BOT_TOKEN)
-message_links = {}
 secret_messages = {}
 
 # === КЭШ И ИСТОРИЯ ===
 ai_cache = {}
-CACHE_TTL = 3600
 user_histories = {}
 MAX_HISTORY = 10
-
-# === КЕШ УЧАСТНИКОВ ДЛЯ МАССОВОГО УПОМИНАНИЯ ===
-user_cache = {}
-last_call_time = {}
-CALL_COOLDOWN = 60
+CACHE_TTL = 3600
 
 
-# === ФУНКЦИИ ДЛЯ ПОЛУЧЕНИЯ ИМЕНИ ОТПРАВИТЕЛЯ ===
+# === ФУНКЦИИ ===
 def get_sender_name(user):
     if not user:
         return "Неизвестный"
@@ -58,194 +52,7 @@ def get_sender_name(user):
     return name
 
 
-# === ФУНКЦИИ МАССОВОГО УПОМИНАНИЯ ===
-def save_user_from_message(message):
-    user = message.from_user
-    if not user or user.is_bot:
-        return
-    chat_id = message.chat.id
-    if chat_id not in user_cache:
-        user_cache[chat_id] = {}
-    user_cache[chat_id][user.id] = {
-        "username": user.username,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "last_seen": time.time()
-    }
-
-
-@bot.message_handler(func=lambda m: True, content_types=['text', 'photo', 'video', 'voice', 'sticker', 'document'])
-def catch_all_messages(message):
-    save_user_from_message(message)
-
-
-@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(("калл ", "калл", "call ", "call")))
-def call_all_no_slash(message):
-    chat_id = message.chat.id
-    thread_id = message.message_thread_id
-    user_id = message.from_user.id
-    
-    if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
-        remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
-        bot.reply_to(message, f"⏳ Подождите {remaining} сек.")
-        return
-    
-    text = message.text
-    if text.lower().startswith("калл "):
-        custom_text = text[5:].strip()
-    elif text.lower().startswith("калл"):
-        custom_text = text[4:].strip()
-    elif text.lower().startswith("call "):
-        custom_text = text[5:].strip()
-    else:
-        custom_text = text[4:].strip()
-    
-    if not custom_text:
-        custom_text = "ВНИМАНИЕ!"
-    
-    try:
-        bot.delete_message(chat_id, message.message_id)
-    except:
-        pass
-    
-    members = user_cache.get(chat_id, {})
-    
-    if not members:
-        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат, чтобы бот вас запомнил.", message_thread_id=thread_id)
-        return
-    
-    mentions = []
-    for uid, data in members.items():
-        if uid == user_id:
-            continue
-        username = data.get("username")
-        if username:
-            mentions.append(f"@{username}")
-        else:
-            name = data.get("first_name", "Пользователь")
-            mentions.append(f"[{name}](tg://user?id={uid})")
-    
-    if not mentions:
-        bot.send_message(chat_id, "🤷‍♂️ Некого упоминать.", message_thread_id=thread_id)
-        return
-    
-    chunk_size = 50
-    for i in range(0, len(mentions), chunk_size):
-        chunk = mentions[i:i+chunk_size]
-        bot.send_message(chat_id, f"📢 {custom_text}\n\n{' '.join(chunk)}", parse_mode="Markdown", message_thread_id=thread_id)
-    
-    last_call_time[chat_id] = time.time()
-    logger.info(f"калл в {chat_id}, упомянуто {len(mentions)}")
-
-
-@bot.message_handler(commands=['all', 'call'])
-def call_all_members(message):
-    chat_id = message.chat.id
-    thread_id = message.message_thread_id
-    user_id = message.from_user.id
-    
-    if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
-        remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
-        bot.reply_to(message, f"⏳ Подождите {remaining} сек.")
-        return
-    
-    parts = message.text.split(maxsplit=1)
-    custom_text = parts[1] if len(parts) > 1 else "ВНИМАНИЕ!"
-    
-    try:
-        bot.delete_message(chat_id, message.message_id)
-    except:
-        pass
-    
-    members = user_cache.get(chat_id, {})
-    
-    if not members:
-        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат, чтобы бот вас запомнил.", message_thread_id=thread_id)
-        return
-    
-    mentions = []
-    for uid, data in members.items():
-        if uid == user_id:
-            continue
-        username = data.get("username")
-        if username:
-            mentions.append(f"@{username}")
-        else:
-            name = data.get("first_name", "Пользователь")
-            mentions.append(f"[{name}](tg://user?id={uid})")
-    
-    if not mentions:
-        bot.send_message(chat_id, "🤷‍♂️ Некого упоминать.", message_thread_id=thread_id)
-        return
-    
-    chunk_size = 50
-    for i in range(0, len(mentions), chunk_size):
-        chunk = mentions[i:i+chunk_size]
-        bot.send_message(chat_id, f"📢 {custom_text}\n\n{' '.join(chunk)}", parse_mode="Markdown", message_thread_id=thread_id)
-    
-    last_call_time[chat_id] = time.time()
-    logger.info(f"/all в {chat_id}, упомянуто {len(mentions)}")
-
-
-# === ПЕРЕСЫЛКА СООБЩЕНИЙ (С ПОДПИСЬЮ, КАК РАНЬШЕ) ===
-@bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
-def forward_to_b(message):
-    sender_name = get_sender_name(message.from_user)
-    caption_text = f"📨 От: {sender_name}"
-    
-    content_text = message.text or message.caption or ""
-    full_caption = f"{caption_text}\n\n{content_text}" if content_text else caption_text
-    
-    if message.photo:
-        bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=full_caption, message_thread_id=CHAT_B_THREAD)
-    elif message.video:
-        bot.send_video(CHAT_B, message.video.file_id, caption=full_caption, message_thread_id=CHAT_B_THREAD)
-    elif message.voice:
-        bot.send_voice(CHAT_B, message.voice.file_id, caption=full_caption, message_thread_id=CHAT_B_THREAD)
-    elif message.document:
-        bot.send_document(CHAT_B, message.document.file_id, caption=full_caption, message_thread_id=CHAT_B_THREAD)
-    elif message.sticker:
-        bot.send_sticker(CHAT_B, message.sticker.file_id, message_thread_id=CHAT_B_THREAD)
-        if caption_text:
-            bot.send_message(CHAT_B, caption_text, message_thread_id=CHAT_B_THREAD)
-    elif message.text:
-        bot.send_message(CHAT_B, full_caption, message_thread_id=CHAT_B_THREAD)
-    else:
-        bot.forward_message(CHAT_B, message.chat.id, message.message_id, message_thread_id=CHAT_B_THREAD)
-    
-    logger.info(f"Переслано из A в B")
-
-
-@bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
-def forward_to_a(message):
-    sender_name = get_sender_name(message.from_user)
-    caption_text = f"📨 От: {sender_name}"
-    
-    content_text = message.text or message.caption or ""
-    full_caption = f"{caption_text}\n\n{content_text}" if content_text else caption_text
-    
-    if message.photo:
-        bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=full_caption)
-    elif message.video:
-        bot.send_video(CHAT_A, message.video.file_id, caption=full_caption)
-    elif message.voice:
-        bot.send_voice(CHAT_A, message.voice.file_id, caption=full_caption)
-    elif message.document:
-        bot.send_document(CHAT_A, message.document.file_id, caption=full_caption)
-    elif message.sticker:
-        bot.send_sticker(CHAT_A, message.sticker.file_id)
-        if caption_text:
-            bot.send_message(CHAT_A, caption_text)
-    elif message.text:
-        bot.send_message(CHAT_A, full_caption)
-    else:
-        bot.forward_message(CHAT_A, message.chat.id, message.message_id)
-    
-    logger.info(f"Переслано из B в A")
-
-
-# === ФУНКЦИИ ДЛЯ GROQ ===
-def ask_groq(user_id, prompt, system_prompt=None):
+def ask_groq(user_id, prompt):
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен."
     
@@ -258,17 +65,17 @@ def ask_groq(user_id, prompt, system_prompt=None):
     now = time.time()
     
     if user_id not in user_histories:
-        user_histories[user_id] = {"messages": [], "created": now}
+        user_histories[user_id] = []
     
-    user_histories[user_id]["messages"].append({"role": "user", "content": prompt, "timestamp": now})
+    user_histories[user_id].append({"role": "user", "content": prompt})
     
-    if len(user_histories[user_id]["messages"]) > MAX_HISTORY:
-        user_histories[user_id]["messages"] = user_histories[user_id]["messages"][-MAX_HISTORY:]
+    if len(user_histories[user_id]) > MAX_HISTORY:
+        user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
     
-    default_system = "Ты — полезный, дружелюбный ассистент. Отвечай кратко, по существу, учитывая контекст."
     messages = [
-        {"role": "system", "content": system_prompt or default_system}
-    ] + [{"role": msg["role"], "content": msg["content"]} for msg in user_histories[user_id]["messages"]]
+        {"role": "system", "content": "Отвечай кратко, по существу, учитывая контекст."},
+        *user_histories[user_id]
+    ]
     
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -283,13 +90,11 @@ def ask_groq(user_id, prompt, system_prompt=None):
         response = requests.post(url, headers=headers, json=data, timeout=30)
         if response.status_code == 200:
             answer = response.json()["choices"][0]["message"]["content"]
-            answer = re.sub(r'<think>.*?</think>|/think.*?/think|<think/?>|</think>|/think', '', answer, flags=re.DOTALL)
+            answer = re.sub(r'<think>.*?</think>|/think', '', answer, flags=re.DOTALL)
             answer = answer.strip()
-            
-            user_histories[user_id]["messages"].append({"role": "assistant", "content": answer, "timestamp": now})
+            user_histories[user_id].append({"role": "assistant", "content": answer})
             ai_cache[cache_key] = (time.time(), answer)
-            
-            return answer if answer else "🤔 Не удалось сформулировать ответ."
+            return answer
         elif response.status_code == 429:
             return "⚠️ Лимит запросов к ИИ исчерпан! Подождите 1 минуту."
         return f"❌ Ошибка Groq: {response.status_code}"
@@ -297,65 +102,6 @@ def ask_groq(user_id, prompt, system_prompt=None):
         return f"❌ Ошибка: {str(e)[:100]}"
 
 
-def clean_expired_histories():
-    while True:
-        time.sleep(3600)
-        now = time.time()
-        expired_users = []
-        for user_id, data in user_histories.items():
-            if now - data.get("created", now) > 172800:
-                expired_users.append(user_id)
-        for user_id in expired_users:
-            del user_histories[user_id]
-        if expired_users:
-            logger.info(f"🧹 Удалена история {len(expired_users)} пользователей")
-
-threading.Thread(target=clean_expired_histories, daemon=True).start()
-
-
-# === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
-def search_wikipedia(query):
-    try:
-        wiki = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
-        page = wiki.page(query)
-        if page.exists():
-            summary = page.summary[:500]
-            if len(page.summary) > 500:
-                summary += "..."
-            return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
-        
-        resp = requests.get("https://ru.wikipedia.org/w/api.php", params={
-            "action": "query", "list": "search", "srsearch": query,
-            "format": "json", "srlimit": 1, "srwhat": "text"
-        }, timeout=10)
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("query", {}).get("search"):
-                best = data["query"]["search"][0]["title"]
-                page = wiki.page(best)
-                if page.exists():
-                    summary = page.summary[:500]
-                    if len(page.summary) > 500:
-                        summary += "..."
-                    return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать полностью]({page.fullurl})"
-        
-        encoded_query = urllib.parse.quote(query)
-        google_link = f"https://www.google.com/search?q={encoded_query}"
-        yandex_link = f"https://yandex.ru/search/?text={encoded_query}"
-        
-        return f"""❌ *Ничего не найдено в Википедии* по запросу: "{query}"
-
-💡 *Попробуйте поискать в интернете:*
-
-🔍 [Google]({google_link})
-🌐 [Яндекс]({yandex_link})"""
-        
-    except Exception as e:
-        return f"❌ Ошибка: {str(e)[:100]}"
-
-
-# === ФУНКЦИЯ ВЕБ-ПОИСКА ===
 def web_search(query):
     try:
         encoded_query = urllib.parse.quote(query)
@@ -384,7 +130,6 @@ def web_search(query):
         return None
 
 
-# === АНАЛИЗ ИЗОБРАЖЕНИЙ ===
 def analyze_image(image_url, prompt):
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен для анализа изображений."
@@ -398,7 +143,7 @@ def analyze_image(image_url, prompt):
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt or "Опиши это изображение подробно"},
+                    {"type": "text", "text": prompt or "Опиши это изображение"},
                     {"type": "image_url", "image_url": {"url": image_url}}
                 ]
             }
@@ -415,7 +160,6 @@ def analyze_image(image_url, prompt):
         return f"❌ Ошибка: {str(e)[:100]}"
 
 
-# === ЧТЕНИЕ ФАЙЛОВ ===
 def extract_text_from_file(file_bytes, filename):
     try:
         if filename.endswith('.pdf'):
@@ -430,16 +174,60 @@ def extract_text_from_file(file_bytes, filename):
             return text[:3000]
         elif filename.endswith('.txt'):
             return file_bytes.decode('utf-8')[:3000]
-        else:
-            return None
+        return None
     except Exception as e:
         logger.error(f"File extraction error: {e}")
         return None
 
 
+def search_wikipedia(query):
+    try:
+        wiki = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
+        page = wiki.page(query)
+        if page.exists():
+            summary = page.summary[:500]
+            if len(page.summary) > 500:
+                summary += "..."
+            return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 {page.fullurl}]"
+        
+        encoded_query = urllib.parse.quote(query)
+        return f"❌ Ничего не найдено в Википедии.\n\n🔍 [Google](https://www.google.com/search?q={encoded_query}) | [Яндекс](https://yandex.ru/search/?text={encoded_query})"
+    except Exception as e:
+        return f"❌ Ошибка: {e}"
+
+
 # === КОМАНДЫ ===
+@bot.message_handler(commands=['start', 'help'])
+def help_command(message):
+    help_text = """📖 *Команды бота*
+
+🤖 *ИИ и поиск:*
+/wiki [запрос] — поиск в Википедии
+/ai [вопрос] — общение с ИИ
+/ai найди [запрос] — поиск в интернете
+/clear_history — очистить историю диалога
+
+📢 *Массовые уведомления:*
+/all текст — созвать всех участников
+
+🖼️ *Анализ изображений:*
+Отправьте фото с подписью `/ai Опиши это`
+
+📄 *Чтение файлов:*
+Отправьте PDF/DOCX/TXT с подписью `/ai Прочитай`
+
+🎲 *Развлечения:*
+/roll — случайное число (1-100)
+/coin — орёл/решка
+
+📩 *Скрытые сообщения:* `@бот @получатель текст`
+
+🔄 *Автоматически:* пересылка между чатами и 🔥 на новые посты в каналах"""
+    bot.reply_to(message, help_text, parse_mode="Markdown")
+
+
 @bot.message_handler(commands=['ai'])
-def ai_cmd(message):
+def ai_command(message):
     prompt = message.text[3:].strip()
     if not prompt:
         bot.reply_to(message, "ℹ️ `/ai Как дела?`", parse_mode="Markdown")
@@ -503,7 +291,7 @@ def handle_document(message):
 
 
 @bot.message_handler(commands=['wiki'])
-def wiki_cmd(message):
+def wiki_command(message):
     query = message.text[5:].strip()
     if not query:
         bot.reply_to(message, "ℹ️ `/wiki Python`", parse_mode="Markdown")
@@ -513,12 +301,12 @@ def wiki_cmd(message):
 
 
 @bot.message_handler(commands=['roll'])
-def roll_cmd(message):
+def roll_command(message):
     bot.reply_to(message, f"🎲 {random.randint(1, 100)}")
 
 
 @bot.message_handler(commands=['coin'])
-def coin_cmd(message):
+def coin_command(message):
     bot.reply_to(message, f"🪙 {random.choice(['Орёл', 'Решка'])}")
 
 
@@ -532,28 +320,72 @@ def clear_history(message):
         bot.reply_to(message, "📭 У вас нет сохранённой истории.")
 
 
-@bot.message_handler(commands=['help', 'start'])
-def help_cmd(message):
-    help_text = """📖 *Команды бота*
+@bot.message_handler(commands=['all', 'call'])
+def all_command(message):
+    custom_text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else "ВНИМАНИЕ!"
+    bot.send_message(message.chat.id, f"📢 {custom_text}\n\n@all", message_thread_id=message.message_thread_id)
+    logger.info(f"Вызван /all в чате {message.chat.id}")
 
-🤖 *ИИ и поиск:*
-/wiki [запрос] — поиск в Википедии
-/ai [вопрос] — общение с ИИ
-/ai найди [запрос] — поиск в интернете
-/clear_history — очистить историю диалога
 
-📢 *Массовые уведомления:*
-/all текст — созвать всех участников
-калл текст — созвать всех (без слеша)
+# === ПЕРЕСЫЛКА СООБЩЕНИЙ ===
+@bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
+def forward_to_b(message):
+    try:
+        sender_name = get_sender_name(message.from_user)
+        caption = f"📨 От: {sender_name}"
+        
+        if message.text:
+            bot.send_message(CHAT_B, f"{caption}\n\n{message.text}", message_thread_id=CHAT_B_THREAD)
+        elif message.photo:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+        elif message.video:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_video(CHAT_B, message.video.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+        elif message.voice:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_voice(CHAT_B, message.voice.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+        elif message.document:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_document(CHAT_B, message.document.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+        elif message.sticker:
+            bot.send_sticker(CHAT_B, message.sticker.file_id, message_thread_id=CHAT_B_THREAD)
+            bot.send_message(CHAT_B, caption, message_thread_id=CHAT_B_THREAD)
+        else:
+            bot.send_message(CHAT_B, caption, message_thread_id=CHAT_B_THREAD)
+        logger.info(f"Переслано из A в B")
+    except Exception as e:
+        logger.error(f"Ошибка A->B: {e}")
 
-🎲 *Развлечения:*
-/roll — случайное число (1-100)
-/coin — орёл/решка
 
-📩 *Скрытые сообщения:* `@бот @получатель текст`
-
-🔄 *Автоматически:* пересылка сообщений между чатами и 🔥 на новые посты в каналах"""
-    bot.reply_to(message, help_text, parse_mode="Markdown")
+@bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
+def forward_to_a(message):
+    try:
+        sender_name = get_sender_name(message.from_user)
+        caption = f"📨 От: {sender_name}"
+        
+        if message.text:
+            bot.send_message(CHAT_A, f"{caption}\n\n{message.text}")
+        elif message.photo:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=text)
+        elif message.video:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_video(CHAT_A, message.video.file_id, caption=text)
+        elif message.voice:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_voice(CHAT_A, message.voice.file_id, caption=text)
+        elif message.document:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_document(CHAT_A, message.document.file_id, caption=text)
+        elif message.sticker:
+            bot.send_sticker(CHAT_A, message.sticker.file_id)
+            bot.send_message(CHAT_A, caption)
+        else:
+            bot.send_message(CHAT_A, caption)
+        logger.info(f"Переслано из B в A")
+    except Exception as e:
+        logger.error(f"Ошибка B->A: {e}")
 
 
 # === ПОСТЫ В КАНАЛАХ ===
@@ -630,23 +462,6 @@ def clean_expired_secrets():
 threading.Thread(target=clean_expired_secrets, daemon=True).start()
 
 
-# === ПРОГРЕВ БОТА ===
-def warmup():
-    logger.info("🔥 Прогреваю бота...")
-    if GROQ_API_KEY:
-        try:
-            ask_groq(0, "ok")
-            logger.info("✅ Groq API прогрето")
-        except:
-            pass
-    try:
-        bot.get_me()
-        logger.info("✅ Telegram API прогрето")
-    except:
-        pass
-    logger.info("🔥 Бот готов к работе!")
-
-
 # === ВЕБХУК ===
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
@@ -666,7 +481,6 @@ def health():
 
 # === ЗАПУСК ===
 if __name__ == "__main__":
-    warmup()
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     
@@ -676,6 +490,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("Команды: /ai, /wiki, /roll, /coin, /all, /help")
-    logger.info("🔄 Пересылка с подписью 📨 От: Имя")
+    logger.info("🖼️ Анализ изображений: фото + /ai")
+    logger.info("📄 Чтение файлов: файл + /ai")
     
     app.run(host="0.0.0.0", port=port)
