@@ -8,7 +8,7 @@ import threading
 import re
 import urllib.parse
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask, request
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -33,170 +33,11 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
-# === НАПОМИНАНИЯ ===
-reminders = {}
-reminder_counter = 0
-
-# === КЭШ УЧАСТНИКОВ (для других функций) ===
-user_cache = {}
-last_call_time = {}
-CALL_COOLDOWN = 60
-
 # === КЭШ И ИСТОРИЯ ДЛЯ ИИ ===
 ai_cache = {}
 user_histories = {}
 MAX_HISTORY = 10
 CACHE_TTL = 3600
-
-
-# === ФУНКЦИИ ДЛЯ СБОРА УЧАСТНИКОВ ===
-def save_user_from_message(message):
-    user = message.from_user
-    if not user or user.is_bot:
-        return
-    chat_id = message.chat.id
-    if chat_id not in user_cache:
-        user_cache[chat_id] = {}
-    user_cache[chat_id][user.id] = {
-        "username": user.username,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "last_seen": time.time()
-    }
-
-
-# === ФУНКЦИИ ДЛЯ НАПОМИНАНИЙ ===
-def parse_relative_time(text):
-    """Парсит относительное время: 30m, 2h, 1d, 30min, 2hours"""
-    now = datetime.now()
-    
-    patterns = [
-        (r'(\d+)\s*min', 'minutes'),
-        (r'(\d+)\s*m\b', 'minutes'),
-        (r'(\d+)\s*минут', 'minutes'),
-        (r'(\d+)\s*hour', 'hours'),
-        (r'(\d+)\s*h\b', 'hours'),
-        (r'(\d+)\s*час', 'hours'),
-        (r'(\d+)\s*d\b', 'days'),
-        (r'(\d+)\s*day', 'days'),
-        (r'(\d+)\s*дн', 'days'),
-    ]
-    
-    for pattern, unit in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            value = int(match.group(1))
-            if unit == 'minutes':
-                return now + timedelta(minutes=value)
-            elif unit == 'hours':
-                return now + timedelta(hours=value)
-            elif unit == 'days':
-                return now + timedelta(days=value)
-    return None
-
-
-def parse_time_with_day(time_str):
-    days_map = {
-        "пн": 0, "пон": 0, "понедельник": 0,
-        "вт": 1, "втор": 1, "вторник": 1,
-        "ср": 2, "сред": 2, "среда": 2,
-        "чт": 3, "чет": 3, "четверг": 3,
-        "пт": 4, "пятн": 4, "пятница": 4,
-        "сб": 5, "суб": 5, "суббота": 5,
-        "вс": 6, "воск": 6, "воскресенье": 6
-    }
-    
-    parts = time_str.lower().split()
-    time_part = parts[0]
-    daily = False
-    weekly_day = None
-    thread_id = None
-    
-    for part in parts[1:]:
-        if part in ["ежедневно", "каждый", "daily", "ежедневная", "каждый день"]:
-            daily = True
-        elif part in days_map:
-            weekly_day = days_map[part]
-        elif part.startswith("#"):
-            try:
-                thread_id = int(part[1:])
-            except:
-                pass
-    
-    try:
-        if ":" in time_part:
-            hours, minutes = map(int, time_part.split(":"))
-        else:
-            hours = int(time_part)
-            minutes = 0
-        return hours, minutes, weekly_day, daily, thread_id
-    except:
-        return None, None, None, None, None
-
-
-def add_reminder(user_id, chat_id, reminder_time, text, thread_id=None, ping_all=False, daily=False, weekly_day=None, target_thread_id=None):
-    global reminder_counter
-    reminder_counter += 1
-    reminder_id = reminder_counter
-    
-    reminders[reminder_id] = {
-        "user_id": user_id,
-        "chat_id": chat_id,
-        "time": reminder_time,
-        "text": text,
-        "thread_id": thread_id,
-        "target_thread_id": target_thread_id,
-        "ping_all": ping_all,
-        "daily": daily,
-        "weekly_day": weekly_day
-    }
-    return reminder_id
-
-
-def check_reminders():
-    """Проверяет и отправляет напоминания"""
-    logger.info("✅ ПОТОК НАПОМИНАНИЙ ЗАПУЩЕН")
-    while True:
-        now = time.time()
-        to_remove = []
-        to_repeat = []
-        
-        for rid, reminder in reminders.items():
-            if reminder["time"] <= now:
-                try:
-                    chat_id = reminder["chat_id"]
-                    text = reminder["text"]
-                    source_thread_id = reminder.get("thread_id")
-                    target_thread_id = reminder.get("target_thread_id")
-                    send_thread_id = target_thread_id if target_thread_id else source_thread_id
-                    
-                    msg = f"⏰ *НАПОМИНАНИЕ!*\n\n{text}"
-                    
-                    # === КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: используем @all ===
-                    if reminder.get("ping_all"):
-                        msg = f"⏰ *НАПОМИНАНИЕ!*\n\n{text}\n\n@all"
-                        logger.info(f"📢 Напоминание с @all в чате {chat_id}")
-                    
-                    bot.send_message(chat_id, msg, parse_mode="Markdown", message_thread_id=send_thread_id)
-                    
-                    if reminder.get("daily"):
-                        new_time = reminder["time"] + 86400
-                        to_repeat.append((rid, new_time))
-                    elif reminder.get("weekly_day") is not None:
-                        new_time = reminder["time"] + 604800
-                        to_repeat.append((rid, new_time))
-                    else:
-                        to_remove.append(rid)
-                except Exception as e:
-                    logger.error(f"Ошибка отправки напоминания {rid}: {e}")
-                    to_remove.append(rid)
-        
-        for rid, new_time in to_repeat:
-            reminders[rid]["time"] = new_time
-        for rid in to_remove:
-            del reminders[rid]
-        
-        time.sleep(10)
 
 
 # === ОСНОВНЫЕ ФУНКЦИИ ===
@@ -356,7 +197,6 @@ def search_wikipedia(query):
 # === КОМАНДЫ ===
 @bot.message_handler(commands=['start', 'help'])
 def help_command(message):
-    save_user_from_message(message)
     help_text = """📖 *Команды бота*
 
 🤖 *ИИ и поиск:*
@@ -365,88 +205,21 @@ def help_command(message):
 /ai найди [запрос] — поиск в интернете
 /clear_history — очистить историю диалога
 
-⏰ *Напоминания:*
-/remind 15:30 Текст — сегодня в 15:30
-/remind 30m Текст — через 30 минут
-/remind 2h Текст — через 2 часа
-/remind 1d Текст — через 1 день
-/remind 15:30 пн Текст — каждый понедельник
-/remind 15:30 ежедневно Текст — каждый день
-/remind 15:30 калл Текст — с упоминанием всех (@all)
-/reminds — список напоминаний
-/delremind ID — удалить напоминание
-
-📢 *Массовые уведомления:*
-/all текст — упомянуть всех (@all)
-калл текст — упомянуть всех (@all)
-
 🖼️ *Анализ изображений:* фото + `/ai Опиши`
 📄 *Чтение файлов:* файл + `/ai Прочитай`
 
-🎲 *Развлечения:* /roll, /coin
+🎲 *Развлечения:*
+/roll — случайное число (1-100)
+/coin — орёл/решка
 
-📩 *Скрытые сообщения:* `@бот @получатель текст`"""
+📩 *Скрытые сообщения:* `@бот @получатель текст`
+
+🔄 *Автоматически:* пересылка сообщений между чатами и 🔥 на новые посты в каналах"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
-
-
-# === МАССОВЫЕ УПОМИНАНИЯ ===
-@bot.message_handler(commands=['all'])
-def all_command(message):
-    chat_id = message.chat.id
-    thread_id = message.message_thread_id
-    
-    if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
-        remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
-        bot.reply_to(message, f"⏳ Подождите {remaining} секунд")
-        return
-    
-    parts = message.text.split(maxsplit=1)
-    custom_text = parts[1] if len(parts) > 1 else "ВНИМАНИЕ!"
-    
-    try:
-        bot.delete_message(chat_id, message.message_id)
-    except:
-        pass
-    
-    bot.send_message(chat_id, f"📢 {custom_text}\n\n@all", parse_mode="Markdown", message_thread_id=thread_id)
-    last_call_time[chat_id] = time.time()
-    logger.info(f"Вызван /all в чате {chat_id}")
-
-
-@bot.message_handler(func=lambda m: m.text and m.text.lower().strip().startswith(("калл", "call")))
-def call_all_no_slash(message):
-    chat_id = message.chat.id
-    thread_id = message.message_thread_id
-    
-    if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
-        remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
-        bot.reply_to(message, f"⏳ Подождите {remaining} секунд")
-        return
-    
-    text = message.text.strip()
-    if text.lower().startswith("калл"):
-        custom_text = text[4:].strip()
-    elif text.lower().startswith("call"):
-        custom_text = text[4:].strip()
-    else:
-        custom_text = text
-    
-    if not custom_text:
-        custom_text = "ВНИМАНИЕ!"
-    
-    try:
-        bot.delete_message(chat_id, message.message_id)
-    except:
-        pass
-    
-    bot.send_message(chat_id, f"📢 {custom_text}\n\n@all", parse_mode="Markdown", message_thread_id=thread_id)
-    last_call_time[chat_id] = time.time()
-    logger.info(f"Вызван калл в чате {chat_id}")
 
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
-    save_user_from_message(message)
     prompt = message.text[3:].strip()
     if not prompt:
         bot.reply_to(message, "ℹ️ `/ai Как дела?`", parse_mode="Markdown")
@@ -466,7 +239,6 @@ def ai_command(message):
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    save_user_from_message(message)
     if not message.caption or not message.caption.lower().startswith('/ai'):
         return
     
@@ -486,7 +258,6 @@ def handle_photo(message):
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
-    save_user_from_message(message)
     if not message.caption or not message.caption.lower().startswith('/ai'):
         return
     
@@ -513,7 +284,6 @@ def handle_document(message):
 
 @bot.message_handler(commands=['wiki'])
 def wiki_command(message):
-    save_user_from_message(message)
     query = message.text[5:].strip()
     if not query:
         bot.reply_to(message, "ℹ️ `/wiki Python`", parse_mode="Markdown")
@@ -524,151 +294,27 @@ def wiki_command(message):
 
 @bot.message_handler(commands=['roll'])
 def roll_command(message):
-    save_user_from_message(message)
     bot.reply_to(message, f"🎲 {random.randint(1, 100)}")
 
 
 @bot.message_handler(commands=['coin'])
 def coin_command(message):
-    save_user_from_message(message)
     bot.reply_to(message, f"🪙 {random.choice(['Орёл', 'Решка'])}")
 
 
 @bot.message_handler(commands=['clear_history'])
 def clear_history(message):
-    save_user_from_message(message)
     user_id = message.from_user.id
     if user_id in user_histories:
         del user_histories[user_id]
-        bot.reply_to(message, "🗑️ История очищена!")
+        bot.reply_to(message, "🗑️ История ваших диалогов очищена!")
     else:
-        bot.reply_to(message, "📭 Нет сохранённой истории.")
-
-
-# === НАПОМИНАНИЯ ===
-@bot.message_handler(commands=['remind', 'whisper'])
-def set_reminder(message):
-    save_user_from_message(message)
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    thread_id = message.message_thread_id
-    text = message.text
-    
-    ping_all = "калл" in text.lower() or "call" in text.lower()
-    
-    if text.startswith("/remind"):
-        parts = text[7:].strip().split(maxsplit=1)
-    else:
-        parts = text[8:].strip().split(maxsplit=1)
-    
-    if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ `/remind 15:30 Текст` или `/remind 30m Текст`", parse_mode="Markdown")
-        return
-    
-    time_str = parts[0]
-    reminder_text = parts[1]
-    
-    if ping_all:
-        reminder_text = reminder_text.replace("калл", "").replace("call", "").strip()
-    
-    relative_time = parse_relative_time(time_str)
-    
-    if relative_time:
-        reminder_time = relative_time
-        response_note = f"через {time_str}"
-        daily = False
-        weekly_day = None
-        target_thread_id = None
-    else:
-        hours, minutes, weekly_day, daily, target_thread_id = parse_time_with_day(time_str)
-        if hours is None:
-            bot.reply_to(message, "❌ Неправильный формат времени.\nПример: `/remind 15:30 Текст` или `/remind 30m Текст`", parse_mode="Markdown")
-            return
-        
-        now = datetime.now()
-        
-        if daily:
-            reminder_time = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-            if reminder_time <= now:
-                reminder_time = reminder_time + timedelta(days=1)
-            response_note = "ежедневно"
-        elif weekly_day is not None:
-            days_ahead = (weekly_day - now.weekday()) % 7
-            if days_ahead == 0 and now.hour > hours or (now.hour == hours and now.minute >= minutes):
-                days_ahead = 7
-            reminder_time = now + timedelta(days=days_ahead)
-            reminder_time = reminder_time.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-            days_names = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
-            response_note = f"каждый {days_names[weekly_day]}"
-        else:
-            reminder_time = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-            if reminder_time <= now:
-                reminder_time = reminder_time + timedelta(days=1)
-            response_note = "одноразовое"
-    
-    timestamp = reminder_time.timestamp()
-    
-    reminder_id = add_reminder(user_id, chat_id, timestamp, reminder_text, thread_id, ping_all, 
-                                daily if 'daily' in locals() else False, 
-                                weekly_day if 'weekly_day' in locals() else None, 
-                                target_thread_id if 'target_thread_id' in locals() else None)
-    
-    time_str_formatted = reminder_time.strftime("%d.%m.%Y в %H:%M")
-    response = f"✅ *Напоминание установлено!*\n\n⏰ Когда: {time_str_formatted}\n📝 Текст: {reminder_text}\n🔄 Тип: {response_note}"
-    
-    if 'target_thread_id' in locals() and target_thread_id:
-        response += f"\n📌 *Тема:* #{target_thread_id}"
-    if ping_all:
-        response += "\n\n📢 *При срабатывании будут упомянуты ВСЕ участники чата!*"
-    
-    bot.reply_to(message, response, parse_mode="Markdown")
-
-
-@bot.message_handler(commands=['reminds', 'whispers'])
-def list_reminders(message):
-    save_user_from_message(message)
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    
-    user_reminders = []
-    for rid, rem in reminders.items():
-        if rem["user_id"] == user_id or rem["chat_id"] == chat_id:
-            time_str = datetime.fromtimestamp(rem["time"]).strftime("%d.%m %H:%M")
-            text_preview = rem["text"][:30] + "..." if len(rem["text"]) > 30 else rem["text"]
-            ping_info = "🔔📢" if rem.get("ping_all") else "🔔"
-            user_reminders.append(f"`{rid}` {ping_info} {time_str} — {text_preview}")
-    
-    if not user_reminders:
-        bot.reply_to(message, "📭 У вас нет активных напоминаний.")
-        return
-    
-    reminders_list = "\n".join(user_reminders)
-    bot.reply_to(message, f"📋 *Активные напоминания:*\n\n{reminders_list}\n\n_Удалить: /delremind ID_", parse_mode="Markdown")
-
-
-@bot.message_handler(commands=['delremind', 'delwhisper'])
-def delete_reminder(message):
-    save_user_from_message(message)
-    parts = message.text.split()
-    if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ Использование: `/delremind ID`", parse_mode="Markdown")
-        return
-    
-    try:
-        rid = int(parts[1])
-        if rid in reminders:
-            del reminders[rid]
-            bot.reply_to(message, f"✅ Напоминание `{rid}` удалено.", parse_mode="Markdown")
-        else:
-            bot.reply_to(message, f"❌ Напоминание с ID `{rid}` не найдено.", parse_mode="Markdown")
-    except:
-        bot.reply_to(message, "❌ Неверный ID.")
+        bot.reply_to(message, "📭 У вас нет сохранённой истории.")
 
 
 # === ПЕРЕСЫЛКА СООБЩЕНИЙ ===
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def forward_to_b(message):
-    save_user_from_message(message)
     try:
         sender_name = get_sender_name(message.from_user)
         caption = f"📨 От: {sender_name}"
@@ -699,7 +345,6 @@ def forward_to_b(message):
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def forward_to_a(message):
-    save_user_from_message(message)
     try:
         sender_name = get_sender_name(message.from_user)
         caption = f"📨 От: {sender_name}"
@@ -812,7 +457,6 @@ def clean_expired_secrets():
             del secret_messages[mid]
 
 threading.Thread(target=clean_expired_secrets, daemon=True).start()
-threading.Thread(target=check_reminders, daemon=True).start()
 
 
 # === ВЕБХУК ===
@@ -842,8 +486,8 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("📢 Команды /all и калл отправляют @all")
-    logger.info("⏰ Напоминания с калл тоже отправляют @all")
-    logger.info("🔥 Реакции на каналы: @eternalparadise, @psixonat_official")
+    logger.info("Команды: /ai, /wiki, /roll, /coin, /help")
+    logger.info("🔥 Автореакции на каналы")
+    logger.info("📩 Скрытые сообщения: @бот @получатель текст")
     
     app.run(host="0.0.0.0", port=port)
