@@ -99,7 +99,7 @@ def parse_time_with_day(time_str):
     thread_id = None
     
     for part in parts[1:]:
-        if part in ["ежедневно", "каждый", "daily"]:
+        if part in ["ежедневно", "каждый", "daily", "ежедневная", "каждый день"]:
             daily = True
         elif part in days_map:
             weekly_day = days_map[part]
@@ -140,13 +140,18 @@ def add_reminder(user_id, chat_id, reminder_time, text, thread_id=None, ping_all
 
 
 def check_reminders():
+    """Проверяет и отправляет напоминания"""
+    logger.info("✅ ПОТОК НАПОМИНАНИЙ ЗАПУЩЕН")
     while True:
         now = time.time()
+        logger.info(f"🔍 Проверка напоминаний: {datetime.now()}, активных: {len(reminders)}")
+        
         to_remove = []
         to_repeat = []
         
         for rid, reminder in reminders.items():
             if reminder["time"] <= now:
+                logger.info(f"⏰ Срабатывает напоминание {rid}")
                 try:
                     chat_id = reminder["chat_id"]
                     text = reminder["text"]
@@ -160,12 +165,16 @@ def check_reminders():
                         mentions = get_all_mentions(chat_id)
                         if mentions:
                             msg = f"⏰ *НАПОМИНАНИЕ!*\n\n{text}\n\n{mentions}"
+                        else:
+                            logger.warning(f"Нет участников для упоминания в чате {chat_id}")
                     
                     bot.send_message(chat_id, msg, parse_mode="Markdown", message_thread_id=send_thread_id)
+                    logger.info(f"✅ Отправлено напоминание {rid}")
                     
                     if reminder.get("daily"):
                         new_time = reminder["time"] + 86400
                         to_repeat.append((rid, new_time))
+                        logger.info(f"🔄 Ежедневное напоминание {rid} перенесено на {datetime.fromtimestamp(new_time)}")
                     elif reminder.get("weekly_day") is not None:
                         new_time = reminder["time"] + 604800
                         to_repeat.append((rid, new_time))
@@ -179,6 +188,7 @@ def check_reminders():
             reminders[rid]["time"] = new_time
         for rid in to_remove:
             del reminders[rid]
+            logger.info(f"🗑️ Удалено напоминание {rid}")
         
         time.sleep(10)
 
@@ -852,5 +862,6 @@ if __name__ == "__main__":
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("Команды: /ai, /wiki, /roll, /coin, /remind, /all, /help")
     logger.info("📢 калл текст — упоминание всех участников")
+    logger.info("✅ ПОТОК НАПОМИНАНИЙ ЗАПУЩЕН")
     
     app.run(host="0.0.0.0", port=port)
