@@ -37,7 +37,7 @@ secret_messages = {}
 reminders = {}
 reminder_counter = 0
 
-# === КЭШ УЧАСТНИКОВ ДЛЯ УПОМИНАНИЙ ===
+# === КЭШ УЧАСТНИКОВ (для других функций) ===
 user_cache = {}
 last_call_time = {}
 CALL_COOLDOWN = 60
@@ -65,24 +65,9 @@ def save_user_from_message(message):
     }
 
 
-def get_all_mentions(chat_id, exclude_user_id=None):
-    members = user_cache.get(chat_id, {})
-    mentions = []
-    for uid, data in members.items():
-        if uid == exclude_user_id:
-            continue
-        username = data.get("username")
-        if username:
-            mentions.append(f"@{username}")
-        else:
-            name = data.get("first_name", "Пользователь")
-            mentions.append(f"[{name}](tg://user?id={uid})")
-    return " ".join(mentions)
-
-
 # === ФУНКЦИИ ДЛЯ НАПОМИНАНИЙ ===
 def parse_relative_time(text):
-    """Парсит относительное время: 30m, 2h, 1d, 30min, 2hours, 1day, 2 min"""
+    """Парсит относительное время: 30m, 2h, 1d, 30min, 2hours"""
     now = datetime.now()
     
     patterns = [
@@ -173,14 +158,11 @@ def check_reminders():
     logger.info("✅ ПОТОК НАПОМИНАНИЙ ЗАПУЩЕН")
     while True:
         now = time.time()
-        logger.info(f"🔍 Проверка напоминаний: {datetime.now()}, активных: {len(reminders)}")
-        
         to_remove = []
         to_repeat = []
         
         for rid, reminder in reminders.items():
             if reminder["time"] <= now:
-                logger.info(f"⏰ Срабатывает напоминание {rid}")
                 try:
                     chat_id = reminder["chat_id"]
                     text = reminder["text"]
@@ -190,20 +172,16 @@ def check_reminders():
                     
                     msg = f"⏰ *НАПОМИНАНИЕ!*\n\n{text}"
                     
+                    # === КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: используем @all ===
                     if reminder.get("ping_all"):
-                        mentions = get_all_mentions(chat_id)
-                        if mentions:
-                            msg = f"⏰ *НАПОМИНАНИЕ!*\n\n{text}\n\n{mentions}"
-                        else:
-                            logger.warning(f"Нет участников для упоминания в чате {chat_id}")
+                        msg = f"⏰ *НАПОМИНАНИЕ!*\n\n{text}\n\n@all"
+                        logger.info(f"📢 Напоминание с @all в чате {chat_id}")
                     
                     bot.send_message(chat_id, msg, parse_mode="Markdown", message_thread_id=send_thread_id)
-                    logger.info(f"✅ Отправлено напоминание {rid}")
                     
                     if reminder.get("daily"):
                         new_time = reminder["time"] + 86400
                         to_repeat.append((rid, new_time))
-                        logger.info(f"🔄 Ежедневное напоминание {rid} перенесено")
                     elif reminder.get("weekly_day") is not None:
                         new_time = reminder["time"] + 604800
                         to_repeat.append((rid, new_time))
@@ -217,7 +195,6 @@ def check_reminders():
             reminders[rid]["time"] = new_time
         for rid in to_remove:
             del reminders[rid]
-            logger.info(f"🗑️ Удалено напоминание {rid}")
         
         time.sleep(10)
 
@@ -243,8 +220,6 @@ def ask_groq(user_id, prompt):
         cached_time, cached_answer = ai_cache[cache_key]
         if time.time() - cached_time < CACHE_TTL:
             return cached_answer
-    
-    now = time.time()
     
     if user_id not in user_histories:
         user_histories[user_id] = []
@@ -397,13 +372,13 @@ def help_command(message):
 /remind 1d Текст — через 1 день
 /remind 15:30 пн Текст — каждый понедельник
 /remind 15:30 ежедневно Текст — каждый день
-/remind 15:30 калл Текст — с упоминанием всех
+/remind 15:30 калл Текст — с упоминанием всех (@all)
 /reminds — список напоминаний
 /delremind ID — удалить напоминание
 
 📢 *Массовые уведомления:*
-/all текст — упомянуть всех участников
-калл текст — упомянуть всех (без слеша)
+/all текст — упомянуть всех (@all)
+калл текст — упомянуть всех (@all)
 
 🖼️ *Анализ изображений:* фото + `/ai Опиши`
 📄 *Чтение файлов:* файл + `/ai Прочитай`
@@ -419,7 +394,6 @@ def help_command(message):
 def all_command(message):
     chat_id = message.chat.id
     thread_id = message.message_thread_id
-    user_id = message.from_user.id
     
     if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
         remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
@@ -434,39 +408,15 @@ def all_command(message):
     except:
         pass
     
-    members = user_cache.get(chat_id, {})
-    
-    if not members:
-        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат.", message_thread_id=thread_id)
-        return
-    
-    mentions = []
-    for uid, data in members.items():
-        if uid == user_id:
-            continue
-        username = data.get("username")
-        if username:
-            mentions.append(f"@{username}")
-        else:
-            name = data.get("first_name", "Пользователь")
-            mentions.append(f"[{name}](tg://user?id={uid})")
-    
-    if not mentions:
-        bot.send_message(chat_id, "🤷‍♂️ Некого упоминать.", message_thread_id=thread_id)
-        return
-    
-    all_mentions = " ".join(mentions)
-    bot.send_message(chat_id, f"📢 {custom_text}\n\n{all_mentions}", parse_mode="Markdown", message_thread_id=thread_id)
-    
+    bot.send_message(chat_id, f"📢 {custom_text}\n\n@all", parse_mode="Markdown", message_thread_id=thread_id)
     last_call_time[chat_id] = time.time()
-    logger.info(f"Вызван /all в {chat_id}, упомянуто {len(mentions)}")
+    logger.info(f"Вызван /all в чате {chat_id}")
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().strip().startswith(("калл", "call")))
 def call_all_no_slash(message):
     chat_id = message.chat.id
     thread_id = message.message_thread_id
-    user_id = message.from_user.id
     
     if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
         remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
@@ -489,32 +439,9 @@ def call_all_no_slash(message):
     except:
         pass
     
-    members = user_cache.get(chat_id, {})
-    
-    if not members:
-        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат.", message_thread_id=thread_id)
-        return
-    
-    mentions = []
-    for uid, data in members.items():
-        if uid == user_id:
-            continue
-        username = data.get("username")
-        if username:
-            mentions.append(f"@{username}")
-        else:
-            name = data.get("first_name", "Пользователь")
-            mentions.append(f"[{name}](tg://user?id={uid})")
-    
-    if not mentions:
-        bot.send_message(chat_id, "🤷‍♂️ Некого упоминать.", message_thread_id=thread_id)
-        return
-    
-    all_mentions = " ".join(mentions)
-    bot.send_message(chat_id, f"📢 {custom_text}\n\n{all_mentions}", parse_mode="Markdown", message_thread_id=thread_id)
-    
+    bot.send_message(chat_id, f"📢 {custom_text}\n\n@all", parse_mode="Markdown", message_thread_id=thread_id)
     last_call_time[chat_id] = time.time()
-    logger.info(f"Вызван калл в {chat_id}, упомянуто {len(mentions)}")
+    logger.info(f"Вызван калл в чате {chat_id}")
 
 
 @bot.message_handler(commands=['ai'])
@@ -806,10 +733,9 @@ def forward_to_a(message):
 def channel_reaction(message):
     try:
         bot.set_message_reaction(message.chat.id, message.message_id, reaction=[types.ReactionTypeEmoji(emoji="🔥")])
-        logger.info(f"🔥 Реакция на пост {message.message_id} в канале {message.chat.id}")
+        logger.info(f"🔥 Реакция на пост в канале {message.chat.id}")
     except Exception as e:
-        logger.error(f"Ошибка реакции в канале {message.chat.id}: {e}")
-        # Альтернативный способ
+        logger.error(f"Ошибка реакции: {e}")
         try:
             url = f"{API_URL}/setMessageReaction"
             data = {
@@ -823,7 +749,8 @@ def channel_reaction(message):
             logger.error(f"Ошибка реакции (API): {e2}")
 
 
-# === СКРЫТЫЕ СООБЩЕНИЯ ===@bot.inline_handler(func=lambda query: True)
+# === СКРЫТЫЕ СООБЩЕНИЯ ===
+@bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
         text = query.query.strip()
@@ -915,7 +842,8 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("Команды: /ai, /wiki, /roll, /coin, /remind, /all, /help")
+    logger.info("📢 Команды /all и калл отправляют @all")
+    logger.info("⏰ Напоминания с калл тоже отправляют @all")
     logger.info("🔥 Реакции на каналы: @eternalparadise, @psixonat_official")
     
     app.run(host="0.0.0.0", port=port)
