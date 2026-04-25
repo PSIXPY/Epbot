@@ -40,169 +40,43 @@ CACHE_TTL = 3600
 user_histories = {}
 MAX_HISTORY = 10
 
-# === НАПОМИНАЛКА ===
-reminders = {}
-reminder_counter = 0
+# === КЕШ УЧАСТНИКОВ ДЛЯ МАССОВОГО УПОМИНАНИЯ ===
+user_cache = {}
 last_call_time = {}
 CALL_COOLDOWN = 60
 
 
-# === ФУНКЦИИ НАПОМИНАЛКИ ===
-def parse_time_with_day(time_str):
-    days_map = {
-        "пн": 0, "пон": 0, "понедельник": 0,
-        "вт": 1, "втор": 1, "вторник": 1,
-        "ср": 2, "сред": 2, "среда": 2,
-        "чт": 3, "чет": 3, "четверг": 3,
-        "пт": 4, "пятн": 4, "пятница": 4,
-        "сб": 5, "суб": 5, "суббота": 5,
-        "вс": 6, "воск": 6, "воскресенье": 6
+# === ФУНКЦИИ МАССОВОГО УПОМИНАНИЯ ===
+def save_user_from_message(message):
+    """Сохраняет пользователя в кеш из сообщения"""
+    user = message.from_user
+    if not user or user.is_bot:
+        return
+    chat_id = message.chat.id
+    if chat_id not in user_cache:
+        user_cache[chat_id] = {}
+    user_cache[chat_id][user.id] = {
+        "username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "last_seen": time.time()
     }
-    
-    parts = time_str.lower().split()
-    time_part = parts[0]
-    daily = False
-    weekly_day = None
-    thread_id = None
-    
-    for part in parts[1:]:
-        if part in ["ежедневно", "каждый", "daily"]:
-            daily = True
-        elif part in days_map:
-            weekly_day = days_map[part]
-        elif part.startswith("#"):
-            try:
-                thread_id = int(part[1:])
-            except:
-                pass
-    
-    try:
-        if ":" in time_part:
-            hours, minutes = map(int, time_part.split(":"))
-        else:
-            hours = int(time_part)
-            minutes = 0
-        return hours, minutes, weekly_day, daily, thread_id
-    except:
-        return None, None, None, None, None
 
 
-def add_reminder(user_id, chat_id, reminder_time, text, thread_id=None, ping_all=False, daily=False, weekly_day=None, target_thread_id=None):
-    global reminder_counter
-    reminder_counter += 1
-    reminder_id = reminder_counter
-    
-    reminders[reminder_id] = {
-        "user_id": user_id,
-        "chat_id": chat_id,
-        "time": reminder_time,
-        "text": text,
-        "thread_id": thread_id,
-        "target_thread_id": target_thread_id,
-        "ping_all": ping_all,
-        "daily": daily,
-        "weekly_day": weekly_day
-    }
-    return reminder_id
+@bot.message_handler(func=lambda m: True, content_types=['text', 'photo', 'video', 'voice', 'sticker', 'document'])
+def catch_all_messages(message):
+    save_user_from_message(message)
 
 
-def get_all_chat_members_slow(chat_id):
-    user_ids = []
-    offset = 0
-    while True:
-        try:
-            url = f"{API_URL}/getChatMember?chat_id={chat_id}&user_id={offset}"
-            response = requests.get(url).json()
-            if response.get("ok") and response.get("result"):
-                user = response["result"].get("user")
-                if user and not user.get("is_bot"):
-                    user_ids.append(user["id"])
-            offset += 1
-            if offset > 5000:
-                break
-        except:
-            offset += 1
-            if offset > 5000:
-                break
-    return user_ids
-
-
-def get_chat_username(user_id, chat_id):
-    try:
-        url = f"{API_URL}/getChatMember?chat_id={chat_id}&user_id={user_id}"
-        response = requests.get(url).json()
-        if response.get("ok") and response.get("result"):
-            user = response["result"].get("user")
-            if user:
-                username = user.get("username")
-                if username:
-                    return f"@{username}"
-                first_name = user.get("first_name", "")
-                last_name = user.get("last_name", "")
-                name = f"{first_name} {last_name}".strip()
-                return name if name else "Пользователь"
-    except:
-        pass
-    return "Пользователь"
-
-
-def check_reminders():
-    while True:
-        now = time.time()
-        to_remove = []
-        to_repeat = []
-        
-        for rid, reminder in reminders.items():
-            if reminder["time"] <= now:
-                try:
-                    chat_id = reminder["chat_id"]
-                    text = reminder["text"]
-                    source_thread_id = reminder.get("thread_id")
-                    target_thread_id = reminder.get("target_thread_id")
-                    send_thread_id = target_thread_id if target_thread_id else source_thread_id
-                    
-                    msg = f"⏰ *НАПОМИНАНИЕ!*\n\n{text}"
-                    
-                    if reminder.get("ping_all"):
-                        members = get_all_chat_members_slow(chat_id)
-                        mentions = []
-                        for member_id in members:
-                            username = get_chat_username(member_id, chat_id)
-                            mentions.append(username)
-                        all_mentions = " ".join(mentions)
-                        msg = f"⏰ *НАПОМИНАНИЕ!*\n\n{text}\n\n{all_mentions}"
-                    
-                    bot.send_message(chat_id, msg, parse_mode="Markdown", message_thread_id=send_thread_id)
-                    
-                    if reminder.get("daily"):
-                        new_time = reminder["time"] + 86400
-                        to_repeat.append((rid, new_time))
-                    elif reminder.get("weekly_day") is not None:
-                        new_time = reminder["time"] + 604800
-                        to_repeat.append((rid, new_time))
-                    else:
-                        to_remove.append(rid)
-                except Exception as e:
-                    logger.error(f"Ошибка отправки напоминания {rid}: {e}")
-                    to_remove.append(rid)
-        
-        for rid, new_time in to_repeat:
-            reminders[rid]["time"] = new_time
-        for rid in to_remove:
-            del reminders[rid]
-        
-        time.sleep(10)
-
-
-# === МАССОВОЕ УПОМИНАНИЕ ===
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith(("калл ", "калл", "call ", "call")))
 def call_all_no_slash(message):
     chat_id = message.chat.id
     thread_id = message.message_thread_id
+    user_id = message.from_user.id
     
     if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
         remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
-        bot.reply_to(message, f"⏳ Подождите {remaining} секунд перед следующим вызовом.")
+        bot.reply_to(message, f"⏳ Подождите {remaining} сек.")
         return
     
     text = message.text
@@ -223,75 +97,83 @@ def call_all_no_slash(message):
     except:
         pass
     
-    bot.send_message(chat_id, f"📢 Созываю всех: {custom_text}\n\n⏳ Пожалуйста, подождите...", message_thread_id=thread_id)
-    bot.send_message(chat_id, "🔄 Получаю список участников...", message_thread_id=thread_id)
-    
-    members = get_all_chat_members_slow(chat_id)
+    members = user_cache.get(chat_id, {})
     
     if not members:
-        bot.send_message(chat_id, "❌ Не удалось получить список участников. Убедитесь, что бот администратор.", message_thread_id=thread_id)
+        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат, чтобы бот вас запомнил.", message_thread_id=thread_id)
         return
     
     mentions = []
-    for member_id in members:
-        username = get_chat_username(member_id, chat_id)
-        mentions.append(username)
+    for uid, data in members.items():
+        if uid == user_id:
+            continue
+        username = data.get("username")
+        if username:
+            mentions.append(f"@{username}")
+        else:
+            name = data.get("first_name", "Пользователь")
+            mentions.append(f"[{name}](tg://user?id={uid})")
     
-    all_mentions = " ".join(mentions)
-    message_text = f"📢 {custom_text}\n\n{all_mentions}"
+    if not mentions:
+        bot.send_message(chat_id, "🤷‍♂️ Некого упоминать.", message_thread_id=thread_id)
+        return
     
-    max_len = 4000
-    if len(message_text) > max_len:
-        for i in range(0, len(message_text), max_len):
-            part = message_text[i:i+max_len]
-            bot.send_message(chat_id, part, message_thread_id=thread_id)
-    else:
-        bot.send_message(chat_id, message_text, message_thread_id=thread_id)
+    chunk_size = 50
+    for i in range(0, len(mentions), chunk_size):
+        chunk = mentions[i:i+chunk_size]
+        bot.send_message(chat_id, f"📢 {custom_text}\n\n{' '.join(chunk)}", parse_mode="Markdown", message_thread_id=thread_id)
     
     last_call_time[chat_id] = time.time()
-    logger.info(f"Вызван калл в чате {chat_id}, упомянуто {len(members)} участников")
+    logger.info(f"калл в {chat_id}, упомянуто {len(mentions)}")
 
 
 @bot.message_handler(commands=['all', 'call'])
 def call_all_members(message):
     chat_id = message.chat.id
     thread_id = message.message_thread_id
+    user_id = message.from_user.id
     
     if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
         remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
-        bot.reply_to(message, f"⏳ Подождите {remaining} секунд перед следующим вызовом.")
+        bot.reply_to(message, f"⏳ Подождите {remaining} сек.")
         return
     
-    text_parts = message.text.split(maxsplit=1)
-    custom_text = text_parts[1] if len(text_parts) > 1 else "ВНИМАНИЕ!"
+    parts = message.text.split(maxsplit=1)
+    custom_text = parts[1] if len(parts) > 1 else "ВНИМАНИЕ!"
     
-    bot.reply_to(message, f"📢 Созываю всех: {custom_text}\n\n⏳ Пожалуйста, подождите...")
-    bot.send_message(chat_id, "🔄 Получаю список участников...", message_thread_id=thread_id)
+    try:
+        bot.delete_message(chat_id, message.message_id)
+    except:
+        pass
     
-    members = get_all_chat_members_slow(chat_id)
+    members = user_cache.get(chat_id, {})
     
     if not members:
-        bot.send_message(chat_id, "❌ Не удалось получить список участников. Убедитесь, что бот администратор.", message_thread_id=thread_id)
+        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат, чтобы бот вас запомнил.", message_thread_id=thread_id)
         return
     
     mentions = []
-    for member_id in members:
-        username = get_chat_username(member_id, chat_id)
-        mentions.append(username)
+    for uid, data in members.items():
+        if uid == user_id:
+            continue
+        username = data.get("username")
+        if username:
+            mentions.append(f"@{username}")
+        else:
+            name = data.get("first_name", "Пользователь")
+            mentions.append(f"[{name}](tg://user?id={uid})")
     
-    all_mentions = " ".join(mentions)
-    message_text = f"📢 {custom_text}\n\n{all_mentions}"
+    if not mentions:
+        bot.send_message(chat_id, "🤷‍♂️ Некого упоминать.", message_thread_id=thread_id)
+        return
     
-    max_len = 4000
-    if len(message_text) > max_len:
-        for i in range(0, len(message_text), max_len):
-            part = message_text[i:i+max_len]
-            bot.send_message(chat_id, part, message_thread_id=thread_id)
-    else:
-        bot.send_message(chat_id, message_text, message_thread_id=thread_id)
+    chunk_size = 50
+    for i in range(0, len(mentions), chunk_size):
+        chunk = mentions[i:i+chunk_size]
+        bot.send_message(chat_id, f"📢 {custom_text}\n\n{' '.join(chunk)}", parse_mode="Markdown", message_thread_id=thread_id)
     
     last_call_time[chat_id] = time.time()
-    logger.info(f"Вызван /all в чате {chat_id}, упомянуто {len(members)} участников")
+    logger.info(f"/all в {chat_id}, упомянуто {len(mentions)}")
 
 
 # === ФУНКЦИИ ДЛЯ GROQ ===
@@ -355,17 +237,12 @@ def clean_expired_histories():
         for user_id, data in user_histories.items():
             if now - data.get("created", now) > 172800:
                 expired_users.append(user_id)
-            else:
-                original_count = len(data["messages"])
-                data["messages"] = [msg for msg in data["messages"] 
-                                    if now - msg.get("timestamp", now) < 172800]
         for user_id in expired_users:
             del user_histories[user_id]
         if expired_users:
             logger.info(f"🧹 Удалена история {len(expired_users)} пользователей")
 
 threading.Thread(target=clean_expired_histories, daemon=True).start()
-threading.Thread(target=check_reminders, daemon=True).start()
 
 
 # === ФУНКЦИЯ ПОИСКА В ВИКИПЕДИИ ===
@@ -557,110 +434,6 @@ def handle_document(message):
         bot.edit_message_text("❌ Не удалось извлечь текст из файла.", message.chat.id, msg.message_id)
 
 
-@bot.message_handler(commands=['remind', 'whisper'])
-def set_reminder(message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    thread_id = message.message_thread_id
-    text = message.text
-    
-    ping_all = "калл" in text.lower() or "call" in text.lower()
-    
-    if text.startswith("/remind"):
-        parts = text[7:].strip().split(maxsplit=1)
-    else:
-        parts = text[8:].strip().split(maxsplit=1)
-    
-    if len(parts) < 2:
-        bot.reply_to(message, """ℹ️ *Как установить напоминание:*\n\n`/remind 15:30 Текст` — сегодня\n`/remind 15:30 пн Текст` — в понедельник\n`/remind 15:30 #123 Текст` — в тему 123\n`/remind 15:30 ежедневно Текст` — каждый день\n`/remind 15:30 калл Текст` — с пингом всех""", parse_mode="Markdown")
-        return
-    
-    time_str = parts[0]
-    reminder_text = parts[1]
-    
-    if ping_all:
-        reminder_text = reminder_text.replace("калл", "").replace("call", "").strip()
-    
-    hours, minutes, weekly_day, daily, target_thread_id = parse_time_with_day(time_str)
-    if hours is None:
-        bot.reply_to(message, "❌ Неправильный формат времени. Используйте: `15:30`, `15:30 пн` или `15:30 #123`", parse_mode="Markdown")
-        return
-    
-    now = datetime.now()
-    
-    if daily:
-        reminder_time = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-        if reminder_time <= now:
-            reminder_time = reminder_time + timedelta(days=1)
-        response_note = "ежедневно"
-    elif weekly_day is not None:
-        days_ahead = (weekly_day - now.weekday()) % 7
-        if days_ahead == 0 and now.hour > hours or (now.hour == hours and now.minute >= minutes):
-            days_ahead = 7
-        reminder_time = now + timedelta(days=days_ahead)
-        reminder_time = reminder_time.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-        days_names = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
-        response_note = f"каждый {days_names[weekly_day]}"
-    else:
-        reminder_time = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-        if reminder_time <= now:
-            reminder_time = reminder_time + timedelta(days=1)
-        response_note = "одноразовое"
-    
-    timestamp = reminder_time.timestamp()
-    
-    reminder_id = add_reminder(user_id, chat_id, timestamp, reminder_text, thread_id, ping_all, daily, weekly_day, target_thread_id)
-    
-    time_str_formatted = reminder_time.strftime("%d.%m.%Y в %H:%M")
-    response = f"✅ *Напоминание установлено!*\n\n⏰ Когда: {time_str_formatted}\n📝 Текст: {reminder_text}\n🔄 Тип: {response_note}"
-    
-    if target_thread_id:
-        response += f"\n📌 *Тема:* #{target_thread_id}"
-    if ping_all:
-        response += "\n\n📢 *При срабатывании будут пингованы ВСЕ участники чата!*"
-    
-    bot.reply_to(message, response, parse_mode="Markdown")
-
-
-@bot.message_handler(commands=['reminds', 'whispers'])
-def list_reminders(message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    
-    user_reminders = []
-    for rid, rem in reminders.items():
-        if rem["user_id"] == user_id or rem["chat_id"] == chat_id:
-            time_str = datetime.fromtimestamp(rem["time"]).strftime("%d.%m %H:%M")
-            text_preview = rem["text"][:30] + "..." if len(rem["text"]) > 30 else rem["text"]
-            ping_info = "🔔📢" if rem.get("ping_all") else "🔔"
-            user_reminders.append(f"`{rid}` {ping_info} {time_str} — {text_preview}")
-    
-    if not user_reminders:
-        bot.reply_to(message, "📭 У вас нет активных напоминаний.")
-        return
-    
-    reminders_list = "\n".join(user_reminders)
-    bot.reply_to(message, f"📋 *Активные напоминания:*\n\n{reminders_list}\n\n_Удалить: /delremind ID_", parse_mode="Markdown")
-
-
-@bot.message_handler(commands=['delremind', 'delwhisper'])
-def delete_reminder(message):
-    parts = message.text.split()
-    if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ Использование: `/delremind ID`\n\nУзнать ID можно по команде `/reminds`", parse_mode="Markdown")
-        return
-    
-    try:
-        rid = int(parts[1])
-        if rid in reminders:
-            del reminders[rid]
-            bot.reply_to(message, f"✅ Напоминание `{rid}` удалено.", parse_mode="Markdown")
-        else:
-            bot.reply_to(message, f"❌ Напоминание с ID `{rid}` не найдено.", parse_mode="Markdown")
-    except:
-        bot.reply_to(message, "❌ Неверный ID.")
-
-
 @bot.message_handler(commands=['wiki'])
 def wiki_cmd(message):
     query = message.text[5:].strip()
@@ -700,15 +473,6 @@ def help_cmd(message):
 /ai [вопрос] — общение с ИИ
 /ai найди [запрос] — поиск в интернете
 /clear_history — очистить историю диалога
-
-⏰ *Напоминания:*
-/remind 15:30 Текст — установить напоминание
-/remind 15:30 пн Текст — каждый понедельник
-/remind 15:30 #123 Текст — в тему 123
-/remind 15:30 ежедневно Текст — каждый день
-/remind 15:30 калл Текст — с пингом всех
-/reminds — список активных напоминаний
-/delremind ID — удалить напоминание
 
 📢 *Массовые уведомления:*
 /all текст — созвать всех участников
@@ -856,6 +620,6 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("Команды: /ai, /wiki, /roll, /coin, /remind, /all, /help")
+    logger.info("Команды: /ai, /wiki, /roll, /coin, /all, /help")
     
     app.run(host="0.0.0.0", port=port)
