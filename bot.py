@@ -203,7 +203,7 @@ def check_reminders():
                     if reminder.get("daily"):
                         new_time = reminder["time"] + 86400
                         to_repeat.append((rid, new_time))
-                        logger.info(f"🔄 Ежедневное напоминание {rid} перенесено на {datetime.fromtimestamp(new_time)}")
+                        logger.info(f"🔄 Ежедневное напоминание {rid} перенесено")
                     elif reminder.get("weekly_day") is not None:
                         new_time = reminder["time"] + 604800
                         to_repeat.append((rid, new_time))
@@ -423,7 +423,7 @@ def all_command(message):
     
     if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
         remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
-        bot.reply_to(message, f"⏳ Подождите {remaining} секунд перед следующим вызовом.")
+        bot.reply_to(message, f"⏳ Подождите {remaining} секунд")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -437,7 +437,7 @@ def all_command(message):
     members = user_cache.get(chat_id, {})
     
     if not members:
-        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат, чтобы бот вас запомнил.", message_thread_id=thread_id)
+        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат.", message_thread_id=thread_id)
         return
     
     mentions = []
@@ -459,7 +459,7 @@ def all_command(message):
     bot.send_message(chat_id, f"📢 {custom_text}\n\n{all_mentions}", parse_mode="Markdown", message_thread_id=thread_id)
     
     last_call_time[chat_id] = time.time()
-    logger.info(f"Вызван /all в чате {chat_id}, упомянуто {len(mentions)} участников")
+    logger.info(f"Вызван /all в {chat_id}, упомянуто {len(mentions)}")
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().strip().startswith(("калл", "call")))
@@ -470,7 +470,7 @@ def call_all_no_slash(message):
     
     if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
         remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
-        bot.reply_to(message, f"⏳ Подождите {remaining} секунд.")
+        bot.reply_to(message, f"⏳ Подождите {remaining} секунд")
         return
     
     text = message.text.strip()
@@ -514,7 +514,7 @@ def call_all_no_slash(message):
     bot.send_message(chat_id, f"📢 {custom_text}\n\n{all_mentions}", parse_mode="Markdown", message_thread_id=thread_id)
     
     last_call_time[chat_id] = time.time()
-    logger.info(f"Вызван калл в чате {chat_id}, упомянуто {len(mentions)}")
+    logger.info(f"Вызван калл в {chat_id}, упомянуто {len(mentions)}")
 
 
 @bot.message_handler(commands=['ai'])
@@ -565,7 +565,7 @@ def handle_document(message):
     
     file_name = message.document.file_name
     if not (file_name.endswith('.pdf') or file_name.endswith('.docx') or file_name.endswith('.txt')):
-        bot.reply_to(message, "❌ Поддерживаются только PDF, DOCX и TXT файлы.")
+        bot.reply_to(message, "❌ Поддерживаются только PDF, DOCX и TXT")
         return
     
     prompt = message.caption[4:].strip() or "Извлеки и кратко опиши содержимое файла"
@@ -613,9 +613,9 @@ def clear_history(message):
     user_id = message.from_user.id
     if user_id in user_histories:
         del user_histories[user_id]
-        bot.reply_to(message, "🗑️ История ваших диалогов очищена!")
+        bot.reply_to(message, "🗑️ История очищена!")
     else:
-        bot.reply_to(message, "📭 У вас нет сохранённой истории.")
+        bot.reply_to(message, "📭 Нет сохранённой истории.")
 
 
 # === НАПОМИНАНИЯ ===
@@ -635,7 +635,7 @@ def set_reminder(message):
         parts = text[8:].strip().split(maxsplit=1)
     
     if len(parts) < 2:
-        bot.reply_to(message, """ℹ️ *Как установить напоминание:*\n\n`/remind 15:30 Текст` — сегодня в 15:30\n`/remind 30m Текст` — через 30 минут\n`/remind 2h Текст` — через 2 часа\n`/remind 1d Текст` — через 1 день\n`/remind 15:30 пн Текст` — каждый понедельник\n`/remind 15:30 ежедневно Текст` — каждый день\n`/remind 15:30 калл Текст` — с упоминанием всех""", parse_mode="Markdown")
+        bot.reply_to(message, "ℹ️ `/remind 15:30 Текст` или `/remind 30m Текст`", parse_mode="Markdown")
         return
     
     time_str = parts[0]
@@ -644,7 +644,6 @@ def set_reminder(message):
     if ping_all:
         reminder_text = reminder_text.replace("калл", "").replace("call", "").strip()
     
-    # === ПРОВЕРКА НА ОТНОСИТЕЛЬНОЕ ВРЕМЯ ===
     relative_time = parse_relative_time(time_str)
     
     if relative_time:
@@ -656,7 +655,7 @@ def set_reminder(message):
     else:
         hours, minutes, weekly_day, daily, target_thread_id = parse_time_with_day(time_str)
         if hours is None:
-            bot.reply_to(message, "❌ Неправильный формат времени.\n\nПримеры:\n`/remind 15:30 Текст`\n`/remind 30m Текст`\n`/remind 2h Текст`", parse_mode="Markdown")
+            bot.reply_to(message, "❌ Неправильный формат времени.\nПример: `/remind 15:30 Текст` или `/remind 30m Текст`", parse_mode="Markdown")
             return
         
         now = datetime.now()
@@ -682,7 +681,10 @@ def set_reminder(message):
     
     timestamp = reminder_time.timestamp()
     
-    reminder_id = add_reminder(user_id, chat_id, timestamp, reminder_text, thread_id, ping_all, daily if 'daily' in locals() else False, weekly_day if 'weekly_day' in locals() else None, target_thread_id if 'target_thread_id' in locals() else None)
+    reminder_id = add_reminder(user_id, chat_id, timestamp, reminder_text, thread_id, ping_all, 
+                                daily if 'daily' in locals() else False, 
+                                weekly_day if 'weekly_day' in locals() else None, 
+                                target_thread_id if 'target_thread_id' in locals() else None)
     
     time_str_formatted = reminder_time.strftime("%d.%m.%Y в %H:%M")
     response = f"✅ *Напоминание установлено!*\n\n⏰ Когда: {time_str_formatted}\n📝 Текст: {reminder_text}\n🔄 Тип: {response_note}"
@@ -799,17 +801,29 @@ def forward_to_a(message):
         logger.error(f"Ошибка B->A: {e}")
 
 
-# === ПОСТЫ В КАНАЛАХ ===
+# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
 @bot.channel_post_handler(func=lambda m: m.chat.id in [-1001317416582, -1002185590715])
 def channel_reaction(message):
     try:
         bot.set_message_reaction(message.chat.id, message.message_id, reaction=[types.ReactionTypeEmoji(emoji="🔥")])
-    except:
-        pass
+        logger.info(f"🔥 Реакция на пост {message.message_id} в канале {message.chat.id}")
+    except Exception as e:
+        logger.error(f"Ошибка реакции в канале {message.chat.id}: {e}")
+        # Альтернативный способ
+        try:
+            url = f"{API_URL}/setMessageReaction"
+            data = {
+                "chat_id": message.chat.id,
+                "message_id": message.message_id,
+                "reaction": [{"type": "emoji", "emoji": "🔥"}]
+            }
+            requests.post(url, json=data, timeout=5)
+            logger.info(f"🔥 Реакция (API) на пост в канале {message.chat.id}")
+        except Exception as e2:
+            logger.error(f"Ошибка реакции (API): {e2}")
 
 
-# === СКРЫТЫЕ СООБЩЕНИЯ ===
-@bot.inline_handler(func=lambda query: True)
+# === СКРЫТЫЕ СООБЩЕНИЯ ===@bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
         text = query.query.strip()
@@ -902,7 +916,6 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("Команды: /ai, /wiki, /roll, /coin, /remind, /all, /help")
-    logger.info("📢 калл текст — упоминание всех участников")
-    logger.info("✅ ПОДДЕРЖКА ОТНОСИТЕЛЬНОГО ВРЕМЕНИ: 30m, 2h, 1d")
+    logger.info("🔥 Реакции на каналы: @eternalparadise, @psixonat_official")
     
     app.run(host="0.0.0.0", port=port)
