@@ -39,6 +39,8 @@ reminder_counter = 0
 
 # === КЭШ УЧАСТНИКОВ ДЛЯ УПОМИНАНИЙ ===
 user_cache = {}
+last_call_time = {}
+CALL_COOLDOWN = 60
 
 # === КЭШ И ИСТОРИЯ ДЛЯ ИИ ===
 ai_cache = {}
@@ -337,69 +339,6 @@ def search_wikipedia(query):
         return f"❌ Ошибка: {e}"
 
 
-# === ПЕРЕСЫЛКА СООБЩЕНИЙ (СОХРАНЯЕТ ПОЛЬЗОВАТЕЛЕЙ) ===
-@bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
-def forward_to_b(message):
-    save_user_from_message(message)  # Сохраняем пользователя
-    try:
-        sender_name = get_sender_name(message.from_user)
-        caption = f"📨 От: {sender_name}"
-        
-        if message.text:
-            bot.send_message(CHAT_B, f"{caption}\n\n{message.text}", message_thread_id=CHAT_B_THREAD)
-        elif message.photo:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=text, message_thread_id=CHAT_B_THREAD)
-        elif message.video:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_video(CHAT_B, message.video.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
-        elif message.voice:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_voice(CHAT_B, message.voice.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
-        elif message.document:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_document(CHAT_B, message.document.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
-        elif message.sticker:
-            bot.send_sticker(CHAT_B, message.sticker.file_id, message_thread_id=CHAT_B_THREAD)
-            bot.send_message(CHAT_B, caption, message_thread_id=CHAT_B_THREAD)
-        else:
-            bot.send_message(CHAT_B, caption, message_thread_id=CHAT_B_THREAD)
-        logger.info(f"Переслано из A в B")
-    except Exception as e:
-        logger.error(f"Ошибка A->B: {e}")
-
-
-@bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
-def forward_to_a(message):
-    save_user_from_message(message)  # Сохраняем пользователя
-    try:
-        sender_name = get_sender_name(message.from_user)
-        caption = f"📨 От: {sender_name}"
-        
-        if message.text:
-            bot.send_message(CHAT_A, f"{caption}\n\n{message.text}")
-        elif message.photo:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=text)
-        elif message.video:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_video(CHAT_A, message.video.file_id, caption=text)
-        elif message.voice:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_voice(CHAT_A, message.voice.file_id, caption=text)
-        elif message.document:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_document(CHAT_A, message.document.file_id, caption=text)
-        elif message.sticker:
-            bot.send_sticker(CHAT_A, message.sticker.file_id)
-            bot.send_message(CHAT_A, caption)
-        else:
-            bot.send_message(CHAT_A, caption)
-        logger.info(f"Переслано из B в A")
-    except Exception as e:
-        logger.error(f"Ошибка B->A: {e}")
-
-
 # === КОМАНДЫ ===
 @bot.message_handler(commands=['start', 'help'])
 def help_command(message):
@@ -421,6 +360,10 @@ def help_command(message):
 /reminds — список напоминаний
 /delremind ID — удалить напоминание
 
+📢 *Массовые уведомления:*
+/all текст — упомянуть всех участников
+калл текст — упомянуть всех (без слеша)
+
 🖼️ *Анализ изображений:* фото + `/ai Опиши`
 📄 *Чтение файлов:* файл + `/ai Прочитай`
 
@@ -428,6 +371,109 @@ def help_command(message):
 
 📩 *Скрытые сообщения:* `@бот @получатель текст`"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
+
+
+# === МАССОВЫЕ УПОМИНАНИЯ ===
+@bot.message_handler(commands=['all'])
+def all_command(message):
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    user_id = message.from_user.id
+    
+    if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
+        remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
+        bot.reply_to(message, f"⏳ Подождите {remaining} секунд перед следующим вызовом.")
+        return
+    
+    parts = message.text.split(maxsplit=1)
+    custom_text = parts[1] if len(parts) > 1 else "ВНИМАНИЕ!"
+    
+    try:
+        bot.delete_message(chat_id, message.message_id)
+    except:
+        pass
+    
+    members = user_cache.get(chat_id, {})
+    
+    if not members:
+        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат, чтобы бот вас запомнил.", message_thread_id=thread_id)
+        return
+    
+    mentions = []
+    for uid, data in members.items():
+        if uid == user_id:
+            continue
+        username = data.get("username")
+        if username:
+            mentions.append(f"@{username}")
+        else:
+            name = data.get("first_name", "Пользователь")
+            mentions.append(f"[{name}](tg://user?id={uid})")
+    
+    if not mentions:
+        bot.send_message(chat_id, "🤷‍♂️ Некого упоминать.", message_thread_id=thread_id)
+        return
+    
+    all_mentions = " ".join(mentions)
+    bot.send_message(chat_id, f"📢 {custom_text}\n\n{all_mentions}", parse_mode="Markdown", message_thread_id=thread_id)
+    
+    last_call_time[chat_id] = time.time()
+    logger.info(f"Вызван /all в чате {chat_id}, упомянуто {len(mentions)} участников")
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().strip().startswith(("калл", "call")))
+def call_all_no_slash(message):
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    user_id = message.from_user.id
+    
+    if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
+        remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
+        bot.reply_to(message, f"⏳ Подождите {remaining} секунд перед следующим вызовом.")
+        return
+    
+    text = message.text.strip()
+    if text.lower().startswith("калл"):
+        custom_text = text[4:].strip()
+    elif text.lower().startswith("call"):
+        custom_text = text[4:].strip()
+    else:
+        custom_text = text
+    
+    if not custom_text:
+        custom_text = "ВНИМАНИЕ!"
+    
+    try:
+        bot.delete_message(chat_id, message.message_id)
+    except:
+        pass
+    
+    members = user_cache.get(chat_id, {})
+    
+    if not members:
+        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат, чтобы бот вас запомнил.", message_thread_id=thread_id)
+        return
+    
+    mentions = []
+    for uid, data in members.items():
+        if uid == user_id:
+            continue
+        username = data.get("username")
+        if username:
+            mentions.append(f"@{username}")
+        else:
+            name = data.get("first_name", "Пользователь")
+            mentions.append(f"[{name}](tg://user?id={uid})")
+    
+    if not mentions:
+        bot.send_message(chat_id, "🤷‍♂️ Некого упоминать.", message_thread_id=thread_id)
+        return
+    
+    all_mentions = " ".join(mentions)
+    bot.send_message(chat_id, f"📢 {custom_text}\n\n{all_mentions}", parse_mode="Markdown", message_thread_id=thread_id)
+    
+    last_call_time[chat_id] = time.time()
+    logger.info(f"Вызван калл в чате {chat_id}, упомянуто {len(mentions)} участников")
 
 
 @bot.message_handler(commands=['ai'])
@@ -531,6 +577,7 @@ def clear_history(message):
         bot.reply_to(message, "📭 У вас нет сохранённой истории.")
 
 
+# === НАПОМИНАНИЯ ===
 @bot.message_handler(commands=['remind', 'whisper'])
 def set_reminder(message):
     save_user_from_message(message)
@@ -638,6 +685,69 @@ def delete_reminder(message):
         bot.reply_to(message, "❌ Неверный ID.")
 
 
+# === ПЕРЕСЫЛКА СООБЩЕНИЙ ===
+@bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
+def forward_to_b(message):
+    save_user_from_message(message)
+    try:
+        sender_name = get_sender_name(message.from_user)
+        caption = f"📨 От: {sender_name}"
+        
+        if message.text:
+            bot.send_message(CHAT_B, f"{caption}\n\n{message.text}", message_thread_id=CHAT_B_THREAD)
+        elif message.photo:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+        elif message.video:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_video(CHAT_B, message.video.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+        elif message.voice:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_voice(CHAT_B, message.voice.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+        elif message.document:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_document(CHAT_B, message.document.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+        elif message.sticker:
+            bot.send_sticker(CHAT_B, message.sticker.file_id, message_thread_id=CHAT_B_THREAD)
+            bot.send_message(CHAT_B, caption, message_thread_id=CHAT_B_THREAD)
+        else:
+            bot.send_message(CHAT_B, caption, message_thread_id=CHAT_B_THREAD)
+        logger.info(f"Переслано из A в B")
+    except Exception as e:
+        logger.error(f"Ошибка A->B: {e}")
+
+
+@bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
+def forward_to_a(message):
+    save_user_from_message(message)
+    try:
+        sender_name = get_sender_name(message.from_user)
+        caption = f"📨 От: {sender_name}"
+        
+        if message.text:
+            bot.send_message(CHAT_A, f"{caption}\n\n{message.text}")
+        elif message.photo:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=text)
+        elif message.video:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_video(CHAT_A, message.video.file_id, caption=text)
+        elif message.voice:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_voice(CHAT_A, message.voice.file_id, caption=text)
+        elif message.document:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_document(CHAT_A, message.document.file_id, caption=text)
+        elif message.sticker:
+            bot.send_sticker(CHAT_A, message.sticker.file_id)
+            bot.send_message(CHAT_A, caption)
+        else:
+            bot.send_message(CHAT_A, caption)
+        logger.info(f"Переслано из B в A")
+    except Exception as e:
+        logger.error(f"Ошибка B->A: {e}")
+
+
 # === ПОСТЫ В КАНАЛАХ ===
 @bot.channel_post_handler(func=lambda m: m.chat.id in [-1001317416582, -1002185590715])
 def channel_reaction(message):
@@ -740,7 +850,7 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("Команды: /ai, /wiki, /roll, /coin, /remind, /help")
-    logger.info("⏰ Напоминания с упоминанием всех: /remind 15:30 калл Текст")
+    logger.info("Команды: /ai, /wiki, /roll, /coin, /remind, /all, /help")
+    logger.info("📢 калл текст — упоминание всех участников")
     
     app.run(host="0.0.0.0", port=port)
