@@ -81,6 +81,35 @@ def get_all_mentions(chat_id, exclude_user_id=None):
 
 
 # === ФУНКЦИИ ДЛЯ НАПОМИНАНИЙ ===
+def parse_relative_time(text):
+    """Парсит относительное время: 30m, 2h, 1d, 30min, 2hours, 1day, 2 min"""
+    now = datetime.now()
+    
+    patterns = [
+        (r'(\d+)\s*min', 'minutes'),
+        (r'(\d+)\s*m\b', 'minutes'),
+        (r'(\d+)\s*минут', 'minutes'),
+        (r'(\d+)\s*hour', 'hours'),
+        (r'(\d+)\s*h\b', 'hours'),
+        (r'(\d+)\s*час', 'hours'),
+        (r'(\d+)\s*d\b', 'days'),
+        (r'(\d+)\s*day', 'days'),
+        (r'(\d+)\s*дн', 'days'),
+    ]
+    
+    for pattern, unit in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            value = int(match.group(1))
+            if unit == 'minutes':
+                return now + timedelta(minutes=value)
+            elif unit == 'hours':
+                return now + timedelta(hours=value)
+            elif unit == 'days':
+                return now + timedelta(days=value)
+    return None
+
+
 def parse_time_with_day(time_str):
     days_map = {
         "пн": 0, "пон": 0, "понедельник": 0,
@@ -362,10 +391,12 @@ def help_command(message):
 /clear_history — очистить историю диалога
 
 ⏰ *Напоминания:*
-/remind 15:30 Текст — одноразовое
+/remind 15:30 Текст — сегодня в 15:30
+/remind 30m Текст — через 30 минут
+/remind 2h Текст — через 2 часа
+/remind 1d Текст — через 1 день
 /remind 15:30 пн Текст — каждый понедельник
 /remind 15:30 ежедневно Текст — каждый день
-/remind 15:30 #123 Текст — в тему 123
 /remind 15:30 калл Текст — с упоминанием всех
 /reminds — список напоминаний
 /delremind ID — удалить напоминание
@@ -439,7 +470,7 @@ def call_all_no_slash(message):
     
     if chat_id in last_call_time and time.time() - last_call_time[chat_id] < CALL_COOLDOWN:
         remaining = int(CALL_COOLDOWN - (time.time() - last_call_time[chat_id]))
-        bot.reply_to(message, f"⏳ Подождите {remaining} секунд перед следующим вызовом.")
+        bot.reply_to(message, f"⏳ Подождите {remaining} секунд.")
         return
     
     text = message.text.strip()
@@ -461,7 +492,7 @@ def call_all_no_slash(message):
     members = user_cache.get(chat_id, {})
     
     if not members:
-        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат, чтобы бот вас запомнил.", message_thread_id=thread_id)
+        bot.send_message(chat_id, "❌ Список участников пуст. Напишите что-нибудь в чат.", message_thread_id=thread_id)
         return
     
     mentions = []
@@ -483,7 +514,7 @@ def call_all_no_slash(message):
     bot.send_message(chat_id, f"📢 {custom_text}\n\n{all_mentions}", parse_mode="Markdown", message_thread_id=thread_id)
     
     last_call_time[chat_id] = time.time()
-    logger.info(f"Вызван калл в чате {chat_id}, упомянуто {len(mentions)} участников")
+    logger.info(f"Вызван калл в чате {chat_id}, упомянуто {len(mentions)}")
 
 
 @bot.message_handler(commands=['ai'])
@@ -604,7 +635,7 @@ def set_reminder(message):
         parts = text[8:].strip().split(maxsplit=1)
     
     if len(parts) < 2:
-        bot.reply_to(message, """ℹ️ *Как установить напоминание:*\n\n`/remind 15:30 Текст` — сегодня\n`/remind 15:30 пн Текст` — каждый понедельник\n`/remind 15:30 #123 Текст` — в тему 123\n`/remind 15:30 ежедневно Текст` — каждый день\n`/remind 15:30 калл Текст` — с упоминанием всех""", parse_mode="Markdown")
+        bot.reply_to(message, """ℹ️ *Как установить напоминание:*\n\n`/remind 15:30 Текст` — сегодня в 15:30\n`/remind 30m Текст` — через 30 минут\n`/remind 2h Текст` — через 2 часа\n`/remind 1d Текст` — через 1 день\n`/remind 15:30 пн Текст` — каждый понедельник\n`/remind 15:30 ежедневно Текст` — каждый день\n`/remind 15:30 калл Текст` — с упоминанием всех""", parse_mode="Markdown")
         return
     
     time_str = parts[0]
@@ -613,40 +644,50 @@ def set_reminder(message):
     if ping_all:
         reminder_text = reminder_text.replace("калл", "").replace("call", "").strip()
     
-    hours, minutes, weekly_day, daily, target_thread_id = parse_time_with_day(time_str)
-    if hours is None:
-        bot.reply_to(message, "❌ Неправильный формат времени.", parse_mode="Markdown")
-        return
+    # === ПРОВЕРКА НА ОТНОСИТЕЛЬНОЕ ВРЕМЯ ===
+    relative_time = parse_relative_time(time_str)
     
-    now = datetime.now()
-    
-    if daily:
-        reminder_time = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-        if reminder_time <= now:
-            reminder_time = reminder_time + timedelta(days=1)
-        response_note = "ежедневно"
-    elif weekly_day is not None:
-        days_ahead = (weekly_day - now.weekday()) % 7
-        if days_ahead == 0 and now.hour > hours or (now.hour == hours and now.minute >= minutes):
-            days_ahead = 7
-        reminder_time = now + timedelta(days=days_ahead)
-        reminder_time = reminder_time.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-        days_names = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
-        response_note = f"каждый {days_names[weekly_day]}"
+    if relative_time:
+        reminder_time = relative_time
+        response_note = f"через {time_str}"
+        daily = False
+        weekly_day = None
+        target_thread_id = None
     else:
-        reminder_time = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-        if reminder_time <= now:
-            reminder_time = reminder_time + timedelta(days=1)
-        response_note = "одноразовое"
+        hours, minutes, weekly_day, daily, target_thread_id = parse_time_with_day(time_str)
+        if hours is None:
+            bot.reply_to(message, "❌ Неправильный формат времени.\n\nПримеры:\n`/remind 15:30 Текст`\n`/remind 30m Текст`\n`/remind 2h Текст`", parse_mode="Markdown")
+            return
+        
+        now = datetime.now()
+        
+        if daily:
+            reminder_time = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+            if reminder_time <= now:
+                reminder_time = reminder_time + timedelta(days=1)
+            response_note = "ежедневно"
+        elif weekly_day is not None:
+            days_ahead = (weekly_day - now.weekday()) % 7
+            if days_ahead == 0 and now.hour > hours or (now.hour == hours and now.minute >= minutes):
+                days_ahead = 7
+            reminder_time = now + timedelta(days=days_ahead)
+            reminder_time = reminder_time.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+            days_names = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+            response_note = f"каждый {days_names[weekly_day]}"
+        else:
+            reminder_time = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+            if reminder_time <= now:
+                reminder_time = reminder_time + timedelta(days=1)
+            response_note = "одноразовое"
     
     timestamp = reminder_time.timestamp()
     
-    reminder_id = add_reminder(user_id, chat_id, timestamp, reminder_text, thread_id, ping_all, daily, weekly_day, target_thread_id)
+    reminder_id = add_reminder(user_id, chat_id, timestamp, reminder_text, thread_id, ping_all, daily if 'daily' in locals() else False, weekly_day if 'weekly_day' in locals() else None, target_thread_id if 'target_thread_id' in locals() else None)
     
     time_str_formatted = reminder_time.strftime("%d.%m.%Y в %H:%M")
     response = f"✅ *Напоминание установлено!*\n\n⏰ Когда: {time_str_formatted}\n📝 Текст: {reminder_text}\n🔄 Тип: {response_note}"
     
-    if target_thread_id:
+    if 'target_thread_id' in locals() and target_thread_id:
         response += f"\n📌 *Тема:* #{target_thread_id}"
     if ping_all:
         response += "\n\n📢 *При срабатывании будут упомянуты ВСЕ участники чата!*"
@@ -862,6 +903,6 @@ if __name__ == "__main__":
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("Команды: /ai, /wiki, /roll, /coin, /remind, /all, /help")
     logger.info("📢 калл текст — упоминание всех участников")
-    logger.info("✅ ПОТОК НАПОМИНАНИЙ ЗАПУЩЕН")
+    logger.info("✅ ПОДДЕРЖКА ОТНОСИТЕЛЬНОГО ВРЕМЕНИ: 30m, 2h, 1d")
     
     app.run(host="0.0.0.0", port=port)
