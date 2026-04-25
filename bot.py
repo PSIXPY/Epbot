@@ -46,9 +46,20 @@ last_call_time = {}
 CALL_COOLDOWN = 60
 
 
+# === ФУНКЦИИ ДЛЯ ПОЛУЧЕНИЯ ИМЕНИ ОТПРАВИТЕЛЯ ===
+def get_sender_name(user):
+    if not user:
+        return "Неизвестный"
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    if not name:
+        name = user.username or "Пользователь"
+    if user.username:
+        return f"{name} (@{user.username})"
+    return name
+
+
 # === ФУНКЦИИ МАССОВОГО УПОМИНАНИЯ ===
 def save_user_from_message(message):
-    """Сохраняет пользователя в кеш из сообщения"""
     user = message.from_user
     if not user or user.is_bot:
         return
@@ -174,6 +185,63 @@ def call_all_members(message):
     
     last_call_time[chat_id] = time.time()
     logger.info(f"/all в {chat_id}, упомянуто {len(mentions)}")
+
+
+# === ПЕРЕСЫЛКА СООБЩЕНИЙ (С ПОДПИСЬЮ, КАК РАНЬШЕ) ===
+@bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
+def forward_to_b(message):
+    sender_name = get_sender_name(message.from_user)
+    caption_text = f"📨 От: {sender_name}"
+    
+    content_text = message.text or message.caption or ""
+    full_caption = f"{caption_text}\n\n{content_text}" if content_text else caption_text
+    
+    if message.photo:
+        bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=full_caption, message_thread_id=CHAT_B_THREAD)
+    elif message.video:
+        bot.send_video(CHAT_B, message.video.file_id, caption=full_caption, message_thread_id=CHAT_B_THREAD)
+    elif message.voice:
+        bot.send_voice(CHAT_B, message.voice.file_id, caption=full_caption, message_thread_id=CHAT_B_THREAD)
+    elif message.document:
+        bot.send_document(CHAT_B, message.document.file_id, caption=full_caption, message_thread_id=CHAT_B_THREAD)
+    elif message.sticker:
+        bot.send_sticker(CHAT_B, message.sticker.file_id, message_thread_id=CHAT_B_THREAD)
+        if caption_text:
+            bot.send_message(CHAT_B, caption_text, message_thread_id=CHAT_B_THREAD)
+    elif message.text:
+        bot.send_message(CHAT_B, full_caption, message_thread_id=CHAT_B_THREAD)
+    else:
+        bot.forward_message(CHAT_B, message.chat.id, message.message_id, message_thread_id=CHAT_B_THREAD)
+    
+    logger.info(f"Переслано из A в B")
+
+
+@bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
+def forward_to_a(message):
+    sender_name = get_sender_name(message.from_user)
+    caption_text = f"📨 От: {sender_name}"
+    
+    content_text = message.text or message.caption or ""
+    full_caption = f"{caption_text}\n\n{content_text}" if content_text else caption_text
+    
+    if message.photo:
+        bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=full_caption)
+    elif message.video:
+        bot.send_video(CHAT_A, message.video.file_id, caption=full_caption)
+    elif message.voice:
+        bot.send_voice(CHAT_A, message.voice.file_id, caption=full_caption)
+    elif message.document:
+        bot.send_document(CHAT_A, message.document.file_id, caption=full_caption)
+    elif message.sticker:
+        bot.send_sticker(CHAT_A, message.sticker.file_id)
+        if caption_text:
+            bot.send_message(CHAT_A, caption_text)
+    elif message.text:
+        bot.send_message(CHAT_A, full_caption)
+    else:
+        bot.forward_message(CHAT_A, message.chat.id, message.message_id)
+    
+    logger.info(f"Переслано из B в A")
 
 
 # === ФУНКЦИИ ДЛЯ GROQ ===
@@ -488,19 +556,6 @@ def help_cmd(message):
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
 
-# === ПЕРЕСЫЛКА СООБЩЕНИЙ ===
-@bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
-def forward_to_b(message):
-    bot.forward_message(CHAT_B, message.chat.id, message.message_id, message_thread_id=CHAT_B_THREAD)
-    logger.info(f"Переслано из A в B")
-
-
-@bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
-def forward_to_a(message):
-    bot.forward_message(CHAT_A, message.chat.id, message.message_id)
-    logger.info(f"Переслано из B в A")
-
-
 # === ПОСТЫ В КАНАЛАХ ===
 @bot.channel_post_handler(func=lambda m: m.chat.id in [-1001317416582, -1002185590715])
 def channel_reaction(message):
@@ -621,5 +676,6 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("Команды: /ai, /wiki, /roll, /coin, /all, /help")
+    logger.info("🔄 Пересылка с подписью 📨 От: Имя")
     
     app.run(host="0.0.0.0", port=port)
