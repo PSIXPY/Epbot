@@ -378,9 +378,9 @@ def forward_to_a(message):
 def channel_reaction(message):
     try:
         bot.set_message_reaction(message.chat.id, message.message_id, reaction=[types.ReactionTypeEmoji(emoji="🔥")])
-        logger.info(f"🔥 Реакция на пост в канале {message.chat.id}")
+        logger.info(f"🔥 Реакция на пост {message.message_id} в канале {message.chat.id}")
     except Exception as e:
-        logger.error(f"Ошибка реакции: {e}")
+        logger.error(f"Ошибка set_message_reaction: {e}")
         try:
             url = f"{API_URL}/setMessageReaction"
             data = {
@@ -389,9 +389,9 @@ def channel_reaction(message):
                 "reaction": [{"type": "emoji", "emoji": "🔥"}]
             }
             requests.post(url, json=data, timeout=5)
-            logger.info(f"🔥 Реакция (API) на пост в канале {message.chat.id}")
+            logger.info(f"🔥 Реакция (API) на пост {message.message_id} в канале {message.chat.id}")
         except Exception as e2:
-            logger.error(f"Ошибка реакции (API): {e2}")
+            logger.error(f"Ошибка API реакции: {e2}")
 
 
 # === СКРЫТЫЕ СООБЩЕНИЯ ===
