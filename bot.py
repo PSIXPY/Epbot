@@ -8,6 +8,7 @@ import threading
 import re
 import urllib.parse
 import hashlib
+import sqlite3
 from datetime import datetime
 from flask import Flask, request
 from telebot import TeleBot, types
@@ -16,6 +17,7 @@ import PyPDF2
 import docx
 from io import BytesIO
 from bs4 import BeautifulSoup
+from deep_translator import GoogleTranslator
 
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -38,6 +40,35 @@ ai_cache = {}
 user_histories = {}
 MAX_HISTORY = 10
 CACHE_TTL = 3600
+
+# === БАЗА ДАННЫХ ПЕРЕВОДЧИКА ===
+DB_PATH = "translator.db"
+
+def init_translator_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS chat_translator
+                 (chat_id INTEGER PRIMARY KEY, enabled INTEGER DEFAULT 0)''')
+    conn.commit()
+    conn.close()
+    logger.info("📁 База данных переводчика инициализирована")
+
+def is_translator_enabled(chat_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT enabled FROM chat_translator WHERE chat_id=?", (chat_id,))
+    result = c.fetchone()
+    conn.close()
+    return result[0] == 1 if result else False
+
+def set_translator_enabled(chat_id, enabled):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO chat_translator (chat_id, enabled) VALUES (?, ?)", (chat_id, enabled))
+    conn.commit()
+    conn.close()
+
+init_translator_db()
 
 
 # === ОСНОВНЫЕ ФУНКЦИИ ===
@@ -208,13 +239,18 @@ def help_command(message):
 🖼️ *Анализ изображений:* фото + `/ai Опиши`
 📄 *Чтение файлов:* файл + `/ai Прочитай`
 
+🌐 *Переводчик:* (работает в этом чате)
+/т — показать статус
+/т on — включить перевод RU↔EN
+/т off — выключить перевод
+
 🎲 *Развлечения:*
 /roll — случайное число (1-100)
 /coin — орёл/решка
 
 📩 *Скрытые сообщения:* `@бот @получатель текст`
 
-🔄 *Автоматически:* пересылка сообщений (включая аудио) между чатами и 🔥 на новые посты в каналах"""
+🔄 *Автоматически:* пересылка сообщений между чатами и 🔥 на новые посты в каналах"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
 
@@ -312,7 +348,68 @@ def clear_history(message):
         bot.reply_to(message, "📭 У вас нет сохранённой истории.")
 
 
-# === ПЕРЕСЫЛКА СООБЩЕНИЙ (С ПОДДЕРЖКОЙ АУДИО) ===
+# === ПЕРЕВОДЧИК ===
+@bot.message_handler(commands=['т'])
+def translate_command(message):
+    chat_id = message.chat.id
+    parts = message.text.split()
+    
+    if len(parts) < 2:
+        status = "✅ Включён" if is_translator_enabled(chat_id) else "❌ Выключен"
+        bot.reply_to(message, f"🌐 *Переводчик RU↔EN*\nСтатус: {status}\n\n"
+                           f"`/т on` — включить\n`/т off` — выключить", parse_mode="Markdown")
+        return
+    
+    action = parts[1].lower()
+    
+    if action == "on":
+        set_translator_enabled(chat_id, True)
+        bot.reply_to(message, "✅ *Переводчик RU↔EN включён!*\n\n"
+                           "📌 *Как работает:*\n"
+                           "• Русский текст → перевод на английский\n"
+                           "• Английский текст → перевод на русский", parse_mode="Markdown")
+    
+    elif action == "off":
+        set_translator_enabled(chat_id, False)
+        bot.reply_to(message, "❌ *Переводчик выключен*", parse_mode="Markdown")
+
+
+# === АВТОМАТИЧЕСКИЙ ПЕРЕВОД СООБЩЕНИЙ ===
+@bot.message_handler(func=lambda m: True, content_types=['text'])
+def auto_translate(message):
+    chat_id = message.chat.id
+    
+    if not is_translator_enabled(chat_id):
+        return
+    
+    if message.from_user.id == bot.get_me().id:
+        return
+    
+    if message.text.startswith('/'):
+        return
+    
+    text = message.text.strip()
+    if not text:
+        return
+    
+    try:
+        has_cyrillic = any(ord(c) > 1024 for c in text)
+        
+        if has_cyrillic:
+            translated = GoogleTranslator(source='ru', target='en').translate(text)
+            lang_flag = "🇷🇺 → 🇬🇧"
+        else:
+            translated = GoogleTranslator(source='en', target='ru').translate(text)
+            lang_flag = "🇬🇧 → 🇷🇺"
+        
+        if translated and translated != text:
+            bot.reply_to(message, f"{lang_flag} *Перевод:*\n{translated}", parse_mode="Markdown")
+            
+    except Exception as e:
+        logger.error(f"Ошибка перевода: {e}")
+
+
+# === ПЕРЕСЫЛКА СООБЩЕНИЙ ===
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def forward_to_b(message):
     try:
@@ -518,8 +615,9 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("Команды: /ai, /wiki, /roll, /coin, /help")
+    logger.info("Команды: /ai, /wiki, /roll, /coin, /т, /help")
     logger.info("🔥 Реакции на каналы: включены")
     logger.info("🎵 Пересылка аудиофайлов: включена")
+    logger.info("🌐 Переводчик RU↔EN: включён (включается командой /т on)")
     
     app.run(host="0.0.0.0", port=port)
