@@ -381,6 +381,7 @@ def channel_reaction(message):
         logger.info(f"🔥 Реакция на пост {message.message_id} в канале {message.chat.id}")
     except Exception as e:
         logger.error(f"Ошибка set_message_reaction: {e}")
+        # Запасной вариант через прямой API
         try:
             url = f"{API_URL}/setMessageReaction"
             data = {
@@ -413,7 +414,7 @@ def inline_query(query):
             "content": content,
             "sender": query.from_user.first_name,
             "sender_id": query.from_user.id,
-            "expires": datetime.now().timestamp() + 10800  # 3 часа
+            "expires": datetime.now().timestamp() + 10800
         }
         
         markup = InlineKeyboardMarkup()
@@ -473,7 +474,6 @@ def read_secret(call):
 
 
 def clean_expired_secrets():
-    """Очищает устаревшие скрытые сообщения (раз в час)"""
     while True:
         time.sleep(3600)
         now = datetime.now().timestamp()
@@ -514,7 +514,6 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("Команды: /ai, /wiki, /roll, /coin, /help")
-    logger.info("🔥 Автореакции на каналы")
-    logger.info("📩 Скрытые сообщения: 3 часа хранения")
+    logger.info("🔥 Реакции на каналы: включены")
     
     app.run(host="0.0.0.0", port=port)
