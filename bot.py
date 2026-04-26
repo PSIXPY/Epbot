@@ -214,7 +214,7 @@ def help_command(message):
 
 📩 *Скрытые сообщения:* `@бот @получатель текст`
 
-🔄 *Автоматически:* пересылка сообщений между чатами и 🔥 на новые посты в каналах"""
+🔄 *Автоматически:* пересылка сообщений (включая аудио) между чатами и 🔥 на новые посты в каналах"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
 
@@ -312,7 +312,7 @@ def clear_history(message):
         bot.reply_to(message, "📭 У вас нет сохранённой истории.")
 
 
-# === ПЕРЕСЫЛКА СООБЩЕНИЙ ===
+# === ПЕРЕСЫЛКА СООБЩЕНИЙ (С ПОДДЕРЖКОЙ АУДИО) ===
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def forward_to_b(message):
     try:
@@ -330,6 +330,9 @@ def forward_to_b(message):
         elif message.voice:
             text = f"{caption}\n\n{message.caption}" if message.caption else caption
             bot.send_voice(CHAT_B, message.voice.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+        elif message.audio:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_audio(CHAT_B, message.audio.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
         elif message.document:
             text = f"{caption}\n\n{message.caption}" if message.caption else caption
             bot.send_document(CHAT_B, message.document.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
@@ -360,6 +363,9 @@ def forward_to_a(message):
         elif message.voice:
             text = f"{caption}\n\n{message.caption}" if message.caption else caption
             bot.send_voice(CHAT_A, message.voice.file_id, caption=text)
+        elif message.audio:
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_audio(CHAT_A, message.audio.file_id, caption=text)
         elif message.document:
             text = f"{caption}\n\n{message.caption}" if message.caption else caption
             bot.send_document(CHAT_A, message.document.file_id, caption=text)
@@ -381,7 +387,6 @@ def channel_reaction(message):
         logger.info(f"🔥 Реакция на пост {message.message_id} в канале {message.chat.id}")
     except Exception as e:
         logger.error(f"Ошибка set_message_reaction: {e}")
-        # Запасной вариант через прямой API
         try:
             url = f"{API_URL}/setMessageReaction"
             data = {
@@ -515,5 +520,6 @@ if __name__ == "__main__":
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("Команды: /ai, /wiki, /roll, /coin, /help")
     logger.info("🔥 Реакции на каналы: включены")
+    logger.info("🎵 Пересылка аудиофайлов: включена")
     
     app.run(host="0.0.0.0", port=port)
