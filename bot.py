@@ -19,6 +19,7 @@ import docx
 from io import BytesIO
 from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
+import pytz
 
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -36,8 +37,10 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
+
 # === ОБЪЕДИНЕНИЕ ЧАТОВ (без блокировки команд) ===
-@bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not m.text.startswith('/'))
+@bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not (m.text and m.text.startswith('/')))
 def relay_messages(message):
     # Не пересылаем от бота
     if message.from_user.id == bot.get_me().id:
@@ -49,8 +52,21 @@ def relay_messages(message):
     # Из чата A в B
     if chat_id == CHAT_A:
         try:
-            bot.send_message(CHAT_B, f"📩 *{sender_name}*\n\n{message.text}", 
-                           parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
+            if message.text:
+                bot.send_message(CHAT_B, f"📩 *{sender_name}*\n\n{message.text}", 
+                               parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
+            elif message.photo:
+                caption = f"📩 *{sender_name}*\n\n{message.caption or ''}"
+                bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=caption,
+                             parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
+            elif message.video:
+                caption = f"📩 *{sender_name}*\n\n{message.caption or ''}"
+                bot.send_video(CHAT_B, message.video.file_id, caption=caption,
+                             parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
+            elif message.document:
+                caption = f"📩 *{sender_name}*\n\n{message.caption or ''}"
+                bot.send_document(CHAT_B, message.document.file_id, caption=caption,
+                                parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
             logger.info(f"✅ Переслано из A в B")
         except Exception as e:
             logger.error(f"Ошибка A→B: {e}")
@@ -58,8 +74,21 @@ def relay_messages(message):
     # Из чата B в A (только из нужного топика)
     elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
         try:
-            bot.send_message(CHAT_A, f"📩 *{sender_name}*\n\n{message.text}", 
-                           parse_mode="Markdown")
+            if message.text:
+                bot.send_message(CHAT_A, f"📩 *{sender_name}*\n\n{message.text}", 
+                               parse_mode="Markdown")
+            elif message.photo:
+                caption = f"📩 *{sender_name}*\n\n{message.caption or ''}"
+                bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=caption,
+                             parse_mode="Markdown")
+            elif message.video:
+                caption = f"📩 *{sender_name}*\n\n{message.caption or ''}"
+                bot.send_video(CHAT_A, message.video.file_id, caption=caption,
+                             parse_mode="Markdown")
+            elif message.document:
+                caption = f"📩 *{sender_name}*\n\n{message.caption or ''}"
+                bot.send_document(CHAT_A, message.document.file_id, caption=caption,
+                                parse_mode="Markdown")
             logger.info(f"✅ Переслано из B в A")
         except Exception as e:
             logger.error(f"Ошибка B→A: {e}")
@@ -99,11 +128,7 @@ def set_translator_enabled(chat_id, enabled):
     translator_settings[str(chat_id)] = enabled
     save_translator_settings(translator_settings)
 
-# === НАПОМИНАНИЯ С МОСКОВСКИМ ВРЕМЕНЕМ ===
-import pytz
-
-MOSCOW_TZ = pytz.timezone('Europe/Moscow')
-
+# === НАПОМИНАНИЯ С МОСКОВСКИМ ВРЕМЕНЕМ И ПОДДЕРЖКОЙ ТОПИКОВ ===
 REMINDERS_FILE = os.path.join(tempfile.gettempdir(), "reminders.json")
 
 def load_reminders():
@@ -198,7 +223,6 @@ def schedule_reminder(reminder):
         reminder.get("weekly_day"), 
         reminder.get("daily", False)
     )
-    # Конвертируем московское время в UTC для таймера
     next_time_utc = next_time.astimezone(pytz.UTC)
     delay = (next_time_utc - datetime.now(pytz.UTC)).total_seconds()
     
@@ -362,9 +386,10 @@ def search_wikipedia(query):
 def help_command(message):
     help_text = """📖 *Команды бота*
 
-⏰ *Напоминания:*
+⏰ *Напоминания (МСК):*
 /remind 15:30 ежедневно Текст — каждый день
 /remind 15:30 пн Текст — каждый понедельник
+/remind 18:00 Текст — сегодня
 /reminds — список напоминаний
 /delremind ID — удалить напоминание
 
@@ -459,7 +484,7 @@ def clear_history(message):
     else:
         bot.reply_to(message, "📭 Нет сохранённой истории")
 
-# === НАПОМИНАНИЯ ===
+# === НАПОМИНАНИЯ КОМАНДЫ ===
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
     chat_id = message.chat.id
@@ -468,7 +493,12 @@ def add_reminder(message):
     
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        bot.reply_to(message, "ℹ️ `/remind 15:30 ежедневно Текст`", parse_mode="Markdown")
+        bot.reply_to(message, "ℹ️ *Как создать напоминание:*\n\n"
+                           "`/remind 15:30 ежедневно Текст` — каждый день\n"
+                           "`/remind 15:30 пн Текст` — каждый понедельник\n"
+                           "`/remind 18:00 Текст` — сегодня\n\n"
+                           "📍 Напоминание придёт в этот же топик/чат", 
+                           parse_mode="Markdown")
         return
     
     time_str = parts[1]
@@ -476,7 +506,12 @@ def add_reminder(message):
     
     hours, minutes, weekly_day, daily = parse_time_with_day(time_str)
     if hours is None:
-        bot.reply_to(message, "❌ Неправильный формат.\nПример: `/remind 15:30 ежедневно Текст`", parse_mode="Markdown")
+        bot.reply_to(message, "❌ Неправильный формат времени.\n"
+                           "Примеры:\n"
+                           "`/remind 15:30 ежедневно Текст`\n"
+                           "`/remind 14:00 пн Текст`\n"
+                           "`/remind 19:00 Текст`", 
+                           parse_mode="Markdown")
         return
     
     global reminder_counter
@@ -506,12 +541,22 @@ def add_reminder(message):
     else:
         period = "сегодня"
     
-    bot.reply_to(message, f"✅ *Напоминание добавлено!*\n\n⏰ {period} в {hours:02d}:{minutes:02d}\n📝 {reminder_text}\n🆔 ID: {reminder_counter}", parse_mode="Markdown")
+    location = "в этот же топик" if thread_id else "в этот чат"
+    
+    bot.reply_to(message, 
+                f"✅ *Напоминание добавлено!*\n\n"
+                f"⏰ {period} в {hours:02d}:{minutes:02d} МСК\n"
+                f"📍 Придёт {location}\n"
+                f"📝 {reminder_text}\n"
+                f"🆔 ID: `{reminder_counter}`", 
+                parse_mode="Markdown")
 
 @bot.message_handler(commands=['reminds'])
 def list_reminders(message):
     if not reminders:
-        bot.reply_to(message, "📭 Нет активных напоминаний.")
+        bot.reply_to(message, "📭 Нет активных напоминаний.\n\n"
+                           "Создайте: `/remind 15:30 ежедневно Текст`", 
+                           parse_mode="Markdown")
         return
     
     response = "📋 *Активные напоминания:*\n\n"
@@ -523,14 +568,20 @@ def list_reminders(message):
             period = f"каждый {days[r['weekly_day']]} в {r['hours']:02d}:{r['minutes']:02d}"
         else:
             period = f"в {r['hours']:02d}:{r['minutes']:02d}"
-        response += f"🆔 `{r['id']}` — {period}\n   📝 {r['text'][:40]}\n\n"
+        
+        topic_info = f" (топик {r['thread_id']})" if r.get('thread_id') else ""
+        response += f"🆔 `{r['id']}` — {period}{topic_info}\n   📝 {r['text'][:50]}\n\n"
+    
     bot.reply_to(message, response, parse_mode="Markdown")
 
 @bot.message_handler(commands=['delremind'])
 def delete_reminder(message):
     parts = message.text.split()
     if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ `/delremind ID`", parse_mode="Markdown")
+        bot.reply_to(message, "ℹ️ *Удаление напоминания:*\n\n"
+                           "`/delremind ID`\n\n"
+                           "Посмотреть ID можно через `/reminds`", 
+                           parse_mode="Markdown")
         return
     
     try:
@@ -543,9 +594,11 @@ def delete_reminder(message):
                 save_reminders(reminders)
                 bot.reply_to(message, f"✅ Напоминание `{rid}` удалено.", parse_mode="Markdown")
                 return
-        bot.reply_to(message, f"❌ Напоминание с ID `{rid}` не найдено.", parse_mode="Markdown")
+        bot.reply_to(message, f"❌ Напоминание с ID `{rid}` не найдено.\n"
+                           f"Используйте `/reminds` для просмотра активных.", 
+                           parse_mode="Markdown")
     except:
-        bot.reply_to(message, "❌ Неверный ID.")
+        bot.reply_to(message, "❌ Неверный ID. Используйте цифры, например: `/delremind 5`", parse_mode="Markdown")
 
 # === ПЕРЕВОДЧИК ===
 @bot.message_handler(commands=['т'])
@@ -573,7 +626,6 @@ def auto_translate(message):
         return
     if message.text.startswith('/'):
         return
-    # Не переводим сообщения, которые являются пересылками между чатами
     if message.text.startswith('📩'):
         return
     text = message.text.strip()
@@ -593,7 +645,6 @@ def auto_translate(message):
 # === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
 @bot.channel_post_handler(func=lambda m: True)
 def channel_reaction(message):
-    # Проверяем ID каналов
     allowed_channels = [-1001317416582, -1002185590715]
     if message.chat.id not in allowed_channels:
         return
@@ -714,6 +765,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("✅ Режим объединения чатов активен")
-    logger.info("✅ Все команды (/ai, /wiki, /remind и др.) работают")
+    logger.info("✅ Все команды работают")
+    logger.info("✅ Напоминания по московскому времени")
     
     app.run(host="0.0.0.0", port=port)
