@@ -36,6 +36,11 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
+@bot.message_handler(func=lambda m: True)
+def debug(message):
+    logger.info(f"🔔 ПОЛУЧЕНО: chat={message.chat.id}, text={message.text}")
+    bot.reply_to(message, f"✅ Бот видит сообщение! Chat ID: {message.chat.id}")
+
 # === КЭШ И ИСТОРИЯ ДЛЯ ИИ ===
 ai_cache = {}
 user_histories = {}
