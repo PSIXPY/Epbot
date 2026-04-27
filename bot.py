@@ -36,26 +36,101 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
-# === ТЕСТОВЫЙ ОБРАБОТЧИК (ВРЕМЕННО) ===
-@bot.message_handler(func=lambda m: True)
-def test_all(message):
-    logger.info(f"📢 ТЕСТ: сообщение из чата {message.chat.id}, текст: {message.text}")
-    if message.chat.id == CHAT_A:
-        logger.info(f"🎯 Это ЧАТ A! Нужно переслать в B")
+# === ОБЪЕДИНЕНИЕ ЧАТОВ ===
+@bot.message_handler(func=lambda m: True, content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'sticker'])
+def relay_messages(message):
+    # Не пересылаем сообщения от самого бота
+    if message.from_user.id == bot.get_me().id:
+        return
+    
+    chat_id = message.chat.id
+    sender_name = get_sender_name(message.from_user)
+    
+    # Пересылка из ЧАТА A в ЧАТ B
+    if chat_id == CHAT_A:
         try:
-            bot.send_message(CHAT_B, f"ТЕСТ: {message.text}", message_thread_id=CHAT_B_THREAD)
-            logger.info(f"✅ Сообщение отправлено в B")
+            # Копируем сообщение в чат B
+            copy_message_to_chat(message, CHAT_B, CHAT_B_THREAD, sender_name, "A")
+            logger.info(f"✅ Переслано из чата A в B")
         except Exception as e:
-            logger.error(f"❌ Ошибка отправки в B: {e}")
-    elif message.chat.id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
-        logger.info(f"🎯 Это ЧАТ B! Нужно переслать в A")
+            logger.error(f"❌ Ошибка отправки из A в B: {e}")
+    
+    # Пересылка из ЧАТА B в ЧАТ A (с учётом топика)
+    elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
         try:
-            bot.send_message(CHAT_A, f"ТЕСТ: {message.text}")
-            logger.info(f"✅ Сообщение отправлено в A")
+            copy_message_to_chat(message, CHAT_A, None, sender_name, "B")
+            logger.info(f"✅ Переслано из чата B в A")
         except Exception as e:
-            logger.error(f"❌ Ошибка отправки в A: {e}")
-    else:
-        logger.info(f"❌ Неизвестный чат: {message.chat.id}, thread: {message.message_thread_id}")
+            logger.error(f"❌ Ошибка отправки из B в A: {e}")
+
+def copy_message_to_chat(message, target_chat_id, thread_id, sender_name, source_chat):
+    """Копирует сообщение в целевой чат с подписью отправителя"""
+    
+    prefix = f"📩 *От {sender_name}* (чат {source_chat})\n\n"
+    
+    if message.text:
+        bot.send_message(
+            target_chat_id, 
+            prefix + message.text,
+            parse_mode="Markdown",
+            message_thread_id=thread_id
+        )
+    elif message.photo:
+        caption = prefix + (message.caption or "")
+        bot.send_photo(
+            target_chat_id,
+            message.photo[-1].file_id,
+            caption=caption,
+            parse_mode="Markdown",
+            message_thread_id=thread_id
+        )
+    elif message.video:
+        caption = prefix + (message.caption or "")
+        bot.send_video(
+            target_chat_id,
+            message.video.file_id,
+            caption=caption,
+            parse_mode="Markdown",
+            message_thread_id=thread_id
+        )
+    elif message.document:
+        caption = prefix + (message.caption or "")
+        bot.send_document(
+            target_chat_id,
+            message.document.file_id,
+            caption=caption,
+            parse_mode="Markdown",
+            message_thread_id=thread_id
+        )
+    elif message.audio:
+        caption = prefix + (message.caption or "")
+        bot.send_audio(
+            target_chat_id,
+            message.audio.file_id,
+            caption=caption,
+            parse_mode="Markdown",
+            message_thread_id=thread_id
+        )
+    elif message.voice:
+        bot.send_voice(
+            target_chat_id,
+            message.voice.file_id,
+            caption=prefix,
+            message_thread_id=thread_id
+        )
+    elif message.sticker:
+        bot.send_sticker(
+            target_chat_id,
+            message.sticker.file_id,
+            message_thread_id=thread_id
+        )
+        # Отдельно отправляем текст кто отправил
+        bot.send_message(
+            target_chat_id,
+            prefix,
+            parse_mode="Markdown",
+            message_thread_id=thread_id
+        )
 
 # === КЭШ И ИСТОРИЯ ДЛЯ ИИ ===
 ai_cache = {}
@@ -689,6 +764,6 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("✅ ТЕСТОВЫЙ РЕЖИМ: все сообщения пересылаются через тестовый обработчик")
+    logger.info("✅ Режим объединения чатов активен")
     
     app.run(host="0.0.0.0", port=port)
