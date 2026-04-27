@@ -9,6 +9,7 @@ import re
 import urllib.parse
 import hashlib
 import json
+import tempfile
 from datetime import datetime, timedelta
 from flask import Flask, request
 from telebot import TeleBot, types
@@ -41,18 +42,25 @@ user_histories = {}
 MAX_HISTORY = 10
 CACHE_TTL = 3600
 
-# === НАСТРОЙКИ ПЕРЕВОДЧИКА ===
-TRANSLATOR_SETTINGS_FILE = "translator_settings.json"
+# === НАСТРОЙКИ ПЕРЕВОДЧИКА (СОХРАНЕНИЕ В /TMP) ===
+TRANSLATOR_SETTINGS_FILE = os.path.join(tempfile.gettempdir(), "translator_settings.json")
 
 def load_translator_settings():
     if os.path.exists(TRANSLATOR_SETTINGS_FILE):
-        with open(TRANSLATOR_SETTINGS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(TRANSLATOR_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
     return {}
 
 def save_translator_settings(settings):
-    with open(TRANSLATOR_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(settings, f, ensure_ascii=False, indent=2)
+    try:
+        with open(TRANSLATOR_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+        logger.info(f"💾 Настройки переводчика сохранены")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения настроек: {e}")
 
 translator_settings = load_translator_settings()
 
@@ -64,17 +72,24 @@ def set_translator_enabled(chat_id, enabled):
     save_translator_settings(translator_settings)
 
 # === НАПОМИНАНИЯ ===
-REMINDERS_FILE = "reminders.json"
+REMINDERS_FILE = os.path.join(tempfile.gettempdir(), "reminders.json")
 
 def load_reminders():
     if os.path.exists(REMINDERS_FILE):
-        with open(REMINDERS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(REMINDERS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return []
     return []
 
 def save_reminders(reminders):
-    with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(reminders, f, ensure_ascii=False, indent=2)
+    try:
+        with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(reminders, f, ensure_ascii=False, indent=2)
+        logger.info(f"💾 Напоминания сохранены")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения напоминаний: {e}")
 
 reminders = load_reminders()
 reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
@@ -311,7 +326,6 @@ def help_command(message):
     help_text = """📖 *Команды бота*
 
 ⏰ *Напоминания:*
-/remind 15:30 Текст — сегодня в 15:30
 /remind 15:30 ежедневно Текст — каждый день
 /remind 15:30 пн Текст — каждый понедельник
 /reminds — список напоминаний
@@ -540,31 +554,39 @@ def auto_translate(message):
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_A)
 def forward_to_b(message):
     try:
-        sender_name = get_sender_name(message.from_user)
-        prefix = f"📨 От: {sender_name}\n\n"
+        # Получаем имя отправителя
+        sender = message.from_user
+        name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()
+        if not name:
+            name = sender.username or "Пользователь"
+        if sender.username:
+            name = f"{name} (@{sender.username})"
+        
+        caption = f"📨 От: {name}"
         
         if message.text:
-            bot.send_message(CHAT_B, prefix + message.text, message_thread_id=CHAT_B_THREAD)
+            bot.send_message(CHAT_B, f"{caption}\n\n{message.text}", message_thread_id=CHAT_B_THREAD)
         elif message.photo:
-            caption = prefix + (message.caption if message.caption else "")
-            bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=caption, message_thread_id=CHAT_B_THREAD)
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=text, message_thread_id=CHAT_B_THREAD)
         elif message.video:
-            caption = prefix + (message.caption if message.caption else "")
-            bot.send_video(CHAT_B, message.video.file_id, caption=caption, message_thread_id=CHAT_B_THREAD)
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_video(CHAT_B, message.video.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
         elif message.audio:
-            caption = prefix + (message.caption if message.caption else "")
-            bot.send_audio(CHAT_B, message.audio.file_id, caption=caption, message_thread_id=CHAT_B_THREAD)
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_audio(CHAT_B, message.audio.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
         elif message.voice:
-            caption = prefix + (message.caption if message.caption else "")
-            bot.send_voice(CHAT_B, message.voice.file_id, caption=caption, message_thread_id=CHAT_B_THREAD)
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_voice(CHAT_B, message.voice.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
         elif message.document:
-            caption = prefix + (message.caption if message.caption else "")
-            bot.send_document(CHAT_B, message.document.file_id, caption=caption, message_thread_id=CHAT_B_THREAD)
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_document(CHAT_B, message.document.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
         elif message.sticker:
             bot.send_sticker(CHAT_B, message.sticker.file_id, message_thread_id=CHAT_B_THREAD)
-            bot.send_message(CHAT_B, prefix, message_thread_id=CHAT_B_THREAD)
+            bot.send_message(CHAT_B, caption, message_thread_id=CHAT_B_THREAD)
         else:
-            bot.send_message(CHAT_B, prefix, message_thread_id=CHAT_B_THREAD)
+            bot.send_message(CHAT_B, caption, message_thread_id=CHAT_B_THREAD)
+        
         logger.info(f"✅ Переслано из A в B")
     except Exception as e:
         logger.error(f"❌ Ошибка A->B: {e}")
@@ -572,31 +594,39 @@ def forward_to_b(message):
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def forward_to_a(message):
     try:
-        sender_name = get_sender_name(message.from_user)
-        prefix = f"📨 От: {sender_name}\n\n"
+        # Получаем имя отправителя
+        sender = message.from_user
+        name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()
+        if not name:
+            name = sender.username or "Пользователь"
+        if sender.username:
+            name = f"{name} (@{sender.username})"
+        
+        caption = f"📨 От: {name}"
         
         if message.text:
-            bot.send_message(CHAT_A, prefix + message.text)
+            bot.send_message(CHAT_A, f"{caption}\n\n{message.text}")
         elif message.photo:
-            caption = prefix + (message.caption if message.caption else "")
-            bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=caption)
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=text)
         elif message.video:
-            caption = prefix + (message.caption if message.caption else "")
-            bot.send_video(CHAT_A, message.video.file_id, caption=caption)
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_video(CHAT_A, message.video.file_id, caption=text)
         elif message.audio:
-            caption = prefix + (message.caption if message.caption else "")
-            bot.send_audio(CHAT_A, message.audio.file_id, caption=caption)
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_audio(CHAT_A, message.audio.file_id, caption=text)
         elif message.voice:
-            caption = prefix + (message.caption if message.caption else "")
-            bot.send_voice(CHAT_A, message.voice.file_id, caption=caption)
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_voice(CHAT_A, message.voice.file_id, caption=text)
         elif message.document:
-            caption = prefix + (message.caption if message.caption else "")
-            bot.send_document(CHAT_A, message.document.file_id, caption=caption)
+            text = f"{caption}\n\n{message.caption}" if message.caption else caption
+            bot.send_document(CHAT_A, message.document.file_id, caption=text)
         elif message.sticker:
             bot.send_sticker(CHAT_A, message.sticker.file_id)
-            bot.send_message(CHAT_A, prefix)
+            bot.send_message(CHAT_A, caption)
         else:
-            bot.send_message(CHAT_A, prefix)
+            bot.send_message(CHAT_A, caption)
+        
         logger.info(f"✅ Переслано из B в A")
     except Exception as e:
         logger.error(f"❌ Ошибка B->A: {e}")
@@ -721,5 +751,6 @@ if __name__ == "__main__":
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("✅ Пересылка сообщений включена")
     logger.info("🔥 Реакции на каналы включены")
+    logger.info("💾 Данные сохраняются в /tmp")
     
     app.run(host="0.0.0.0", port=port)
