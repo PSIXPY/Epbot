@@ -36,101 +36,33 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
-# === ОБЪЕДИНЕНИЕ ЧАТОВ ===
-@bot.message_handler(func=lambda m: True, content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'sticker'])
+# === ОБЪЕДИНЕНИЕ ЧАТОВ (без блокировки команд) ===
+@bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not m.text.startswith('/'))
 def relay_messages(message):
-    # Не пересылаем сообщения от самого бота
+    # Не пересылаем от бота
     if message.from_user.id == bot.get_me().id:
         return
     
     chat_id = message.chat.id
     sender_name = get_sender_name(message.from_user)
     
-    # Пересылка из ЧАТА A в ЧАТ B
+    # Из чата A в B
     if chat_id == CHAT_A:
         try:
-            # Копируем сообщение в чат B
-            copy_message_to_chat(message, CHAT_B, CHAT_B_THREAD, sender_name, "A")
-            logger.info(f"✅ Переслано из чата A в B")
+            bot.send_message(CHAT_B, f"📩 *{sender_name}*\n\n{message.text}", 
+                           parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
+            logger.info(f"✅ Переслано из A в B")
         except Exception as e:
-            logger.error(f"❌ Ошибка отправки из A в B: {e}")
+            logger.error(f"Ошибка A→B: {e}")
     
-    # Пересылка из ЧАТА B в ЧАТ A (с учётом топика)
+    # Из чата B в A (только из нужного топика)
     elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
         try:
-            copy_message_to_chat(message, CHAT_A, None, sender_name, "B")
-            logger.info(f"✅ Переслано из чата B в A")
+            bot.send_message(CHAT_A, f"📩 *{sender_name}*\n\n{message.text}", 
+                           parse_mode="Markdown")
+            logger.info(f"✅ Переслано из B в A")
         except Exception as e:
-            logger.error(f"❌ Ошибка отправки из B в A: {e}")
-
-def copy_message_to_chat(message, target_chat_id, thread_id, sender_name, source_chat):
-    """Копирует сообщение в целевой чат с подписью отправителя"""
-    
-    prefix = f"📩 *От {sender_name}* (чат {source_chat})\n\n"
-    
-    if message.text:
-        bot.send_message(
-            target_chat_id, 
-            prefix + message.text,
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
-    elif message.photo:
-        caption = prefix + (message.caption or "")
-        bot.send_photo(
-            target_chat_id,
-            message.photo[-1].file_id,
-            caption=caption,
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
-    elif message.video:
-        caption = prefix + (message.caption or "")
-        bot.send_video(
-            target_chat_id,
-            message.video.file_id,
-            caption=caption,
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
-    elif message.document:
-        caption = prefix + (message.caption or "")
-        bot.send_document(
-            target_chat_id,
-            message.document.file_id,
-            caption=caption,
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
-    elif message.audio:
-        caption = prefix + (message.caption or "")
-        bot.send_audio(
-            target_chat_id,
-            message.audio.file_id,
-            caption=caption,
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
-    elif message.voice:
-        bot.send_voice(
-            target_chat_id,
-            message.voice.file_id,
-            caption=prefix,
-            message_thread_id=thread_id
-        )
-    elif message.sticker:
-        bot.send_sticker(
-            target_chat_id,
-            message.sticker.file_id,
-            message_thread_id=thread_id
-        )
-        # Отдельно отправляем текст кто отправил
-        bot.send_message(
-            target_chat_id,
-            prefix,
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
+            logger.error(f"Ошибка B→A: {e}")
 
 # === КЭШ И ИСТОРИЯ ДЛЯ ИИ ===
 ai_cache = {}
@@ -632,6 +564,9 @@ def auto_translate(message):
         return
     if message.text.startswith('/'):
         return
+    # Не переводим сообщения, которые являются пересылками между чатами
+    if message.text.startswith('📩'):
+        return
     text = message.text.strip()
     if not text:
         return
@@ -647,13 +582,18 @@ def auto_translate(message):
         logger.error(f"Ошибка перевода: {e}")
 
 # === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
-@bot.channel_post_handler(func=lambda m: m.chat.id in [-1001317416582, -1002185590715])
+@bot.channel_post_handler(func=lambda m: True)
 def channel_reaction(message):
+    # Проверяем ID каналов
+    allowed_channels = [-1001317416582, -1002185590715]
+    if message.chat.id not in allowed_channels:
+        return
+    
     chat_id = message.chat.id
     message_id = message.message_id
-    logger.info(f"🔥 Попытка реакции на пост {message_id}")
+    logger.info(f"🔥 Канал {chat_id}, пост {message_id}")
     
-    url = f"{API_URL}/setMessageReaction"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {
         "chat_id": chat_id,
         "message_id": message_id,
@@ -661,7 +601,7 @@ def channel_reaction(message):
     }
     
     try:
-        response = requests.post(url, json=data, timeout=5)
+        response = requests.post(url, json=data, timeout=10)
         result = response.json()
         if result.get("ok"):
             logger.info(f"✅ Реакция 🔥 на пост {message_id}")
@@ -765,5 +705,6 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("✅ Режим объединения чатов активен")
+    logger.info("✅ Все команды (/ai, /wiki, /remind и др.) работают")
     
     app.run(host="0.0.0.0", port=port)
