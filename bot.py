@@ -555,63 +555,65 @@ def auto_translate(message):
 def forward_to_b(message):
     try:
         sender_name = get_sender_name(message.from_user)
-        caption = f"📨 От: {sender_name}"
+        prefix = f"📨 От: {sender_name}\n\n"
+        
         if message.text:
-            bot.send_message(CHAT_B, f"{caption}\n\n{message.text}", message_thread_id=CHAT_B_THREAD)
+            bot.send_message(CHAT_B, prefix + message.text, message_thread_id=CHAT_B_THREAD)
         elif message.photo:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+            caption = prefix + (message.caption if message.caption else "")
+            bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=caption, message_thread_id=CHAT_B_THREAD)
         elif message.video:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_video(CHAT_B, message.video.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
-        elif message.voice:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_voice(CHAT_B, message.voice.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+            caption = prefix + (message.caption if message.caption else "")
+            bot.send_video(CHAT_B, message.video.file_id, caption=caption, message_thread_id=CHAT_B_THREAD)
         elif message.audio:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_audio(CHAT_B, message.audio.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+            caption = prefix + (message.caption if message.caption else "")
+            bot.send_audio(CHAT_B, message.audio.file_id, caption=caption, message_thread_id=CHAT_B_THREAD)
+        elif message.voice:
+            caption = prefix + (message.caption if message.caption else "")
+            bot.send_voice(CHAT_B, message.voice.file_id, caption=caption, message_thread_id=CHAT_B_THREAD)
         elif message.document:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_document(CHAT_B, message.document.file_id, caption=text, message_thread_id=CHAT_B_THREAD)
+            caption = prefix + (message.caption if message.caption else "")
+            bot.send_document(CHAT_B, message.document.file_id, caption=caption, message_thread_id=CHAT_B_THREAD)
         elif message.sticker:
             bot.send_sticker(CHAT_B, message.sticker.file_id, message_thread_id=CHAT_B_THREAD)
-            bot.send_message(CHAT_B, caption, message_thread_id=CHAT_B_THREAD)
+            bot.send_message(CHAT_B, prefix, message_thread_id=CHAT_B_THREAD)
         else:
-            bot.send_message(CHAT_B, caption, message_thread_id=CHAT_B_THREAD)
-        logger.info(f"Переслано из A в B")
+            bot.send_message(CHAT_B, prefix, message_thread_id=CHAT_B_THREAD)
+        logger.info(f"✅ Переслано из A в B")
     except Exception as e:
-        logger.error(f"Ошибка A->B: {e}")
+        logger.error(f"❌ Ошибка A->B: {e}")
 
 @bot.message_handler(func=lambda m: m.chat.id == CHAT_B and m.message_thread_id == CHAT_B_THREAD)
 def forward_to_a(message):
     try:
         sender_name = get_sender_name(message.from_user)
-        caption = f"📨 От: {sender_name}"
+        prefix = f"📨 От: {sender_name}\n\n"
+        
         if message.text:
-            bot.send_message(CHAT_A, f"{caption}\n\n{message.text}")
+            bot.send_message(CHAT_A, prefix + message.text)
         elif message.photo:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=text)
+            caption = prefix + (message.caption if message.caption else "")
+            bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=caption)
         elif message.video:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_video(CHAT_A, message.video.file_id, caption=text)
-        elif message.voice:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_voice(CHAT_A, message.voice.file_id, caption=text)
+            caption = prefix + (message.caption if message.caption else "")
+            bot.send_video(CHAT_A, message.video.file_id, caption=caption)
         elif message.audio:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_audio(CHAT_A, message.audio.file_id, caption=text)
+            caption = prefix + (message.caption if message.caption else "")
+            bot.send_audio(CHAT_A, message.audio.file_id, caption=caption)
+        elif message.voice:
+            caption = prefix + (message.caption if message.caption else "")
+            bot.send_voice(CHAT_A, message.voice.file_id, caption=caption)
         elif message.document:
-            text = f"{caption}\n\n{message.caption}" if message.caption else caption
-            bot.send_document(CHAT_A, message.document.file_id, caption=text)
+            caption = prefix + (message.caption if message.caption else "")
+            bot.send_document(CHAT_A, message.document.file_id, caption=caption)
         elif message.sticker:
             bot.send_sticker(CHAT_A, message.sticker.file_id)
-            bot.send_message(CHAT_A, caption)
+            bot.send_message(CHAT_A, prefix)
         else:
-            bot.send_message(CHAT_A, caption)
-        logger.info(f"Переслано из B в A")
+            bot.send_message(CHAT_A, prefix)
+        logger.info(f"✅ Переслано из B в A")
     except Exception as e:
-        logger.error(f"Ошибка B->A: {e}")
+        logger.error(f"❌ Ошибка B->A: {e}")
 
 # === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
 @bot.channel_post_handler(func=lambda m: m.chat.id in [-1001317416582, -1002185590715])
