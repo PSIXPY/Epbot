@@ -133,7 +133,7 @@ def set_translator_enabled(chat_id, enabled):
     translator_settings[str(chat_id)] = enabled
     save_translator_settings(translator_settings)
 
-# === НАПОМИНАНИЯ С МОСКОВСКИМ ВРЕМЕНЕМ ===
+# === НАПОМИНАНИЯ С МОСКОВСКИМ ВРЕМЕНЕМ (ИСПРАВЛЕННЫЕ) ===
 REMINDERS_FILE = os.path.join(tempfile.gettempdir(), "reminders.json")
 
 def load_reminders():
@@ -193,11 +193,20 @@ def get_next_trigger_time_moscow(hours, minutes, weekly_day=None, daily=False):
     now_moscow = datetime.now(MOSCOW_TZ)
     target = now_moscow.replace(hour=hours, minute=minutes, second=0, microsecond=0)
     
+    # Ежедневное напоминание
     if daily:
+        logger.info(f"📅 Текущее время МСК: {now_moscow.strftime('%H:%M:%S')}")
+        logger.info(f"🎯 Целевое время: {hours:02d}:{minutes:02d}")
+        
+        # Если время уже прошло сегодня, переносим на завтра
         if target <= now_moscow:
             target = target + timedelta(days=1)
+            logger.info(f"⏰ Время уже прошло, переносим на завтра: {target.strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            logger.info(f"✅ Время ещё не прошло, ставим на сегодня: {target.strftime('%Y-%m-%d %H:%M:%S')}")
         return target
     
+    # Напоминание по дням недели
     if weekly_day is not None:
         days_ahead = (weekly_day - now_moscow.weekday()) % 7
         if days_ahead == 0 and target <= now_moscow:
@@ -205,6 +214,7 @@ def get_next_trigger_time_moscow(hours, minutes, weekly_day=None, daily=False):
         target = now_moscow + timedelta(days=days_ahead)
         return target.replace(hour=hours, minute=minutes, second=0, microsecond=0)
     
+    # Обычное напоминание
     if target <= now_moscow:
         target = target + timedelta(days=1)
     return target
@@ -232,13 +242,14 @@ def schedule_reminder(reminder):
     delay = (next_time_utc - datetime.now(pytz.UTC)).total_seconds()
     
     if delay <= 0:
+        logger.warning(f"⚠️ Напоминание {reminder['id']} имеет отрицательную задержку: {delay}")
         return
     
     timer = threading.Timer(delay, execute_reminder, args=[reminder])
     timer.daemon = True
     timer.start()
     reminder["timer"] = timer
-    logger.info(f"⏰ Напоминание {reminder['id']} запланировано на {next_time.strftime('%Y-%m-%d %H:%M:%S')} МСК")
+    logger.info(f"⏰ Напоминание {reminder['id']} запланировано на {next_time.strftime('%Y-%m-%d %H:%M:%S')} МСК (через {delay/60:.1f} минут)")
 
 def execute_reminder(reminder):
     send_reminder(reminder)
@@ -493,7 +504,7 @@ def clear_history(message):
     else:
         bot.reply_to(message, "📭 Нет сохранённой истории")
 
-# === НАПОМИНАНИЯ КОМАНДЫ С АВТОУДАЛЕНИЕМ ===
+# === НАПОМИНАНИЯ КОМАНДЫ С АВТОУДАЛЕНИЕМ (ИСПРАВЛЕННЫЕ) ===
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
     chat_id = message.chat.id
@@ -550,13 +561,21 @@ def add_reminder(message):
     save_reminders(reminders)
     schedule_reminder(reminder)
     
+    # Определяем период правильно для отображения
+    now_moscow = datetime.now(MOSCOW_TZ)
+    target_today = now_moscow.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+    
     if daily:
         period = "каждый день"
     elif weekly_day is not None:
         days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
         period = f"каждый {days[weekly_day]}"
     else:
-        period = "сегодня"
+        # Определяем, сегодня или завтра
+        if target_today > now_moscow:
+            period = "сегодня"
+        else:
+            period = "завтра"
     
     location = "в этот же топик" if thread_id else "в этот чат"
     
@@ -989,7 +1008,7 @@ if __name__ == "__main__":
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("✅ Режим объединения чатов активен")
     logger.info("✅ Все команды работают")
-    logger.info("✅ Напоминания по московскому времени")
+    logger.info("✅ Напоминания по московскому времени с правильной датой")
     logger.info("✅ Команды напоминаний автоматически удаляются")
     logger.info("✅ Скрытые сообщения работают для всех пользователей")
     
