@@ -452,23 +452,27 @@ def forward_to_a(message):
 # === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
 @bot.channel_post_handler(func=lambda m: m.chat.id in [-1001317416582, -1002185590715])
 def channel_reaction(message):
+    chat_id = message.chat.id
+    message_id = message.message_id
+    logger.info(f"🔥 Попытка реакции на пост {message_id} в канале {chat_id}")
+    
+    url = f"{API_URL}/setMessageReaction"
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "reaction": [{"type": "emoji", "emoji": "🔥"}]
+    }
+    
     try:
-        bot.set_message_reaction(message.chat.id, message.message_id, reaction=[types.ReactionTypeEmoji(emoji="🔥")])
-        logger.info(f"🔥 Реакция на пост {message.message_id} в канале {message.chat.id}")
+        response = requests.post(url, json=data, timeout=5)
+        result = response.json()
+        if result.get("ok"):
+            logger.info(f"✅ Реакция 🔥 на пост {message_id}")
+        else:
+            logger.error(f"❌ Ошибка API: {result}")
     except Exception as e:
-        logger.error(f"Ошибка set_message_reaction: {e}")
-        try:
-            url = f"{API_URL}/setMessageReaction"
-            data = {
-                "chat_id": message.chat.id,
-                "message_id": message.message_id,
-                "reaction": [{"type": "emoji", "emoji": "🔥"}]
-            }
-            requests.post(url, json=data, timeout=5)
-            logger.info(f"🔥 Реакция (API) на пост {message.message_id} в канале {message.chat.id}")
-        except Exception as e2:
-            logger.error(f"Ошибка API реакции: {e2}")
-
+        logger.error(f"❌ Исключение: {e}")
+        
 # === СКРЫТЫЕ СООБЩЕНИЯ ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
