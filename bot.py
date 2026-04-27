@@ -410,7 +410,11 @@ def help_command(message):
 
 🎲 *Развлечения:* /roll, /coin
 
-📩 *Скрытые сообщения:* `@бот @получатель текст`"""
+📩 *Скрытые сообщения:*
+• С инлайн: `@бот @username текст`
+• С командой: `/secret @username текст`
+
+💡 *Совет:* Если у пользователя нет username, используйте его числовой ID (узнайте у @userinfobot)"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
@@ -644,6 +648,88 @@ def delete_reminder(message):
                           parse_mode="Markdown", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id)
 
+# === КОМАНДА ДЛЯ СКРЫТЫХ СООБЩЕНИЙ /secret ===
+@bot.message_handler(commands=['secret'])
+def secret_command(message):
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        bot.reply_to(message, 
+            "ℹ️ *Как отправить скрытое сообщение:*\n\n"
+            "`/secret @username Текст сообщения`\n"
+            "`/secret 123456789 Текст сообщения`\n\n"
+            "📌 Получатель увидит кнопку, нажав на которую прочитает ваше сообщение.\n"
+            "⏱️ Сообщение действует 24 часа.\n\n"
+            "💡 *Совет:* Если у пользователя нет username, узнайте его ID у @userinfobot",
+            parse_mode="Markdown",
+            message_thread_id=thread_id)
+        return
+    
+    target_raw = parts[1].lstrip("@")
+    content = parts[2]
+    
+    # Пытаемся найти пользователя
+    target_id = None
+    target_name = target_raw
+    
+    # Способ 1: поиск по username
+    try:
+        target_info = bot.get_chat(f"@{target_raw}")
+        target_id = target_info.id
+        target_name = target_info.first_name or target_raw
+    except:
+        # Способ 2: возможно это ID
+        if target_raw.isdigit():
+            target_id = int(target_raw)
+            try:
+                target_info = bot.get_chat(target_id)
+                target_name = target_info.first_name or f"ID:{target_raw}"
+            except:
+                target_name = f"ID:{target_raw}"
+        else:
+            bot.reply_to(message, f"❌ Пользователь `{target_raw}` не найден.\n\n"
+                        f"Убедитесь, что username написан правильно, или используйте числовой ID.",
+                        parse_mode="Markdown")
+            return
+    
+    msg_id = f"sec_{int(time.time() * 1000)}_{message.from_user.id}_{random.randint(1000,9999)}"
+    
+    secret_messages[msg_id] = {
+        "target_id": target_id,
+        "target_name": target_name,
+        "content": content,
+        "sender": message.from_user.first_name,
+        "sender_id": message.from_user.id,
+        "expires": time.time() + 86400
+    }
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("📩 Прочитать сообщение", callback_data=f"read_{msg_id}"))
+    
+    bot.send_message(
+        chat_id,
+        f"🔐 *Скрытое сообщение создано!*\n\n"
+        f"👤 Получатель: {target_name}\n"
+        f"📝 Текст: {content[:100]}{'...' if len(content) > 100 else ''}\n\n"
+        f"✅ Сообщение будет доставлено получателю, когда он нажмёт на кнопку ниже.",
+        parse_mode="Markdown",
+        message_thread_id=thread_id
+    )
+    
+    # Отправляем получателю сообщение с кнопкой
+    try:
+        bot.send_message(
+            target_id,
+            f"🔔 *Скрытое сообщение* от {message.from_user.first_name}\n\n"
+            f"Нажмите на кнопку, чтобы прочитать 👇",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+    except:
+        bot.send_message(chat_id, "⚠️ Не удалось отправить сообщение получателю. Возможно, бот не может писать ему в личные сообщения.", message_thread_id=thread_id)
+
 # === ПЕРЕВОДЧИК ===
 @bot.message_handler(commands=['т'])
 def translate_command(message):
@@ -714,7 +800,7 @@ def channel_reaction(message):
     except Exception as e:
         logger.error(f"❌ Исключение: {e}")
 
-# === СКРЫТЫЕ СООБЩЕНИЯ (ИСПРАВЛЕННЫЕ) ===
+# === СКРЫТЫЕ СООБЩЕНИЯ (ИНЛАЙН - РАБОТАЕТ ДЛЯ ВСЕХ) ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -726,13 +812,71 @@ def inline_query(query):
         if len(parts) < 2:
             return
         
-        target = parts[0].lstrip("@")
+        target_raw = parts[0].lstrip("@")
         content = parts[1]
         
-        msg_id = f"sec_{int(time.time() * 1000)}_{query.from_user.id}"
+        target_id = None
+        target_name = target_raw
+        found = False
+        
+        # Пробуем найти по username (разные варианты регистра)
+        possible_usernames = [
+            target_raw,
+            target_raw.lower(),
+            target_raw.capitalize(),
+            target_raw.title()
+        ]
+        
+        for username in possible_usernames:
+            try:
+                target_info = bot.get_chat(f"@{username}")
+                target_id = target_info.id
+                target_name = target_info.first_name or target_info.username or target_raw
+                found = True
+                logger.info(f"✅ Найден пользователь {target_name} по username @{username}")
+                break
+            except:
+                continue
+        
+        # Если не нашли по username, пробуем как ID
+        if not found and target_raw.isdigit():
+            try:
+                target_info = bot.get_chat(int(target_raw))
+                target_id = int(target_raw)
+                target_name = target_info.first_name or f"ID:{target_raw}"
+                found = True
+                logger.info(f"✅ Найден пользователь {target_name} по ID {target_raw}")
+            except:
+                pass
+        
+        if not found:
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("❓ Как узнать ID пользователя", url="https://t.me/userinfobot"))
+            
+            result = types.InlineQueryResultArticle(
+                id="error",
+                title=f"❌ Пользователь не найден",
+                description=f"@{target_raw} - проверьте правильность написания",
+                input_message_content=types.InputTextMessageContent(
+                    f"❌ *Не удалось найти пользователя* `{target_raw}`\n\n"
+                    f"📌 *Проверьте:*\n"
+                    f"• Точно ли есть такой username?\n"
+                    f"• Написан без ошибок?\n\n"
+                    f"✅ *Как отправить:*\n"
+                    f"1. Узнайте ID у @userinfobot\n"
+                    f"2. Напишите: `@{bot.get_me().username} 123456789 Текст`",
+                    parse_mode="Markdown"
+                ),
+                reply_markup=markup
+            )
+            bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
+            return
+        
+        msg_id = f"sec_{int(time.time() * 1000)}_{query.from_user.id}_{random.randint(1000,9999)}"
         
         secret_messages[msg_id] = {
-            "target": target.lower(),
+            "target_id": target_id,
+            "target_name": target_name,
             "content": content,
             "sender": query.from_user.first_name,
             "sender_id": query.from_user.id,
@@ -746,11 +890,11 @@ def inline_query(query):
         
         result = types.InlineQueryResultArticle(
             id=msg_id,
-            title=f"📨 Скрытое сообщение для @{target}",
+            title=f"📨 Тайное сообщение для {target_name}",
             description=content[:50] + ("..." if len(content) > 50 else ""),
             input_message_content=types.InputTextMessageContent(
-                f"🔐 *Скрытое сообщение* от {query.from_user.first_name}\n\n"
-                f"👤 Получатель: @{target}\n"
+                f"🔐 *Тайное сообщение* от {query.from_user.first_name}\n\n"
+                f"👤 Получатель: {target_name}\n"
                 f"⏱️ Действительно 24 часа",
                 parse_mode="Markdown"
             ),
@@ -758,6 +902,7 @@ def inline_query(query):
         )
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
+        logger.info(f"✅ Создано скрытое сообщение для {target_name} (ID: {target_id})")
         
     except Exception as e:
         logger.error(f"Inline error: {e}")
@@ -767,24 +912,24 @@ def read_secret(call):
     msg_id = call.data[5:]
     
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено или уже удалено", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение устарело или уже прочитано", show_alert=True)
         try:
-            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+            bot.delete_message(call.message.chat.id, call.message.message_id)
         except:
             pass
         return
     
     data = secret_messages[msg_id]
     
-    if call.from_user.username.lower() != data["target"]:
+    if call.from_user.id != data["target_id"]:
         bot.answer_callback_query(call.id, "❌ Это сообщение не для вас", show_alert=True)
         return
     
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Срок действия сообщения истёк (24 часа)", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Срок действия истёк (24 часа)", show_alert=True)
         del secret_messages[msg_id]
         try:
-            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+            bot.delete_message(call.message.chat.id, call.message.message_id)
         except:
             pass
         return
@@ -797,8 +942,7 @@ def read_secret(call):
     except:
         pass
     
-    bot.answer_callback_query(call.id, f"📩 Сообщение от {sender}:\n\n{content}", show_alert=True)
-    
+    bot.answer_callback_query(call.id, f"📩 Скрытое сообщение от {sender}:\n\n{content}", show_alert=True)
     del secret_messages[msg_id]
 
 def clean_old_secrets():
@@ -847,5 +991,6 @@ if __name__ == "__main__":
     logger.info("✅ Все команды работают")
     logger.info("✅ Напоминания по московскому времени")
     logger.info("✅ Команды напоминаний автоматически удаляются")
+    logger.info("✅ Скрытые сообщения работают для всех пользователей")
     
     app.run(host="0.0.0.0", port=port)
