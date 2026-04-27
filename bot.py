@@ -99,7 +99,11 @@ def set_translator_enabled(chat_id, enabled):
     translator_settings[str(chat_id)] = enabled
     save_translator_settings(translator_settings)
 
-# === НАПОМИНАНИЯ ===
+# === НАПОМИНАНИЯ С МОСКОВСКИМ ВРЕМЕНЕМ ===
+import pytz
+
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
+
 REMINDERS_FILE = os.path.join(tempfile.gettempdir(), "reminders.json")
 
 def load_reminders():
@@ -154,23 +158,24 @@ def parse_time_with_day(time_str):
     except:
         return None, None, None, None
 
-def get_next_trigger_time(hours, minutes, weekly_day=None, daily=False):
-    now = datetime.now()
-    target = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+def get_next_trigger_time_moscow(hours, minutes, weekly_day=None, daily=False):
+    """Возвращает следующее время срабатывания в московском времени"""
+    now_moscow = datetime.now(MOSCOW_TZ)
+    target = now_moscow.replace(hour=hours, minute=minutes, second=0, microsecond=0)
     
     if daily:
-        if target <= now:
+        if target <= now_moscow:
             target = target + timedelta(days=1)
         return target
     
     if weekly_day is not None:
-        days_ahead = (weekly_day - now.weekday()) % 7
-        if days_ahead == 0 and target <= now:
+        days_ahead = (weekly_day - now_moscow.weekday()) % 7
+        if days_ahead == 0 and target <= now_moscow:
             days_ahead = 7
-        target = now + timedelta(days=days_ahead)
+        target = now_moscow + timedelta(days=days_ahead)
         return target.replace(hour=hours, minute=minutes, second=0, microsecond=0)
     
-    if target <= now:
+    if target <= now_moscow:
         target = target + timedelta(days=1)
     return target
 
@@ -187,13 +192,16 @@ def send_reminder(reminder):
         logger.error(f"Ошибка отправки напоминания: {e}")
 
 def schedule_reminder(reminder):
-    next_time = get_next_trigger_time(
+    next_time = get_next_trigger_time_moscow(
         reminder["hours"], 
         reminder["minutes"], 
         reminder.get("weekly_day"), 
         reminder.get("daily", False)
     )
-    delay = (next_time - datetime.now()).total_seconds()
+    # Конвертируем московское время в UTC для таймера
+    next_time_utc = next_time.astimezone(pytz.UTC)
+    delay = (next_time_utc - datetime.now(pytz.UTC)).total_seconds()
+    
     if delay <= 0:
         return
     
@@ -201,6 +209,7 @@ def schedule_reminder(reminder):
     timer.daemon = True
     timer.start()
     reminder["timer"] = timer
+    logger.info(f"⏰ Напоминание {reminder['id']} запланировано на {next_time.strftime('%Y-%m-%d %H:%M:%S')} МСК")
 
 def execute_reminder(reminder):
     send_reminder(reminder)
