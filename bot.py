@@ -41,7 +41,7 @@ user_histories = {}
 MAX_HISTORY = 10
 CACHE_TTL = 3600
 
-# === НАСТРОЙКИ ПЕРЕВОДЧИКА (СОХРАНЯЮТСЯ В ФАЙЛЕ) ===
+# === НАСТРОЙКИ ПЕРЕВОДЧИКА ===
 TRANSLATOR_SETTINGS_FILE = "translator_settings.json"
 
 def load_translator_settings():
@@ -62,9 +62,8 @@ def is_translator_enabled(chat_id):
 def set_translator_enabled(chat_id, enabled):
     translator_settings[str(chat_id)] = enabled
     save_translator_settings(translator_settings)
-    logger.info(f"🌐 Перевод в чате {chat_id} {'включён' if enabled else 'выключен'}")
 
-# === ПОСТОЯННЫЕ НАПОМИНАНИЯ ===
+# === НАПОМИНАНИЯ ===
 REMINDERS_FILE = "reminders.json"
 
 def load_reminders():
@@ -140,9 +139,9 @@ def send_reminder(reminder):
             parse_mode="Markdown", 
             message_thread_id=reminder.get("thread_id")
         )
-        logger.info(f"✅ Отправлено напоминание {reminder['id']} в чат {reminder['chat_id']}")
+        logger.info(f"✅ Отправлено напоминание {reminder['id']}")
     except Exception as e:
-        logger.error(f"Ошибка отправки напоминания {reminder['id']}: {e}")
+        logger.error(f"Ошибка отправки напоминания: {e}")
 
 def schedule_reminder(reminder):
     next_time = get_next_trigger_time(
@@ -152,7 +151,6 @@ def schedule_reminder(reminder):
         reminder.get("daily", False)
     )
     delay = (next_time - datetime.now()).total_seconds()
-    
     if delay <= 0:
         return
     
@@ -160,7 +158,6 @@ def schedule_reminder(reminder):
     timer.daemon = True
     timer.start()
     reminder["timer"] = timer
-    reminder["next_time"] = next_time.isoformat()
 
 def execute_reminder(reminder):
     send_reminder(reminder)
@@ -324,18 +321,15 @@ def help_command(message):
 /wiki [запрос] — поиск в Википедии
 /ai [вопрос] — общение с ИИ
 /ai найди [запрос] — поиск в интернете
-/clear_history — очистить историю диалога
+/clear_history — очистить историю
 
 🖼️ *Анализ изображений:* фото + `/ai Опиши`
 📄 *Чтение файлов:* файл + `/ai Прочитай`
 🌐 *Переводчик:* `/т on` / `/т off`
 
-🎲 *Развлечения:*
-/roll — случайное число (1-100)
-/coin — орёл/решка
+🎲 *Развлечения:* /roll, /coin
 
-📩 *Скрытые сообщения:* `@бот @получатель текст`
-🔄 *Автоматически:* пересылка сообщений между чатами и 🔥 на новые посты в каналах"""
+📩 *Скрытые сообщения:* `@бот @получатель текст`"""
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
@@ -410,9 +404,9 @@ def clear_history(message):
     user_id = message.from_user.id
     if user_id in user_histories:
         del user_histories[user_id]
-        bot.reply_to(message, "🗑️ История ваших диалогов очищена!")
+        bot.reply_to(message, "🗑️ История очищена!")
     else:
-        bot.reply_to(message, "📭 У вас нет сохранённой истории.")
+        bot.reply_to(message, "📭 Нет сохранённой истории")
 
 # === НАПОМИНАНИЯ ===
 @bot.message_handler(commands=['remind'])
@@ -423,13 +417,7 @@ def add_reminder(message):
     
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        bot.reply_to(message, """ℹ️ *Как добавить напоминание:*
-
-`/remind 15:30 Выпить воду` — сегодня в 15:30
-`/remind 15:30 ежедневно Выпить воду` — каждый день
-`/remind 15:30 пн Планёрка` — каждый понедельник
-
-💡 *Дни недели:* пн, вт, ср, чт, пт, сб, вс""", parse_mode="Markdown")
+        bot.reply_to(message, "ℹ️ `/remind 15:30 ежедневно Текст`", parse_mode="Markdown")
         return
     
     time_str = parts[1]
@@ -465,9 +453,9 @@ def add_reminder(message):
         days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
         period = f"каждый {days[weekly_day]}"
     else:
-        period = "сегодня (одноразовое)"
+        period = "сегодня"
     
-    bot.reply_to(message, f"✅ *Напоминание добавлено!*\n\n⏰ Когда: {period} в {hours:02d}:{minutes:02d}\n📝 Текст: {reminder_text}\n🆔 ID: {reminder_counter}", parse_mode="Markdown")
+    bot.reply_to(message, f"✅ *Напоминание добавлено!*\n\n⏰ {period} в {hours:02d}:{minutes:02d}\n📝 {reminder_text}\n🆔 ID: {reminder_counter}", parse_mode="Markdown")
 
 @bot.message_handler(commands=['reminds'])
 def list_reminders(message):
@@ -483,17 +471,15 @@ def list_reminders(message):
             days = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
             period = f"каждый {days[r['weekly_day']]} в {r['hours']:02d}:{r['minutes']:02d}"
         else:
-            period = f"в {r['hours']:02d}:{r['minutes']:02d} (одноразовое)"
-        
+            period = f"в {r['hours']:02d}:{r['minutes']:02d}"
         response += f"🆔 `{r['id']}` — {period}\n   📝 {r['text'][:40]}\n\n"
-    
     bot.reply_to(message, response, parse_mode="Markdown")
 
 @bot.message_handler(commands=['delremind'])
 def delete_reminder(message):
     parts = message.text.split()
     if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ Использование: `/delremind ID`", parse_mode="Markdown")
+        bot.reply_to(message, "ℹ️ `/delremind ID`", parse_mode="Markdown")
         return
     
     try:
@@ -620,7 +606,7 @@ def forward_to_a(message):
 def channel_reaction(message):
     chat_id = message.chat.id
     message_id = message.message_id
-    logger.info(f"🔥 Попытка реакции на пост {message_id} в канале {chat_id}")
+    logger.info(f"🔥 Попытка реакции на пост {message_id}")
     
     url = f"{API_URL}/setMessageReaction"
     data = {
@@ -662,7 +648,7 @@ def inline_query(query):
         }
         
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📩 Прочитать сообщение", callback_data=f"read_{msg_id}"))
+        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"read_{msg_id}"))
         
         result = types.InlineQueryResultArticle(
             id=msg_id,
@@ -682,27 +668,19 @@ def inline_query(query):
 def read_secret(call):
     msg_id = call.data[5:]
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение устарело или уже прочитано.", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение устарело", show_alert=True)
         return
     data = secret_messages[msg_id]
-    target_username = data["target"]
-    content = data["content"]
-    sender_name = data["sender"]
-    expires = data["expires"]
-    if call.from_user.username != target_username:
-        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
+    if call.from_user.username != data["target"]:
+        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
         return
-    if datetime.now().timestamp() > expires:
-        bot.answer_callback_query(call.id, "❌ Сообщение устарело (хранится 3 часа).", show_alert=True)
+    if datetime.now().timestamp() > data["expires"]:
+        bot.answer_callback_query(call.id, "❌ Сообщение устарело", show_alert=True)
         del secret_messages[msg_id]
         return
-    bot.answer_callback_query(call.id, f"📩 Сообщение от {sender_name}:\n\n{content}", show_alert=True)
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
     del secret_messages[msg_id]
-    logger.info(f"📩 Скрытое сообщение {msg_id} прочитано и удалено")
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    bot.answer_callback_query(call.id, f"📩 {data['content']}", show_alert=True)
 
 def clean_expired_secrets():
     while True:
@@ -711,8 +689,6 @@ def clean_expired_secrets():
         expired = [mid for mid, d in secret_messages.items() if d.get("expires", now) < now]
         for mid in expired:
             del secret_messages[mid]
-        if expired:
-            logger.info(f"🧹 Удалено {len(expired)} устаревших скрытых сообщений")
 
 threading.Thread(target=clean_expired_secrets, daemon=True).start()
 
@@ -743,9 +719,7 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("Команды: /ai, /wiki, /roll, /coin, /remind, /т, /help")
-    logger.info("🔥 Реакции на каналы: включены")
-    logger.info("⏰ Постоянные напоминания: включены")
-    logger.info("🌐 Настройки переводчика сохраняются в файл")
+    logger.info("✅ Пересылка сообщений включена")
+    logger.info("🔥 Реакции на каналы включены")
     
     app.run(host="0.0.0.0", port=port)
