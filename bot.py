@@ -20,6 +20,13 @@ from io import BytesIO
 from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 
+# === ТЕСТОВЫЙ ОБРАБОТЧИК ===
+@bot.message_handler(func=lambda m: True)
+def test_all_messages(message):
+    logger.info(f"🔔 ТЕСТ: Получено сообщение от {message.from_user.id} в чат {message.chat.id}")
+    bot.reply_to(message, f"✅ Бот видит сообщение! Chat ID: {message.chat.id}")
+
+
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_A = int(os.environ.get("CHAT_A", 0))
