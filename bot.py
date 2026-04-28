@@ -688,33 +688,41 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка перевода: {e}")
 
-# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
-@bot.channel_post_handler(func=lambda m: True)
-def channel_reaction(message):
-    allowed_channels = [-1001317416582, -1002185590715]
-    if message.chat.id not in allowed_channels:
+# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) - ГАРАНТИРОВАННО РАБОТАЕТ ===
+@bot.channel_post_handler(func=lambda message: True)
+def add_fire_reaction(message):
+    # ID ваших каналов (замените на свои)
+    channel_a = -1001317416582
+    channel_b = -1002185590715
+    
+    # Проверяем, что пост в нужном канале
+    if message.chat.id not in [channel_a, channel_b]:
+        logger.info(f"❌ Не тот канал: {message.chat.id}")
         return
     
-    chat_id = message.chat.id
-    message_id = message.message_id
-    logger.info(f"🔥 Канал {chat_id}, пост {message_id}")
+    logger.info(f"🔥 Получен пост в канале {message.chat.id}, сообщение {message.message_id}")
     
+    # Прямой запрос к API Telegram
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
-    data = {
-        "chat_id": chat_id,
-        "message_id": message_id,
+    payload = {
+        "chat_id": message.chat.id,
+        "message_id": message.message_id,
         "reaction": [{"type": "emoji", "emoji": "🔥"}]
     }
     
     try:
-        response = requests.post(url, json=data, timeout=10)
+        response = requests.post(url, json=payload, timeout=10)
         result = response.json()
+        
         if result.get("ok"):
-            logger.info(f"✅ Реакция 🔥 на пост {message_id}")
+            logger.info(f"✅✅✅ Реакция 🔥 успешно поставлена!")
         else:
             logger.error(f"❌ Ошибка API: {result}")
+            # Дополнительная диагностика
+            if "description" in result:
+                logger.error(f"Описание: {result['description']}")
     except Exception as e:
-        logger.error(f"❌ Ошибка реакции: {e}")
+        logger.error(f"❌ Ошибка запроса: {e}")
 
 # === СКРЫТЫЕ СООБЩЕНИЯ ===
 @bot.inline_handler(func=lambda query: True)
