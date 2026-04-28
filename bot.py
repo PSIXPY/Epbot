@@ -41,10 +41,20 @@ MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 # === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
 def delete_after_delay(chat_id, message_id, delay=10):
-    """Удаляет сообщение через заданное количество секунд"""
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
-# === ОБЪЕДИНЕНИЕ ЧАТОВ (без блокировки команд) ===
+# === ФУНКЦИЯ ПОЛУЧЕНИЯ ИМЕНИ ОТПРАВИТЕЛЯ ===
+def get_sender_name(user):
+    if not user:
+        return "Неизвестный"
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    if not name:
+        name = user.username or "Пользователь"
+    if user.username:
+        return f"{name} (@{user.username})"
+    return name
+
+# === ОБЪЕДИНЕНИЕ ЧАТОВ С ПОДДЕРЖКОЙ ОТВЕТОВ ===
 @bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not (m.text and m.text.startswith('/')))
 def relay_messages(message):
     if message.from_user.id == bot.get_me().id:
@@ -53,29 +63,53 @@ def relay_messages(message):
     chat_id = message.chat.id
     sender_name = get_sender_name(message.from_user)
     
+    # Получаем текст сообщения
+    message_text = message.text or message.caption or ""
+    
+    # Проверяем, есть ли ответ на другое сообщение
+    reply_info = ""
+    if message.reply_to_message:
+        original = message.reply_to_message
+        original_sender = get_sender_name(original.from_user)
+        original_text = (original.text or original.caption or "сообщение")[:150]
+        reply_info = f"💬 *В ответ {original_sender}:*\n{original_text}\n\n"
+    
+    final_text = f"📩 *{sender_name}*\n\n{reply_info}{message_text}"
+    
+    # Из чата A в B
     if chat_id == CHAT_A:
         try:
             if message.text:
-                bot.send_message(CHAT_B, f"📩 *{sender_name}*\n\n{message.text}", 
-                               parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
+                bot.send_message(CHAT_B, final_text, parse_mode="Markdown", 
+                               message_thread_id=CHAT_B_THREAD)
             elif message.photo:
-                caption = f"📩 *{sender_name}*\n\n{message.caption or ''}"
-                bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=caption,
+                bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=final_text[:1024],
                              parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            logger.info(f"✅ Переслано из A в B")
+            elif message.video:
+                bot.send_video(CHAT_B, message.video.file_id, caption=final_text[:1024],
+                             parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
+            elif message.document:
+                bot.send_document(CHAT_B, message.document.file_id, caption=final_text[:1024],
+                                parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
+            logger.info(f"✅ Переслано из A в B" + (" (с ответом)" if reply_info else ""))
         except Exception as e:
             logger.error(f"Ошибка A→B: {e}")
     
+    # Из чата B в A (только из нужного топика)
     elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
         try:
             if message.text:
-                bot.send_message(CHAT_A, f"📩 *{sender_name}*\n\n{message.text}", 
-                               parse_mode="Markdown")
+                bot.send_message(CHAT_A, final_text, parse_mode="Markdown")
             elif message.photo:
-                caption = f"📩 *{sender_name}*\n\n{message.caption or ''}"
-                bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=caption,
+                bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=final_text[:1024],
                              parse_mode="Markdown")
-            logger.info(f"✅ Переслано из B в A")
+            elif message.video:
+                bot.send_video(CHAT_A, message.video.file_id, caption=final_text[:1024],
+                             parse_mode="Markdown")
+            elif message.document:
+                bot.send_document(CHAT_A, message.document.file_id, caption=final_text[:1024],
+                                parse_mode="Markdown")
+            logger.info(f"✅ Переслано из B в A" + (" (с ответом)" if reply_info else ""))
         except Exception as e:
             logger.error(f"Ошибка B→A: {e}")
 
@@ -202,13 +236,14 @@ def get_next_trigger_time_moscow(hours, minutes, weekly_day=None, daily=False):
 
 def send_reminder(reminder):
     try:
+        # Отправляем ТОЛЬКО текст, который ввел пользователь (без "ежедневно")
         bot.send_message(
             reminder["chat_id"], 
             f"⏰ *НАПОМИНАНИЕ!*\n\n{reminder['text']}", 
             parse_mode="Markdown", 
             message_thread_id=reminder.get("thread_id")
         )
-        logger.info(f"✅ Отправлено напоминание {reminder['id']}")
+        logger.info(f"✅ Отправлено напоминание {reminder['id']}: {reminder['text']}")
     except Exception as e:
         logger.error(f"Ошибка отправки напоминания: {e}")
 
@@ -241,16 +276,6 @@ def start_all_reminders():
         schedule_reminder(r)
 
 # === ОСНОВНЫЕ ФУНКЦИИ ===
-def get_sender_name(user):
-    if not user:
-        return "Неизвестный"
-    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
-    if not name:
-        name = user.username or "Пользователь"
-    if user.username:
-        return f"{name} (@{user.username})"
-    return name
-
 def ask_groq(user_id, prompt):
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен."
@@ -478,7 +503,7 @@ def clear_history(message):
     else:
         bot.reply_to(message, "📭 Нет сохранённой истории")
 
-# === НАПОМИНАНИЯ КОМАНДЫ (С ФИЛЬТРАЦИЕЙ ПО ЧАТАМ) ===
+# === НАПОМИНАНИЯ КОМАНДЫ ===
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
     chat_id = message.chat.id
@@ -501,7 +526,7 @@ def add_reminder(message):
         return
     
     time_str = parts[1]
-    reminder_text = parts[2]
+    reminder_text = parts[2]  # Сохраняем ТОЛЬКО текст пользователя, без "ежедневно" внутри
     
     hours, minutes, weekly_day, daily = parse_time_with_day(time_str)
     if hours is None:
@@ -519,7 +544,7 @@ def add_reminder(message):
         "chat_id": chat_id,
         "user_id": user_id,
         "thread_id": thread_id,
-        "text": reminder_text,
+        "text": reminder_text,  # Сохраняем чистый текст
         "hours": hours,
         "minutes": minutes,
         "weekly_day": weekly_day,
@@ -688,41 +713,33 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка перевода: {e}")
 
-# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) - ГАРАНТИРОВАННО РАБОТАЕТ ===
-@bot.channel_post_handler(func=lambda message: True)
-def add_fire_reaction(message):
-    # ID ваших каналов (замените на свои)
-    channel_a = -1001317416582
-    channel_b = -1002185590715
+# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
+@bot.channel_post_handler(func=lambda m: True)
+def channel_reaction(message):
+    # ID ваших каналов
+    allowed_channels = [-1001317416582, -1002185590715]
     
-    # Проверяем, что пост в нужном канале
-    if message.chat.id not in [channel_a, channel_b]:
-        logger.info(f"❌ Не тот канал: {message.chat.id}")
+    if message.chat.id not in allowed_channels:
         return
     
-    logger.info(f"🔥 Получен пост в канале {message.chat.id}, сообщение {message.message_id}")
+    logger.info(f"🔥 Канал {message.chat.id}, пост {message.message_id}")
     
-    # Прямой запрос к API Telegram
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
-    payload = {
+    data = {
         "chat_id": message.chat.id,
         "message_id": message.message_id,
         "reaction": [{"type": "emoji", "emoji": "🔥"}]
     }
     
     try:
-        response = requests.post(url, json=payload, timeout=10)
+        response = requests.post(url, json=data, timeout=10)
         result = response.json()
-        
         if result.get("ok"):
-            logger.info(f"✅✅✅ Реакция 🔥 успешно поставлена!")
+            logger.info(f"✅ Реакция 🔥 на пост {message.message_id}")
         else:
             logger.error(f"❌ Ошибка API: {result}")
-            # Дополнительная диагностика
-            if "description" in result:
-                logger.error(f"Описание: {result['description']}")
     except Exception as e:
-        logger.error(f"❌ Ошибка запроса: {e}")
+        logger.error(f"❌ Ошибка реакции: {e}")
 
 # === СКРЫТЫЕ СООБЩЕНИЯ ===
 @bot.inline_handler(func=lambda query: True)
@@ -874,5 +891,7 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
+    logger.info("✅ Пересылка с ответами")
+    logger.info("✅ Напоминания приходят чистым текстом (без слова 'ежедневно')")
     
     app.run(host="0.0.0.0", port=port)
