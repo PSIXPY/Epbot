@@ -63,10 +63,8 @@ def relay_messages(message):
     chat_id = message.chat.id
     sender_name = get_sender_name(message.from_user)
     
-    # Получаем текст сообщения
     message_text = message.text or message.caption or ""
     
-    # Проверяем, есть ли ответ на другое сообщение
     reply_info = ""
     if message.reply_to_message:
         original = message.reply_to_message
@@ -76,7 +74,6 @@ def relay_messages(message):
     
     final_text = f"📩 *{sender_name}*\n\n{reply_info}{message_text}"
     
-    # Из чата A в B
     if chat_id == CHAT_A:
         try:
             if message.text:
@@ -85,17 +82,10 @@ def relay_messages(message):
             elif message.photo:
                 bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=final_text[:1024],
                              parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            elif message.video:
-                bot.send_video(CHAT_B, message.video.file_id, caption=final_text[:1024],
-                             parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            elif message.document:
-                bot.send_document(CHAT_B, message.document.file_id, caption=final_text[:1024],
-                                parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            logger.info(f"✅ Переслано из A в B" + (" (с ответом)" if reply_info else ""))
+            logger.info(f"✅ Переслано из A в B")
         except Exception as e:
             logger.error(f"Ошибка A→B: {e}")
     
-    # Из чата B в A (только из нужного топика)
     elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
         try:
             if message.text:
@@ -103,13 +93,7 @@ def relay_messages(message):
             elif message.photo:
                 bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=final_text[:1024],
                              parse_mode="Markdown")
-            elif message.video:
-                bot.send_video(CHAT_A, message.video.file_id, caption=final_text[:1024],
-                             parse_mode="Markdown")
-            elif message.document:
-                bot.send_document(CHAT_A, message.document.file_id, caption=final_text[:1024],
-                                parse_mode="Markdown")
-            logger.info(f"✅ Переслано из B в A" + (" (с ответом)" if reply_info else ""))
+            logger.info(f"✅ Переслано из B в A")
         except Exception as e:
             logger.error(f"Ошибка B→A: {e}")
 
@@ -148,8 +132,8 @@ def set_translator_enabled(chat_id, enabled):
     translator_settings[str(chat_id)] = enabled
     save_translator_settings(translator_settings)
 
-# === НАПОМИНАНИЯ С МОСКОВСКИМ ВРЕМЕНЕМ ===
-REMINDERS_FILE = os.path.join(tempfile.gettempdir(), "reminders.json")
+# === НАПОМИНАНИЯ С МОСКОВСКИМ ВРЕМЕНЕМ (СОХРАНЕНИЕ В КОРНЕ) ===
+REMINDERS_FILE = "reminders.json"  # ← Сохраняем в корне проекта
 
 def load_reminders():
     if os.path.exists(REMINDERS_FILE):
@@ -172,7 +156,7 @@ def save_reminders(reminders):
     try:
         with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(reminders_to_save, f, ensure_ascii=False, indent=2)
-        logger.info(f"💾 Напоминания сохранены")
+        logger.info(f"💾 Напоминания сохранены в {REMINDERS_FILE}")
     except Exception as e:
         logger.error(f"Ошибка сохранения напоминаний: {e}")
 
@@ -236,14 +220,13 @@ def get_next_trigger_time_moscow(hours, minutes, weekly_day=None, daily=False):
 
 def send_reminder(reminder):
     try:
-        # Отправляем ТОЛЬКО текст, который ввел пользователь (без "ежедневно")
         bot.send_message(
             reminder["chat_id"], 
             f"⏰ *НАПОМИНАНИЕ!*\n\n{reminder['text']}", 
             parse_mode="Markdown", 
             message_thread_id=reminder.get("thread_id")
         )
-        logger.info(f"✅ Отправлено напоминание {reminder['id']}: {reminder['text']}")
+        logger.info(f"✅ Отправлено напоминание {reminder['id']}")
     except Exception as e:
         logger.error(f"Ошибка отправки напоминания: {e}")
 
@@ -526,7 +509,7 @@ def add_reminder(message):
         return
     
     time_str = parts[1]
-    reminder_text = parts[2]  # Сохраняем ТОЛЬКО текст пользователя, без "ежедневно" внутри
+    reminder_text = parts[2]
     
     hours, minutes, weekly_day, daily = parse_time_with_day(time_str)
     if hours is None:
@@ -544,7 +527,7 @@ def add_reminder(message):
         "chat_id": chat_id,
         "user_id": user_id,
         "thread_id": thread_id,
-        "text": reminder_text,  # Сохраняем чистый текст
+        "text": reminder_text,
         "hours": hours,
         "minutes": minutes,
         "weekly_day": weekly_day,
@@ -716,7 +699,7 @@ def auto_translate(message):
 # === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
 @bot.channel_post_handler(func=lambda m: True)
 def channel_reaction(message):
-    # ID ваших каналов
+    # ID ваших каналов (замените на свои)
     allowed_channels = [-1001317416582, -1002185590715]
     
     if message.chat.id not in allowed_channels:
@@ -892,6 +875,6 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("✅ Пересылка с ответами")
-    logger.info("✅ Напоминания приходят чистым текстом (без слова 'ежедневно')")
+    logger.info("✅ Напоминания сохраняются в корне проекта")
     
     app.run(host="0.0.0.0", port=port)
