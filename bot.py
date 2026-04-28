@@ -39,10 +39,6 @@ secret_messages = {}
 
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
-def delete_after_delay(chat_id, message_id, delay=10):
-    threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
-
 # === ФУНКЦИЯ ПОЛУЧЕНИЯ ИМЕНИ ОТПРАВИТЕЛЯ ===
 def get_sender_name(user):
     if not user:
@@ -54,7 +50,11 @@ def get_sender_name(user):
         return f"{name} (@{user.username})"
     return name
 
-# === ОБЪЕДИНЕНИЕ ЧАТОВ С ПОДДЕРЖКОЙ ОТВЕТОВ ===
+# === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
+def delete_after_delay(chat_id, message_id, delay=10):
+    threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
+
+# === ОБЪЕДИНЕНИЕ ЧАТОВ (без цитирования, только ответ) ===
 @bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not (m.text and m.text.startswith('/')))
 def relay_messages(message):
     if message.from_user.id == bot.get_me().id:
@@ -65,14 +65,15 @@ def relay_messages(message):
     
     message_text = message.text or message.caption or ""
     
+    # Только информация о том, кому отвечают (без цитирования текста)
     reply_info = ""
     if message.reply_to_message:
         original = message.reply_to_message
         original_sender = get_sender_name(original.from_user)
-        original_text = (original.text or original.caption or "сообщение")[:150]
-        reply_info = f"💬 *В ответ {original_sender}:*\n{original_text}\n\n"
-    
-    final_text = f"📩 *{sender_name}*\n\n{reply_info}{message_text}"
+        reply_info = f"📨 *{sender_name}* ответил(а) *{original_sender}*\n\n"
+        final_text = f"{reply_info}{message_text}"
+    else:
+        final_text = f"📩 *{sender_name}*\n\n{message_text}"
     
     if chat_id == CHAT_A:
         try:
@@ -133,7 +134,7 @@ def set_translator_enabled(chat_id, enabled):
     save_translator_settings(translator_settings)
 
 # === НАПОМИНАНИЯ С МОСКОВСКИМ ВРЕМЕНЕМ (СОХРАНЕНИЕ В КОРНЕ) ===
-REMINDERS_FILE = "reminders.json"  # ← Сохраняем в корне проекта
+REMINDERS_FILE = "reminders.json"
 
 def load_reminders():
     if os.path.exists(REMINDERS_FILE):
@@ -680,7 +681,7 @@ def auto_translate(message):
         return
     if message.text.startswith('/'):
         return
-    if message.text.startswith('📩'):
+    if message.text.startswith('📩') or message.text.startswith('📨'):
         return
     text = message.text.strip()
     if not text:
@@ -699,7 +700,6 @@ def auto_translate(message):
 # === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
 @bot.channel_post_handler(func=lambda m: True)
 def channel_reaction(message):
-    # ID ваших каналов (замените на свои)
     allowed_channels = [-1001317416582, -1002185590715]
     
     if message.chat.id not in allowed_channels:
@@ -874,7 +874,7 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("✅ Пересылка с ответами")
+    logger.info("✅ Пересылка без цитирования сообщений")
     logger.info("✅ Напоминания сохраняются в корне проекта")
     
     app.run(host="0.0.0.0", port=port)
