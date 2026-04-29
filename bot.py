@@ -339,23 +339,23 @@ def search_wikipedia(query):
 @bot.message_handler(commands=['start', 'help'])
 def help_command(message):
     thread_id = message.message_thread_id
-    help_text = """📖 *Команды бота*
+    help_text = """📖 Команды бота
 
-⏰ *Напоминания (МСК):*
+⏰ Напоминания (МСК):
 /remind 15:30 ежедневно текст
-/reminds — список
-/delremind ID — удалить
+/reminds - список
+/delremind ID - удалить
 
-🤖 *ИИ:* /ai вопрос
+🤖 ИИ: /ai вопрос
 
-📖 *Википедия:* /wiki запрос
+📖 Википедия: /wiki запрос
 
-🌐 *Перевод:* `/т on` / `/т off`
+🌐 Перевод: /т on / /т off
 
-🎲 *Игры:* /roll | /coin
+🎲 Игры: /roll | /coin
 
-👑 *Админ:* /backup - полный бекап"""
-    bot.reply_to(message, help_text, parse_mode="Markdown", message_thread_id=thread_id)
+👑 Админ: /backup - полный бекап"""
+    bot.reply_to(message, help_text, message_thread_id=thread_id)
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
@@ -398,7 +398,7 @@ def clear_history(message):
     else:
         bot.reply_to(message, "📭 Нет истории", message_thread_id=thread_id)
 
-# === БЕКАП (ПОЛНЫЙ - НАПОМИНАНИЯ + НАСТРОЙКИ ПЕРЕВОДЧИКА) ===
+# === БЕКАП (ПОЛНЫЙ) ===
 @bot.message_handler(commands=['backup'])
 def backup_full(message):
     if message.from_user.id != ADMIN_ID:
@@ -431,11 +431,7 @@ def backup_full(message):
         
         with open(backup_file, 'rb') as f:
             bot.send_document(message.chat.id, f, 
-                caption=f"📦 *ПОЛНЫЙ БЕКАП*\n\n"
-                       f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
-                       f"📊 Напоминаний: {len(backup_reminders_data)}\n"
-                       f"⚙️ Чатов с переводчиком: {len(backup_translator_data)}",
-                parse_mode="Markdown")
+                caption=f"📦 ПОЛНЫЙ БЕКАП\n\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\nНапоминаний: {len(backup_reminders_data)}\nЧатов с переводчиком: {len(backup_translator_data)}")
         
         os.remove(backup_file)
         logger.info(f"📦 Полный бекап создан")
@@ -447,24 +443,30 @@ def restore_full(message):
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав")
         return
-    bot.send_message(message.chat.id, "📥 Отправьте файл полного бекапа (full_backup_*.json)")
+    bot.send_message(message.chat.id, "📥 Отправьте файл бекапа (full_backup_*.json)")
 
-# === ВОССТАНОВЛЕНИЕ ===
+# === ОБРАБОТЧИК ФАЙЛОВ ДЛЯ ВОССТАНОВЛЕНИЯ ===
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
+    # Проверяем, что это админ
     if message.from_user.id != ADMIN_ID:
         return
+    
+    # Проверяем, что файл - бекап
     if not message.document.file_name.startswith("full_backup_"):
         return
     
     thread_id = message.message_thread_id
-    status = bot.send_message(message.chat.id, "🔄 Восстанавливаю...", message_thread_id=thread_id)
+    status_msg = bot.send_message(message.chat.id, "🔄 Восстанавливаю...", message_thread_id=thread_id)
+    
     try:
+        # Скачиваем файл
         file_info = bot.get_file(message.document.file_id)
         file_bytes = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_bytes.decode('utf-8'))
         
-        # Восстановление напоминаний
+        # === ВОССТАНОВЛЕНИЕ НАПОМИНАНИЙ ===
+        # Останавливаем все текущие таймеры
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -472,6 +474,7 @@ def handle_restore_file(message):
                 except:
                     pass
         
+        # Очищаем и восстанавливаем
         reminders.clear()
         global reminder_counter
         reminder_counter = 0
@@ -483,22 +486,27 @@ def handle_restore_file(message):
         save_reminders(reminders)
         start_all_reminders()
         
-        # Восстановление настроек переводчика
+        # === ВОССТАНОВЛЕНИЕ НАСТРОЕК ПЕРЕВОДЧИКА ===
         if "translator_settings" in backup_data:
             global translator_settings
             translator_settings = backup_data["translator_settings"]
             save_translator_settings(translator_settings)
             logger.info(f"⚙️ Восстановлены настройки переводчика: {len(translator_settings)} чатов")
         
-        bot.delete_message(message.chat.id, status.message_id)
+        # Удаляем сообщение о статусе
+        bot.delete_message(message.chat.id, status_msg.message_id)
+        
+        # Отправляем результат
         bot.send_message(message.chat.id, 
-            f"✅ *Восстановлено!*\n\n"
-            f"📊 Напоминаний: {len(backup_data.get('reminders', []))}\n"
-            f"⚙️ Настроек переводчика: {len(backup_data.get('translator_settings', {}))}",
-            parse_mode="Markdown", message_thread_id=thread_id)
+            f"✅ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО!\n\nНапоминаний: {len(backup_data.get('reminders', []))}\nНастроек переводчика: {len(backup_data.get('translator_settings', {}))}",
+            message_thread_id=thread_id)
+        
+        logger.info(f"📦 Восстановлено {len(backup_data.get('reminders', []))} напоминаний")
+        
     except Exception as e:
-        bot.delete_message(message.chat.id, status.message_id)
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", message_thread_id=thread_id)
+        bot.delete_message(message.chat.id, status_msg.message_id)
+        bot.send_message(message.chat.id, f"❌ Ошибка восстановления: {e}", message_thread_id=thread_id)
+        logger.error(f"Ошибка восстановления: {e}")
 
 # === НАПОМИНАНИЯ КОМАНДЫ ===
 @bot.message_handler(commands=['remind'])
@@ -561,12 +569,8 @@ def add_reminder(message):
     
     location = "в этот же топик" if thread_id else "в этот чат"
     msg = bot.send_message(chat_id, 
-        f"✅ *Напоминание добавлено!*\n\n"
-        f"⏰ {period} в {hours:02d}:{minutes:02d} МСК\n"
-        f"📍 Придёт {location}\n"
-        f"📝 {reminder_text_clean}\n"
-        f"🆔 ID: `{reminder_counter}`", 
-        parse_mode="Markdown", message_thread_id=thread_id)
+        f"✅ НАПОМИНАНИЕ ДОБАВЛЕНО!\n\n⏰ {period} в {hours:02d}:{minutes:02d} МСК\n📍 {location}\n📝 {reminder_text_clean}\n🆔 ID: {reminder_counter}", 
+        message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id)
 
 @bot.message_handler(commands=['reminds'])
@@ -591,18 +595,18 @@ def list_reminders(message):
         delete_after_delay(chat_id, msg.message_id, 15)
         return
     
-    response = "📋 *Активные напоминания:*\n\n"
+    response = "📋 АКТИВНЫЕ НАПОМИНАНИЯ:\n\n"
     for r in user_reminders:
         if r.get("daily"):
             period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}"
         elif r.get("weekly_day") is not None:
-            days = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+            days = ["пн","вт","ср","чт","пт","сб","вс"]
             period = f"каждый {days[r['weekly_day']]} в {r['hours']:02d}:{r['minutes']:02d}"
         else:
             period = f"в {r['hours']:02d}:{r['minutes']:02d}"
-        response += f"🆔 `{r['id']}` - {period}\n   📝 {r['text'][:50]}\n\n"
+        response += f"🆔 {r['id']} - {period}\n   📝 {r['text'][:50]}\n\n"
     
-    msg = bot.send_message(chat_id, response, parse_mode="Markdown", message_thread_id=thread_id)
+    msg = bot.send_message(chat_id, response, message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 30)
 
 @bot.message_handler(commands=['delremind'])
@@ -656,7 +660,7 @@ def translate_command(message):
     parts = message.text.split()
     if len(parts) < 2:
         status = "✅ Включён" if is_translator_enabled(chat_id) else "❌ Выключен"
-        bot.reply_to(message, f"🌐 *Переводчик*\nСтатус: {status}\n\n/т on - вкл\n/т off - выкл", parse_mode="Markdown", message_thread_id=thread_id)
+        bot.reply_to(message, f"🌐 ПЕРЕВОДЧИК\nСтатус: {status}\n\n/т on - вкл\n/т off - выкл", message_thread_id=thread_id)
         return
     action = parts[1].lower()
     if action == "on":
@@ -732,7 +736,7 @@ def inline_query(query):
             title=f"📨 Для {target_name}",
             description=content[:50],
             input_message_content=types.InputTextMessageContent(
-                f"🔐 *Скрытое сообщение*\nОт: {query.from_user.first_name}"
+                f"🔐 СКРЫТОЕ СООБЩЕНИЕ\nОт: {query.from_user.first_name}"
             ),
             reply_markup=markup
         )
@@ -805,7 +809,7 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Настройки переводчика сохраняются в корне проекта")
-    logger.info("✅ Полный бекап включает напоминания и настройки переводчика")
+    logger.info("✅ Бекап: /backup - создание, /restore - восстановление")
+    logger.info("✅ Настройки переводчика сохраняются в корне")
     
     app.run(host="0.0.0.0", port=port)
