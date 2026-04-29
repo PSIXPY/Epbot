@@ -227,7 +227,7 @@ def send_reminder(reminder):
             parse_mode="Markdown", 
             message_thread_id=reminder.get("thread_id")
         )
-        logger.info(f"✅ Отправлено напоминание {reminder['id']}")
+        logger.info(f"✅ Отправлено напоминание {reminder['id']}: {reminder['text']}")
     except Exception as e:
         logger.error(f"Ошибка отправки напоминания: {e}")
 
@@ -393,7 +393,9 @@ def help_command(message):
     help_text = """📖 *Команды бота*
 
 ⏰ *Напоминания (МСК):*
-/remind 15:30 ежедневно Текст
+/remind 15:30 текст — сегодня/завтра
+/remind 15:30 ежедневно текст — каждый день
+/remind 15:30 пн текст — каждый понедельник
 /reminds — список
 /delremind ID — удалить
 
@@ -487,7 +489,7 @@ def clear_history(message):
     else:
         bot.reply_to(message, "📭 Нет сохранённой истории")
 
-# === НАПОМИНАНИЯ КОМАНДЫ ===
+# === НАПОМИНАНИЯ КОМАНДЫ (БЕЗ "ЕЖЕДНЕВНО" В ТЕКСТЕ) ===
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
     chat_id = message.chat.id
@@ -502,9 +504,9 @@ def add_reminder(message):
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
         msg = bot.send_message(chat_id, "ℹ️ *Как создать напоминание:*\n\n"
-                           "`/remind 15:30 ежедневно Текст` — каждый день\n"
-                           "`/remind 15:30 пн Текст` — каждый понедельник\n"
-                           "`/remind 18:00 Текст` — сегодня/завтра", 
+                           "`/remind 15:30 текст` — сегодня/завтра\n"
+                           "`/remind 15:30 ежедневно текст` — каждый день\n"
+                           "`/remind 15:30 пн текст` — каждый понедельник", 
                            parse_mode="Markdown", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id)
         return
@@ -512,10 +514,21 @@ def add_reminder(message):
     time_str = parts[1]
     reminder_text = parts[2]
     
+    # Убираем слово "ежедневно" из текста, если оно там есть
+    reminder_text_clean = reminder_text
+    daily_keywords = ["ежедневно", "каждый", "daily", "каждый день"]
+    for kw in daily_keywords:
+        if reminder_text_clean.lower().startswith(kw):
+            reminder_text_clean = reminder_text_clean[len(kw):].lstrip()
+            break
+    
     hours, minutes, weekly_day, daily = parse_time_with_day(time_str)
     if hours is None:
         msg = bot.send_message(chat_id, "❌ Неправильный формат времени.\n"
-                           "Пример: `/remind 15:30 ежедневно Текст`", 
+                           "Примеры:\n"
+                           "`/remind 15:30 текст`\n"
+                           "`/remind 15:30 ежедневно текст`\n"
+                           "`/remind 15:30 пн текст`", 
                            parse_mode="Markdown", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id)
         return
@@ -528,7 +541,7 @@ def add_reminder(message):
         "chat_id": chat_id,
         "user_id": user_id,
         "thread_id": thread_id,
-        "text": reminder_text,
+        "text": reminder_text_clean,
         "hours": hours,
         "minutes": minutes,
         "weekly_day": weekly_day,
@@ -560,7 +573,7 @@ def add_reminder(message):
         f"✅ *Напоминание добавлено!*\n\n"
         f"⏰ {period} в {hours:02d}:{minutes:02d} МСК\n"
         f"📍 Придёт {location}\n"
-        f"📝 {reminder_text}\n"
+        f"📝 {reminder_text_clean}\n"
         f"🆔 ID: `{reminder_counter}`", 
         parse_mode="Markdown",
         message_thread_id=thread_id
@@ -876,5 +889,6 @@ if __name__ == "__main__":
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("✅ Пересылка без цитирования сообщений")
     logger.info("✅ Напоминания сохраняются в корне проекта")
+    logger.info("✅ Напоминания приходят без слова 'ежедневно' в тексте")
     
     app.run(host="0.0.0.0", port=port)
