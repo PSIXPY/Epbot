@@ -54,7 +54,7 @@ def get_sender_name(user):
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
-# === ОБЪЕДИНЕНИЕ ЧАТОВ (без цитирования, только ответ) ===
+# === ОБЪЕДИНЕНИЕ ЧАТОВ (ПОДДЕРЖКА ВСЕХ ТИПОВ СООБЩЕНИЙ) ===
 @bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not (m.text and m.text.startswith('/')))
 def relay_messages(message):
     if message.from_user.id == bot.get_me().id:
@@ -63,36 +63,66 @@ def relay_messages(message):
     chat_id = message.chat.id
     sender_name = get_sender_name(message.from_user)
     
-    message_text = message.text or message.caption or ""
-    
+    # Информация об ответе
     reply_info = ""
     if message.reply_to_message:
         original = message.reply_to_message
         original_sender = get_sender_name(original.from_user)
         reply_info = f"📨 *{sender_name}* ответил(а) *{original_sender}*\n\n"
-        final_text = f"{reply_info}{message_text}"
-    else:
-        final_text = f"📩 *{sender_name}*\n\n{message_text}"
     
+    # Функция отправки в целевой чат
+    def send_to_target(target_chat_id, target_thread_id):
+        if message.text:
+            text = f"{reply_info}📩 *{sender_name}*\n\n{message.text}"
+            bot.send_message(target_chat_id, text, parse_mode="Markdown", 
+                           message_thread_id=target_thread_id)
+        elif message.photo:
+            caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
+            bot.send_photo(target_chat_id, message.photo[-1].file_id, caption=caption[:1024],
+                         parse_mode="Markdown", message_thread_id=target_thread_id)
+        elif message.video:
+            caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
+            bot.send_video(target_chat_id, message.video.file_id, caption=caption[:1024],
+                         parse_mode="Markdown", message_thread_id=target_thread_id)
+        elif message.document:
+            caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
+            bot.send_document(target_chat_id, message.document.file_id, caption=caption[:1024],
+                            parse_mode="Markdown", message_thread_id=target_thread_id)
+        elif message.audio:
+            caption = f"{reply_info}📩 *{sender_name}*"
+            bot.send_audio(target_chat_id, message.audio.file_id, caption=caption[:1024],
+                          parse_mode="Markdown", message_thread_id=target_thread_id)
+        elif message.voice:
+            caption = f"{reply_info}📩 *{sender_name}*"
+            bot.send_voice(target_chat_id, message.voice.file_id, caption=caption[:1024],
+                          parse_mode="Markdown", message_thread_id=target_thread_id)
+        elif message.animation:  # GIF
+            caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
+            bot.send_animation(target_chat_id, message.animation.file_id, caption=caption[:1024],
+                             parse_mode="Markdown", message_thread_id=target_thread_id)
+        elif message.sticker:
+            bot.send_sticker(target_chat_id, message.sticker.file_id,
+                           message_thread_id=target_thread_id)
+            bot.send_message(target_chat_id, f"📩 *{sender_name}* (стикер)",
+                           parse_mode="Markdown", message_thread_id=target_thread_id)
+        elif message.video_note:
+            bot.send_video_note(target_chat_id, message.video_note.file_id,
+                               message_thread_id=target_thread_id)
+            bot.send_message(target_chat_id, f"📩 *{sender_name}* (видеосообщение)",
+                           parse_mode="Markdown", message_thread_id=target_thread_id)
+    
+    # Из чата A в B
     if chat_id == CHAT_A:
         try:
-            if message.text:
-                bot.send_message(CHAT_B, final_text, parse_mode="Markdown", 
-                               message_thread_id=CHAT_B_THREAD)
-            elif message.photo:
-                bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=final_text[:1024],
-                             parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
+            send_to_target(CHAT_B, CHAT_B_THREAD)
             logger.info(f"✅ Переслано из A в B")
         except Exception as e:
             logger.error(f"Ошибка A→B: {e}")
     
+    # Из чата B в A (только из нужного топика)
     elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
         try:
-            if message.text:
-                bot.send_message(CHAT_A, final_text, parse_mode="Markdown")
-            elif message.photo:
-                bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=final_text[:1024],
-                             parse_mode="Markdown")
+            send_to_target(CHAT_A, None)
             logger.info(f"✅ Переслано из B в A")
         except Exception as e:
             logger.error(f"Ошибка B→A: {e}")
@@ -708,17 +738,15 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка перевода: {e}")
 
-# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) - ИСПРАВЛЕННЫЙ ===
+# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
 @bot.channel_post_handler(func=lambda m: True)
 def channel_reaction(message):
-    # ID каналов, где нужно ставить реакцию (замените на свои)
     allowed_channels = [-1001317416582, -1002185590715]
     
     if message.chat.id not in allowed_channels:
         return
     
     try:
-        # Прямой запрос к API Telegram
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
         data = {
             "chat_id": message.chat.id,
@@ -885,7 +913,8 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат Б: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("✅ Напоминания сохраняются в файл reminders.json (в корне проекта)")
+    logger.info("✅ Пересылаются ВСЕ типы сообщений (текст, фото, видео, гифки, стикеры, аудио)")
+    logger.info("✅ Напоминания сохраняются в файл reminders.json")
     logger.info("✅ Реакции 🔥 на посты в каналах")
     
     app.run(host="0.0.0.0", port=port)
