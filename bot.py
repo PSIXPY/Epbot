@@ -52,42 +52,6 @@ def get_sender_name(user):
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
-# === ПЕРЕСЫЛКА МЕЖДУ ЧАТАМИ ОТКЛЮЧЕНА ===
-
-# === КЭШ И ИСТОРИЯ ===
-ai_cache = {}
-user_histories = {}
-MAX_HISTORY = 10
-CACHE_TTL = 3600
-
-# === НАСТРОЙКИ ПЕРЕВОДЧИКА ===
-TRANSLATOR_SETTINGS_FILE = os.path.join(tempfile.gettempdir(), "translator_settings.json")
-
-def load_translator_settings():
-    if os.path.exists(TRANSLATOR_SETTINGS_FILE):
-        try:
-            with open(TRANSLATOR_SETTINGS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_translator_settings(settings):
-    try:
-        with open(TRANSLATOR_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
-    except:
-        pass
-
-translator_settings = load_translator_settings()
-
-def is_translator_enabled(chat_id):
-    return translator_settings.get(str(chat_id), False)
-
-def set_translator_enabled(chat_id, enabled):
-    translator_settings[str(chat_id)] = enabled
-    save_translator_settings(translator_settings)
-
 # === НАПОМИНАНИЯ ===
 REMINDERS_FILE = "reminders.json"
 
@@ -204,6 +168,40 @@ def start_all_reminders():
     for r in reminders:
         schedule_reminder(r)
 
+# === КЭШ И ИСТОРИЯ ===
+ai_cache = {}
+user_histories = {}
+MAX_HISTORY = 10
+CACHE_TTL = 3600
+
+# === НАСТРОЙКИ ПЕРЕВОДЧИКА ===
+TRANSLATOR_SETTINGS_FILE = os.path.join(tempfile.gettempdir(), "translator_settings.json")
+
+def load_translator_settings():
+    if os.path.exists(TRANSLATOR_SETTINGS_FILE):
+        try:
+            with open(TRANSLATOR_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_translator_settings(settings):
+    try:
+        with open(TRANSLATOR_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+    except:
+        pass
+
+translator_settings = load_translator_settings()
+
+def is_translator_enabled(chat_id):
+    return translator_settings.get(str(chat_id), False)
+
+def set_translator_enabled(chat_id, enabled):
+    translator_settings[str(chat_id)] = enabled
+    save_translator_settings(translator_settings)
+
 # === ИИ ===
 def ask_groq(user_id, prompt):
     if not GROQ_API_KEY:
@@ -270,18 +268,41 @@ def web_search(query):
 
 def search_wikipedia(query):
     try:
-        # Сначала ищем на русском
+        # Приводим запрос к правильному формату
+        formatted_query = query.strip().capitalize()
+        
+        # Пробуем найти на русском
         wiki_ru = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
-        page_ru = wiki_ru.page(query)
+        page_ru = wiki_ru.page(formatted_query)
+        
+        if not page_ru.exists():
+            page_ru = wiki_ru.page(query)
+        
         if page_ru.exists():
             summary = page_ru.summary[:500]
             if len(page_ru.summary) > 500:
                 summary += "..."
             return f"📖 *{page_ru.title}*\n\n{summary}\n\n[🔗 Читать на Википедии]({page_ru.fullurl})"
         
-        # Если не найдено, ищем на английском
+        # Поиск через search
+        search_results = wiki_ru.search(query, results=3)
+        if search_results:
+            first_result = search_results[0]
+            page_ru = wiki_ru.page(first_result)
+            if page_ru.exists():
+                summary = page_ru.summary[:500]
+                if len(page_ru.summary) > 500:
+                    summary += "..."
+                return (f"📖 *{page_ru.title}*\n\n{summary}\n\n"
+                       f"[🔗 Читать на Википедии]({page_ru.fullurl})\n\n"
+                       f"_Показан ближайший результат по запросу: {query}_")
+        
+        # Если на русском не найдено, пробуем на английском
         wiki_en = wikipediaapi.Wikipedia(language='en', user_agent='TelegramRelayBot/1.0')
-        page_en = wiki_en.page(query)
+        page_en = wiki_en.page(formatted_query)
+        if not page_en.exists():
+            page_en = wiki_en.page(query)
+        
         if page_en.exists():
             summary = page_en.summary[:500]
             if len(page_en.summary) > 500:
@@ -707,19 +728,33 @@ def clean_old():
 
 threading.Thread(target=lambda: (time.sleep(3600), clean_old()), daemon=True).start()
 
-# === ПОСТЫ В КАНАЛАХ ===
+# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
 @bot.channel_post_handler(func=lambda m: True)
 def channel_reaction(message):
-    allowed = [-1001317416582, -1002185590715]
-    if message.chat.id not in allowed:
+    allowed_channels = [-1001317416582, -1002185590715]
+    
+    if message.chat.id not in allowed_channels:
         return
+    
+    logger.info(f"🔥 Пост в канале {message.chat.id}, пытаюсь поставить реакцию...")
+    
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
-        data = {"chat_id": message.chat.id, "message_id": message.message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
-        requests.post(url, json=data, timeout=5)
-        logger.info(f"🔥 Реакция на пост {message.message_id}")
+        data = {
+            "chat_id": message.chat.id,
+            "message_id": message.message_id,
+            "reaction": [{"type": "emoji", "emoji": "🔥"}]
+        }
+        response = requests.post(url, json=data, timeout=10)
+        result = response.json()
+        
+        if result.get("ok"):
+            logger.info(f"✅ Реакция 🔥 на пост {message.message_id}")
+        else:
+            logger.error(f"❌ Ошибка API: {result}")
+            
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"❌ Исключение: {e}")
 
 # === ЗАПУСК ===
 start_all_reminders()
@@ -746,6 +781,7 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info("✅ Пересылка между чатами ОТКЛЮЧЕНА")
-    logger.info("✅ Все команды работают в топиках")
+    logger.info("✅ Википедия ищет без учёта регистра")
+    logger.info("✅ Реакции 🔥 на каналы")
     
     app.run(host="0.0.0.0", port=port)
