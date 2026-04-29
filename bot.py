@@ -39,6 +39,28 @@ secret_messages = {}
 
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
+# === ФУНКЦИЯ ДЛЯ СТАВКИ РЕАКЦИИ ===
+def set_reaction(chat_id, message_id):
+    """Ставит реакцию 🔥 на сообщение"""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "reaction": [{"type": "emoji", "emoji": "🔥"}]
+    }
+    try:
+        response = requests.post(url, json=data, timeout=5)
+        result = response.json()
+        if result.get("ok"):
+            logger.info(f"🔥 Реакция на пост {message_id} в канале {chat_id}")
+            return True
+        else:
+            logger.error(f"Ошибка реакции: {result}")
+            return False
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+        return False
+
 def get_sender_name(user):
     if not user:
         return "Неизвестный"
@@ -268,23 +290,17 @@ def web_search(query):
 
 def search_wikipedia(query):
     try:
-        # Приводим запрос к правильному формату
         formatted_query = query.strip().capitalize()
-        
-        # Пробуем найти на русском
         wiki_ru = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
         page_ru = wiki_ru.page(formatted_query)
-        
         if not page_ru.exists():
             page_ru = wiki_ru.page(query)
-        
         if page_ru.exists():
             summary = page_ru.summary[:500]
             if len(page_ru.summary) > 500:
                 summary += "..."
             return f"📖 *{page_ru.title}*\n\n{summary}\n\n[🔗 Читать на Википедии]({page_ru.fullurl})"
         
-        # Поиск через search
         search_results = wiki_ru.search(query, results=3)
         if search_results:
             first_result = search_results[0]
@@ -297,19 +313,16 @@ def search_wikipedia(query):
                        f"[🔗 Читать на Википедии]({page_ru.fullurl})\n\n"
                        f"_Показан ближайший результат по запросу: {query}_")
         
-        # Если на русском не найдено, пробуем на английском
         wiki_en = wikipediaapi.Wikipedia(language='en', user_agent='TelegramRelayBot/1.0')
         page_en = wiki_en.page(formatted_query)
         if not page_en.exists():
             page_en = wiki_en.page(query)
-        
         if page_en.exists():
             summary = page_en.summary[:500]
             if len(page_en.summary) > 500:
                 summary += "..."
             return f"📖 *{page_en.title}*\n\n{summary}\n\n[🔗 Читать на Wikipedia]({page_en.fullurl})\n\n_На русском не найдено, показан английский вариант_"
         
-        # Если ничего не найдено - поисковики
         encoded_query = urllib.parse.quote(query)
         google_url = f"https://www.google.com/search?q={encoded_query}"
         yandex_url = f"https://yandex.ru/search/?text={encoded_query}"
@@ -325,7 +338,7 @@ def search_wikipedia(query):
         logger.error(f"Wikipedia error: {e}")
         return f"❌ Ошибка при поиске: {str(e)[:100]}"
 
-# === КОМАНДЫ С ПОДДЕРЖКОЙ ТОПИКОВ ===
+# === КОМАНДЫ ===
 @bot.message_handler(commands=['start', 'help'])
 def help_command(message):
     thread_id = message.message_thread_id
@@ -728,60 +741,48 @@ def clean_old():
 
 threading.Thread(target=lambda: (time.sleep(3600), clean_old()), daemon=True).start()
 
-# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
-@bot.channel_post_handler(func=lambda m: True)
-def channel_reaction(message):
-    allowed_channels = [-1001317416582, -1002185590715]
-    
-    if message.chat.id not in allowed_channels:
-        return
-    
-    logger.info(f"🔥 Пост в канале {message.chat.id}, пытаюсь поставить реакцию...")
-    
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
-        data = {
-            "chat_id": message.chat.id,
-            "message_id": message.message_id,
-            "reaction": [{"type": "emoji", "emoji": "🔥"}]
-        }
-        response = requests.post(url, json=data, timeout=10)
-        result = response.json()
-        
-        if result.get("ok"):
-            logger.info(f"✅ Реакция 🔥 на пост {message.message_id}")
-        else:
-            logger.error(f"❌ Ошибка API: {result}")
-            
-    except Exception as e:
-        logger.error(f"❌ Исключение: {e}")
-
-# === ЗАПУСК ===
-start_all_reminders()
-
+# === ВЕБХУК С ПРЯМОЙ ОБРАБОТКОЙ РЕАКЦИЙ ===
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
-        bot.process_new_updates([types.Update.de_json(update)])
+        
+        # ПРЯМАЯ ОБРАБОТКА ПОСТОВ В КАНАЛАХ (РЕАКЦИИ)
+        if update and "channel_post" in update:
+            post = update["channel_post"]
+            channel_id = post["chat"]["id"]
+            
+            # Проверяем, нужно ли ставить реакцию
+            if channel_id in [-1002185590715, -1001317416582]:
+                message_id = post["message_id"]
+                set_reaction(channel_id, message_id)
+        
+        # Обрабатываем остальные обновления через TeleBot
+        if update:
+            bot.process_new_updates([types.Update.de_json(update)])
+        
         return "OK", 200
     except Exception as e:
-        logger.error(f"Webhook: {e}")
+        logger.error(f"Webhook error: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
 def health():
     return "OK", 200
 
+# === ЗАПУСК ===
+start_all_reminders()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
+    
+    # Устанавливаем вебхук
     bot.remove_webhook()
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info("✅ Пересылка между чатами ОТКЛЮЧЕНА")
-    logger.info("✅ Википедия ищет без учёта регистра")
-    logger.info("✅ Реакции 🔥 на каналы")
+    logger.info("✅ Реакции 🔥 работают через прямой обработчик вебхука")
     
     app.run(host="0.0.0.0", port=port)
