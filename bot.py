@@ -34,7 +34,6 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 
@@ -305,9 +304,10 @@ def search_wikipedia(query):
         logger.error(f"Wikipedia error: {e}")
         return f"❌ Ошибка при поиске: {str(e)[:100]}"
 
-# === КОМАНДЫ ===
+# === КОМАНДЫ С ПОДДЕРЖКОЙ ТОПИКОВ ===
 @bot.message_handler(commands=['start', 'help'])
 def help_command(message):
+    thread_id = message.message_thread_id
     help_text = """📖 *Команды бота*
 
 ⏰ *Напоминания (МСК):*
@@ -324,49 +324,55 @@ def help_command(message):
 🎲 *Игры:* /roll | /coin
 
 👑 *Админ:* /backup"""
-    bot.reply_to(message, help_text, parse_mode="Markdown")
+    bot.reply_to(message, help_text, parse_mode="Markdown", message_thread_id=thread_id)
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
+    thread_id = message.message_thread_id
     prompt = message.text[3:].strip()
     if not prompt:
-        bot.reply_to(message, "ℹ️ /ai Как дела?")
+        bot.reply_to(message, "ℹ️ /ai Как дела?", message_thread_id=thread_id)
         return
-    msg = bot.reply_to(message, "🤖 Думаю...")
+    msg = bot.reply_to(message, "🤖 Думаю...", message_thread_id=thread_id)
     answer = ask_groq(message.from_user.id, prompt)
     bot.edit_message_text(answer, message.chat.id, msg.message_id)
 
 @bot.message_handler(commands=['wiki'])
 def wiki_command(message):
+    thread_id = message.message_thread_id
     query = message.text[5:].strip()
     if not query:
-        bot.reply_to(message, "ℹ️ /wiki запрос\n\nПример: /wiki Python")
+        bot.reply_to(message, "ℹ️ /wiki запрос\n\nПример: /wiki Python", message_thread_id=thread_id)
         return
     result = search_wikipedia(query)
-    bot.reply_to(message, result, parse_mode="Markdown", disable_web_page_preview=True)
+    bot.reply_to(message, result, parse_mode="Markdown", disable_web_page_preview=True, message_thread_id=thread_id)
 
 @bot.message_handler(commands=['roll'])
 def roll_command(message):
-    bot.reply_to(message, f"🎲 {random.randint(1, 100)}")
+    thread_id = message.message_thread_id
+    bot.reply_to(message, f"🎲 {random.randint(1, 100)}", message_thread_id=thread_id)
 
 @bot.message_handler(commands=['coin'])
 def coin_command(message):
-    bot.reply_to(message, f"🪙 {random.choice(['Орёл', 'Решка'])}")
+    thread_id = message.message_thread_id
+    bot.reply_to(message, f"🪙 {random.choice(['Орёл', 'Решка'])}", message_thread_id=thread_id)
 
 @bot.message_handler(commands=['clear_history'])
 def clear_history(message):
+    thread_id = message.message_thread_id
     user_id = message.from_user.id
     if user_id in user_histories:
         del user_histories[user_id]
-        bot.reply_to(message, "🗑️ История очищена!")
+        bot.reply_to(message, "🗑️ История очищена!", message_thread_id=thread_id)
     else:
-        bot.reply_to(message, "📭 Нет истории")
+        bot.reply_to(message, "📭 Нет истории", message_thread_id=thread_id)
 
 # === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_reminders(message):
+    thread_id = message.message_thread_id
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав")
+        bot.reply_to(message, "❌ Нет прав", message_thread_id=thread_id)
         return
     try:
         backup_data = []
@@ -384,14 +390,15 @@ def backup_reminders(message):
         os.remove(backup_file)
         logger.info(f"📦 Бекап создан ({len(backup_data)})")
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", message_thread_id=thread_id)
 
 @bot.message_handler(commands=['restore'])
 def restore_reminders(message):
+    thread_id = message.message_thread_id
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав")
+        bot.reply_to(message, "❌ Нет прав", message_thread_id=thread_id)
         return
-    bot.send_message(message.chat.id, "📥 Отправьте файл бекапа")
+    bot.send_message(message.chat.id, "📥 Отправьте файл бекапа", message_thread_id=thread_id)
 
 @bot.message_handler(content_types=['document'])
 def handle_backup_file(message):
@@ -400,7 +407,8 @@ def handle_backup_file(message):
     if not message.document.file_name.startswith("reminders_backup_"):
         return
     
-    status = bot.send_message(message.chat.id, "🔄 Восстанавливаю...")
+    thread_id = message.message_thread_id
+    status = bot.send_message(message.chat.id, "🔄 Восстанавливаю...", message_thread_id=thread_id)
     try:
         file_info = bot.get_file(message.document.file_id)
         file_bytes = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
@@ -425,12 +433,12 @@ def handle_backup_file(message):
         start_all_reminders()
         
         bot.delete_message(message.chat.id, status.message_id)
-        bot.send_message(message.chat.id, f"✅ Восстановлено {len(backup_data)} напоминаний!")
+        bot.send_message(message.chat.id, f"✅ Восстановлено {len(backup_data)} напоминаний!", message_thread_id=thread_id)
     except Exception as e:
         bot.delete_message(message.chat.id, status.message_id)
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", message_thread_id=thread_id)
 
-# === НАПОМИНАНИЯ ===
+# === НАПОМИНАНИЯ КОМАНДЫ ===
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
     chat_id = message.chat.id
@@ -581,19 +589,20 @@ def delete_reminder(message):
 # === ПЕРЕВОДЧИК ===
 @bot.message_handler(commands=['т'])
 def translate_command(message):
+    thread_id = message.message_thread_id
     chat_id = message.chat.id
     parts = message.text.split()
     if len(parts) < 2:
         status = "✅ Включён" if is_translator_enabled(chat_id) else "❌ Выключен"
-        bot.reply_to(message, f"🌐 *Переводчик*\nСтатус: {status}\n\n/т on - вкл\n/т off - выкл", parse_mode="Markdown")
+        bot.reply_to(message, f"🌐 *Переводчик*\nСтатус: {status}\n\n/т on - вкл\n/т off - выкл", parse_mode="Markdown", message_thread_id=thread_id)
         return
     action = parts[1].lower()
     if action == "on":
         set_translator_enabled(chat_id, True)
-        bot.reply_to(message, "✅ Включён!")
+        bot.reply_to(message, "✅ Включён!", message_thread_id=thread_id)
     elif action == "off":
         set_translator_enabled(chat_id, False)
-        bot.reply_to(message, "❌ Выключен")
+        bot.reply_to(message, "❌ Выключен", message_thread_id=thread_id)
 
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def auto_translate(message):
@@ -737,9 +746,6 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info("✅ Пересылка между чатами ОТКЛЮЧЕНА")
-    logger.info("✅ Напоминания работают")
-    logger.info("✅ Википедия работает")
-    logger.info("✅ ИИ работает")
-    logger.info("✅ Бекап работает")
+    logger.info("✅ Все команды работают в топиках")
     
     app.run(host="0.0.0.0", port=port)
