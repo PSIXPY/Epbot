@@ -192,7 +192,7 @@ user_histories = {}
 MAX_HISTORY = 10
 CACHE_TTL = 3600
 
-# === НАСТРОЙКИ ПЕРЕВОДЧИКА (СОХРАНЕНИЕ В КОРНЕ) ===
+# === НАСТРОЙКИ ПЕРЕВОДЧИКА ===
 TRANSLATOR_SETTINGS_FILE = "translator_settings.json"
 
 def load_translator_settings():
@@ -398,7 +398,7 @@ def clear_history(message):
     else:
         bot.reply_to(message, "📭 Нет истории", message_thread_id=thread_id)
 
-# === БЕКАП (ПОЛНЫЙ) ===
+# === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_full(message):
     if message.from_user.id != ADMIN_ID:
@@ -442,7 +442,6 @@ def restore_full(message):
         return
     bot.send_message(message.chat.id, "📥 Отправьте файл бекапа (full_backup_*.json)")
 
-# === ОБРАБОТЧИК ФАЙЛОВ ДЛЯ ВОССТАНОВЛЕНИЯ ===
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
     if message.from_user.id != ADMIN_ID:
@@ -692,14 +691,13 @@ def inline_query(query):
         target_name = target_raw
         found = False
         
-        # Пробуем разные варианты username
+        # Пробуем найти пользователя (регистронезависимо)
         possible_usernames = [
             target_raw,
             target_raw.lower(),
             target_raw.upper(),
             target_raw.capitalize(),
             target_raw.title(),
-            target_raw.lower().capitalize(),
         ]
         possible_usernames = list(dict.fromkeys(possible_usernames))
         
@@ -709,6 +707,7 @@ def inline_query(query):
                 target_id = info.id
                 target_name = info.first_name or info.username or target_raw
                 found = True
+                logger.info(f"✅ Найден пользователь {target_name} по @{username}")
                 break
             except:
                 continue
@@ -727,8 +726,8 @@ def inline_query(query):
             markup.add(InlineKeyboardButton("❓ Как узнать ID", url="https://t.me/userinfobot"))
             result = types.InlineQueryResultArticle(
                 id="error",
-                title=f"❌ Пользователь {target_raw} не найден",
-                description="Проверьте username или используйте ID",
+                title="❌ Пользователь не найден",
+                description=f"@{target_raw} - проверьте правильность",
                 input_message_content=types.InputTextMessageContent(
                     f"❌ Пользователь {target_raw} не найден\n\nПроверьте username или используйте ID"
                 ),
@@ -742,27 +741,15 @@ def inline_query(query):
         secret_messages[msg_id] = {
             "target_id": target_id,
             "target_name": target_name,
-            "target_username": target_raw,
             "content": content,
             "sender_name": query.from_user.first_name,
             "sender_id": query.from_user.id,
-            "sender_username": query.from_user.username,
             "created_at": time.time(),
             "expires": time.time() + 10800
         }
         
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"secret_read_{msg_id}"))
-        
-        sender_display = query.from_user.first_name
-        if query.from_user.username:
-            sender_display += f" (@{query.from_user.username})"
-        
-        target_display = target_name
-        if target_raw and not target_raw.isdigit():
-            target_display += f" (@{target_raw})"
-        elif target_raw.isdigit():
-            target_display += f" (ID: {target_raw})"
+        markup.add(InlineKeyboardButton("📩 Прочитать сообщение", callback_data=f"secret_read_{msg_id}"))
         
         result = types.InlineQueryResultArticle(
             id=msg_id,
@@ -770,15 +757,16 @@ def inline_query(query):
             description=content[:50] + ("..." if len(content) > 50 else ""),
             input_message_content=types.InputTextMessageContent(
                 f"🔐 СКРЫТОЕ СООБЩЕНИЕ\n\n"
-                f"Отправитель: {sender_display}\n"
-                f"Получатель: {target_display}\n"
-                f"Действительно: 3 часа\n\n"
-                f"✅ Сообщение создано. Отправьте этот результат получателю."
+                f"👤 От: {query.from_user.first_name}\n"
+                f"👤 Кому: {target_name}\n"
+                f"⏱️ Действует: 3 часа\n\n"
+                f"✅ Нажмите на кнопку, чтобы прочитать"
             ),
             reply_markup=markup
         )
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
+        logger.info(f"📨 Создано скрытое сообщение для {target_id} (до {time.ctime(time.time() + 10800)})")
         
     except Exception as e:
         logger.error(f"Inline error: {e}")
@@ -788,21 +776,17 @@ def handle_secret_read(call):
     msg_id = call.data.replace("secret_read_", "")
     
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
-        try:
-            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        except:
-            pass
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено или удалено", show_alert=True)
         return
     
     data = secret_messages[msg_id]
     
     if call.from_user.id != data["target_id"]:
-        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас", show_alert=True)
         return
     
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Срок действия истёк (3 часа)", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Срок действия сообщения истёк (3 часа)", show_alert=True)
         del secret_messages[msg_id]
         try:
             bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
@@ -810,19 +794,11 @@ def handle_secret_read(call):
             pass
         return
     
-    sender_info = data['sender_name']
-    if data.get('sender_username'):
-        sender_info += f" (@{data['sender_username']})"
-    
     content = data['content']
+    sender = data['sender_name']
     
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
-    
-    bot.answer_callback_query(call.id, f"📩 От {sender_info}:\n\n{content}", show_alert=True)
-    del secret_messages[msg_id]
+    bot.answer_callback_query(call.id, f"📩 От {sender}:\n\n{content}", show_alert=True)
+    logger.info(f"📨 Скрытое сообщение {msg_id} прочитано пользователем {call.from_user.id}")
 
 def clean_old_secrets():
     now = time.time()
@@ -874,7 +850,7 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Скрытые сообщения: регистронезависимый поиск")
-    logger.info("✅ Хранение 3 часа")
+    logger.info("✅ Скрытые сообщения: можно читать несколько раз в течение 3 часов")
+    logger.info("✅ Бекап: /backup и /restore")
     
     app.run(host="0.0.0.0", port=port)
