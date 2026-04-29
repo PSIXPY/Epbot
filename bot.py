@@ -51,7 +51,7 @@ def get_sender_name(user):
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
-# === ОБЪЕДИНЕНИЕ ЧАТОВ ===
+# === ОБЪЕДИНЕНИЕ ЧАТОВ (ПОЛНАЯ ПЕРЕСЫЛКА ВСЕХ ТИПОВ) ===
 @bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not (m.text and m.text.startswith('/')))
 def relay_messages(message):
     if message.from_user.id == bot.get_me().id:
@@ -68,39 +68,88 @@ def relay_messages(message):
     
     def send_to_target(target_chat_id, target_thread_id):
         try:
+            # ТЕКСТ
             if message.text:
                 text = f"{reply_info}📩 {sender_name}\n\n{message.text}"
                 bot.send_message(target_chat_id, text, parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"📝 Переслан текст")
+            
+            # ФОТО
             elif message.photo:
-                caption = f"{reply_info}📩 {sender_name}\n\n{message.caption or ''}"
-                bot.send_photo(target_chat_id, message.photo[-1].file_id, caption=caption[:1024], parse_mode=None, message_thread_id=target_thread_id)
+                caption = f"{reply_info}📩 {sender_name}"
+                if message.caption:
+                    caption += f"\n\n{message.caption}"
+                bot.send_photo(target_chat_id, message.photo[-1].file_id, caption=caption[:1024], 
+                             parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"📸 Переслано фото")
+            
+            # ВИДЕО
             elif message.video:
-                caption = f"{reply_info}📩 {sender_name}\n\n{message.caption or ''}"
-                bot.send_video(target_chat_id, message.video.file_id, caption=caption[:1024], parse_mode=None, message_thread_id=target_thread_id)
+                caption = f"{reply_info}📩 {sender_name}"
+                if message.caption:
+                    caption += f"\n\n{message.caption}"
+                bot.send_video(target_chat_id, message.video.file_id, caption=caption[:1024],
+                             parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"🎬 Переслано видео")
+            
+            # ДОКУМЕНТЫ
             elif message.document:
-                caption = f"{reply_info}📩 {sender_name}\n\n{message.caption or ''}"
-                bot.send_document(target_chat_id, message.document.file_id, caption=caption[:1024], parse_mode=None, message_thread_id=target_thread_id)
+                caption = f"{reply_info}📩 {sender_name}"
+                if message.caption:
+                    caption += f"\n\n{message.caption}"
+                bot.send_document(target_chat_id, message.document.file_id, caption=caption[:1024],
+                                parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"📄 Переслан документ: {message.document.file_name}")
+            
+            # АУДИО
             elif message.audio:
                 caption = f"{reply_info}📩 {sender_name}"
-                bot.send_audio(target_chat_id, message.audio.file_id, caption=caption[:1024], parse_mode=None, message_thread_id=target_thread_id)
+                bot.send_audio(target_chat_id, message.audio.file_id, caption=caption[:1024],
+                              parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"🎵 Переслано аудио")
+            
+            # ГОЛОСОВЫЕ
             elif message.voice:
                 caption = f"{reply_info}📩 {sender_name}"
-                bot.send_voice(target_chat_id, message.voice.file_id, caption=caption[:1024], parse_mode=None, message_thread_id=target_thread_id)
+                bot.send_voice(target_chat_id, message.voice.file_id, caption=caption[:1024],
+                              parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"🎤 Переслано голосовое")
+            
+            # GIF (АНИМАЦИЯ)
             elif message.animation:
-                caption = f"{reply_info}📩 {sender_name}\n\n{message.caption or ''}"
-                bot.send_animation(target_chat_id, message.animation.file_id, caption=caption[:1024], parse_mode=None, message_thread_id=target_thread_id)
+                caption = f"{reply_info}📩 {sender_name}"
+                if message.caption:
+                    caption += f"\n\n{message.caption}"
+                bot.send_animation(target_chat_id, message.animation.file_id, caption=caption[:1024],
+                                 parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"🎞️ Переслана GIF")
+            
+            # СТИКЕРЫ
             elif message.sticker:
                 bot.send_sticker(target_chat_id, message.sticker.file_id, message_thread_id=target_thread_id)
-                bot.send_message(target_chat_id, f"📩 {sender_name} (стикер)", parse_mode=None, message_thread_id=target_thread_id)
+                bot.send_message(target_chat_id, f"📩 {sender_name} (стикер)", 
+                               parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"🏷️ Переслан стикер")
+            
+            # КРУГЛЫЕ ВИДЕО
             elif message.video_note:
                 bot.send_video_note(target_chat_id, message.video_note.file_id, message_thread_id=target_thread_id)
+                bot.send_message(target_chat_id, f"📩 {sender_name} (видеосообщение)",
+                               parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"🔄 Переслано видео-сообщение")
+            
+            else:
+                logger.warning(f"❓ Неизвестный тип: {message.content_type}")
+                
         except Exception as e:
-            logger.error(f"Ошибка отправки: {e}")
+            logger.error(f"❌ Ошибка отправки: {e}")
     
     if chat_id == CHAT_A:
         send_to_target(CHAT_B, CHAT_B_THREAD)
+        logger.info(f"✅ Переслано из A в B")
     elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
         send_to_target(CHAT_A, None)
+        logger.info(f"✅ Переслано из B в A")
 
 # === НАПОМИНАНИЯ ===
 REMINDERS_FILE = "reminders.json"
@@ -125,6 +174,7 @@ def save_reminders(reminders):
     try:
         with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(reminders_to_save, f, ensure_ascii=False, indent=2)
+        logger.info(f"💾 Сохранено {len(reminders_to_save)} напоминаний")
     except Exception as e:
         logger.error(f"Ошибка сохранения: {e}")
 
@@ -158,7 +208,8 @@ def get_next_trigger_time_moscow(hours, minutes, weekly_day=None, daily=False):
     now_moscow = datetime.now(MOSCOW_TZ)
     target = now_moscow.replace(hour=hours, minute=minutes, second=0, microsecond=0)
     if daily:
-        target = target + timedelta(days=1) if target <= now_moscow else target
+        if target <= now_moscow:
+            target = target + timedelta(days=1)
         return target + timedelta(seconds=2)
     if weekly_day is not None:
         days_ahead = (weekly_day - now_moscow.weekday()) % 7
@@ -166,14 +217,17 @@ def get_next_trigger_time_moscow(hours, minutes, weekly_day=None, daily=False):
             days_ahead = 7
         target = now_moscow + timedelta(days=days_ahead)
         return target.replace(hour=hours, minute=minutes, second=2, microsecond=0)
-    return target + timedelta(days=1) if target <= now_moscow else target
+    if target <= now_moscow:
+        target = target + timedelta(days=1)
+    return target + timedelta(seconds=2)
 
 def send_reminder(reminder):
     try:
         bot.send_message(reminder["chat_id"], f"⏰ НАПОМИНАНИЕ!\n\n{reminder['text']}",
                         parse_mode=None, message_thread_id=reminder.get("thread_id"))
+        logger.info(f"✅ Отправлено напоминание {reminder['id']}")
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"Ошибка отправки: {e}")
 
 def schedule_reminder(reminder):
     next_time = get_next_trigger_time_moscow(reminder["hours"], reminder["minutes"],
@@ -186,6 +240,7 @@ def schedule_reminder(reminder):
     timer.daemon = True
     timer.start()
     reminder["_timer"] = timer
+    logger.info(f"⏰ Напоминание {reminder['id']} на {next_time.strftime('%Y-%m-%d %H:%M:%S')} МСК")
 
 def start_all_reminders():
     for r in reminders:
@@ -220,6 +275,8 @@ def ask_groq(user_id, prompt):
             user_histories[user_id].append({"role": "assistant", "content": answer})
             ai_cache[cache_key] = (time.time(), answer)
             return answer
+        elif response.status_code == 429:
+            return "⚠️ Лимит запросов. Подождите."
         return f"❌ Ошибка: {response.status_code}"
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
@@ -234,7 +291,7 @@ def web_search(query):
         if not results:
             return None
         search_results = [f"• [{r.get_text()}]({r.get('href')})" for r in results if r.get('href')]
-        return "🔍 Результаты поиска:\n\n" + "\n".join(search_results) if search_results else None
+        return "🔍 Результаты поиска:\n\n" + "\n".join(search_results)
     except Exception as e:
         logger.error(f"Search error: {e}")
         return None
@@ -393,6 +450,7 @@ def backup_reminders(message):
         with open(backup_file, 'rb') as f:
             bot.send_document(message.chat.id, f, caption=f"Бекап напоминаний\n\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\nВсего: {len(backup_data)}")
         os.remove(backup_file)
+        logger.info("📦 Бекап создан")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
 
@@ -427,6 +485,7 @@ def handle_backup_file(message):
         save_reminders(reminders)
         start_all_reminders()
         bot.send_message(message.chat.id, f"✅ Восстановлено {len(backup_data)} напоминаний!\n\nФайл: {message.document.file_name}")
+        logger.info(f"📦 Восстановлено {len(backup_data)} напоминаний")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
 
@@ -452,7 +511,7 @@ def add_reminder(message):
             break
     hours, minutes, weekly_day, daily = parse_time_with_day(time_str)
     if hours is None:
-        msg = bot.send_message(chat_id, "❌ Неправильный формат времени. Пример: /remind 15:30 текст", message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, "❌ Неправильный формат. Пример: /remind 15:30 текст", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id)
         return
     global reminder_counter
@@ -648,4 +707,5 @@ if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=webhook_url)
     logger.info("🤖 БОТ ЗАПУЩЕН")
+    logger.info(f"✅ Пересылка всех типов сообщений включена")
     app.run(host="0.0.0.0", port=port)
