@@ -442,7 +442,7 @@ def restore_full(message):
         return
     bot.send_message(message.chat.id, "📥 Отправьте файл бекапа (full_backup_*.json)")
 
-# === ОБРАБОТЧИК ФАЙЛОВ ДЛЯ ВОССТАНОВЛЕНИЯ (ПОДДЕРЖКА ОБОИХ ФОРМАТОВ) ===
+# === ОБРАБОТЧИК ФАЙЛОВ ДЛЯ ВОССТАНОВЛЕНИЯ ===
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
     logger.info(f"📁 Файл: {message.document.file_name}, от: {message.from_user.id}")
@@ -451,7 +451,6 @@ def handle_restore_file(message):
         bot.reply_to(message, "❌ У вас нет прав для восстановления")
         return
     
-    # Поддерживаем оба формата
     if not (message.document.file_name.startswith("full_backup_") or message.document.file_name.startswith("reminders_backup_")):
         bot.reply_to(message, "❌ Это не файл бекапа. Файл должен начинаться с full_backup_ или reminders_backup_")
         return
@@ -463,7 +462,6 @@ def handle_restore_file(message):
         file_bytes = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_bytes.decode('utf-8'))
         
-        # Останавливаем старые таймеры
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -471,9 +469,7 @@ def handle_restore_file(message):
                 except:
                     pass
         
-        # Определяем формат файла
         if isinstance(backup_data, list):
-            # СТАРЫЙ ФОРМАТ: просто список напоминаний
             reminders.clear()
             global reminder_counter
             reminder_counter = 0
@@ -487,13 +483,11 @@ def handle_restore_file(message):
             
             bot.edit_message_text(
                 f"✅ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО! (старый формат)\n\n"
-                f"📊 Восстановлено напоминаний: {len(backup_data)}\n"
-                f"⚙️ Настройки переводчика не затронуты",
+                f"📊 Восстановлено напоминаний: {len(backup_data)}",
                 message.chat.id, status_msg.message_id
             )
             
         elif isinstance(backup_data, dict):
-            # НОВЫЙ ФОРМАТ: словарь с reminders и translator_settings
             if "reminders" in backup_data:
                 reminders.clear()
                 reminder_counter = 0
@@ -709,7 +703,7 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-# === СКРЫТЫЕ СООБЩЕНИЯ ===
+# === СКРЫТЫЕ СООБЩЕНИЯ (РАБОТАЮЩИЙ ПОИСК) ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -724,23 +718,40 @@ def inline_query(query):
         target_name = target_raw
         found = False
         
-        # Пробуем разные варианты
-        for username in [target_raw, target_raw.lower(), target_raw.capitalize(), target_raw.upper()]:
+        logger.info(f"🔍 Поиск пользователя: {target_raw}")
+        
+        # Поиск через прямой API запрос
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChat"
+        
+        # Пробуем разные варианты username
+        variants = [target_raw, target_raw.lower(), target_raw.capitalize(), target_raw.upper()]
+        variants = list(dict.fromkeys(variants))
+        
+        for username in variants:
             try:
-                info = bot.get_chat(f"@{username}")
-                target_id = info.id
-                target_name = info.first_name or info.username or target_raw
-                found = True
-                break
+                response = requests.post(url, json={"chat_id": f"@{username}"}, timeout=5)
+                result = response.json()
+                if result.get("ok"):
+                    info = result["result"]
+                    target_id = info["id"]
+                    target_name = info.get("first_name") or info.get("username") or target_raw
+                    found = True
+                    logger.info(f"✅ Найден: @{username} (ID: {target_id})")
+                    break
             except:
                 continue
         
+        # Если не нашли по username, пробуем как ID
         if not found and target_raw.isdigit():
             try:
-                info = bot.get_chat(int(target_raw))
-                target_id = int(target_raw)
-                target_name = info.first_name or f"Пользователь {target_raw}"
-                found = True
+                response = requests.post(url, json={"chat_id": int(target_raw)}, timeout=5)
+                result = response.json()
+                if result.get("ok"):
+                    info = result["result"]
+                    target_id = int(target_raw)
+                    target_name = info.get("first_name") or f"Пользователь {target_raw}"
+                    found = True
+                    logger.info(f"✅ Найден по ID: {target_raw}")
             except:
                 pass
         
@@ -750,9 +761,14 @@ def inline_query(query):
             result = types.InlineQueryResultArticle(
                 id="error",
                 title="❌ Пользователь не найден",
-                description=f"@{target_raw} - проверьте правильность",
+                description=f"{target_raw} - проверьте правильность",
                 input_message_content=types.InputTextMessageContent(
-                    f"❌ Пользователь {target_raw} не найден\n\nПроверьте username или используйте ID"
+                    f"❌ Пользователь {target_raw} не найден\n\n"
+                    f"📌 Возможные причины:\n"
+                    f"• Неправильно указан username\n"
+                    f"• У пользователя нет username\n"
+                    f"• Пользователь не писал боту\n\n"
+                    f"✅ Решение: узнайте ID у @userinfobot"
                 ),
                 reply_markup=markup
             )
@@ -787,6 +803,7 @@ def inline_query(query):
         )
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
+        logger.info(f"📨 Создано для {target_name} (ID: {target_id})")
         
     except Exception as e:
         logger.error(f"Inline error: {e}")
@@ -860,7 +877,7 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Бекап: /backup и /restore (поддержка старых файлов)")
-    logger.info("✅ Скрытые сообщения работают")
+    logger.info("✅ Скрытые сообщения: поиск через прямой API")
+    logger.info("✅ Бекап: /backup и /restore")
     
     app.run(host="0.0.0.0", port=port)
