@@ -40,27 +40,29 @@ secret_messages = {}
 
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-def get_sender_name(user):
-    if not user:
-        return "Неизвестный"
-    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
-    if not name:
-        name = user.username or "Пользователь"
-    if user.username:
-        return f"{name} (@{user.username})"
-    return name
+def get_sender_name(message):
+    """Правильное получение имени отправителя"""
+    if message.sender_chat:
+        return f"Анонимный админ"
+    if message.from_user:
+        user = message.from_user
+        name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+        if not name:
+            name = user.username or "Пользователь"
+        return name
+    return "Неизвестный"
 
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
-# === ОБЪЕДИНЕНИЕ ЧАТОВ ===
+# === ОБЪЕДИНЕНИЕ ЧАТОВ (БЕЗ MARKDOWN) ===
 @bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not (m.text and m.text.startswith('/')))
 def relay_messages(message):
-    if message.from_user.id == bot.get_me().id:
+    if message.from_user and message.from_user.id == bot.get_me().id:
         return
     
     chat_id = message.chat.id
-    sender_name = get_sender_name(message.from_user)
+    sender_name = get_sender_name(message)
     
     if chat_id == CHAT_A:
         target_chat = CHAT_B
@@ -71,94 +73,74 @@ def relay_messages(message):
     else:
         return
     
-    reply_info = ""
-    if message.reply_to_message:
-        original = message.reply_to_message
-        original_sender = get_sender_name(original.from_user)
-        reply_info = f"📨 *{sender_name}* ответил(а) *{original_sender}*\n\n"
-    
     try:
+        # ТЕКСТ - отправляем без Markdown
         if message.text:
-            text = f"{reply_info}📩 *{sender_name}*\n\n{message.text}"
-            bot.send_message(target_chat, text, parse_mode="Markdown", message_thread_id=target_thread)
+            text = f"📩 {sender_name}\n\n{message.text}"
+            bot.send_message(target_chat, text, parse_mode=None, message_thread_id=target_thread)
+        
+        # ФОТО
         elif message.photo:
-            caption = f"{reply_info}📩 *{sender_name}*"
+            caption = f"📩 {sender_name}"
             if message.caption:
                 caption += f"\n\n{message.caption}"
             bot.send_photo(target_chat, message.photo[-1].file_id, caption=caption[:1024],
-                          parse_mode="Markdown", message_thread_id=target_thread)
+                          parse_mode=None, message_thread_id=target_thread)
+        
+        # ВИДЕО
         elif message.video:
-            caption = f"{reply_info}📩 *{sender_name}*"
+            caption = f"📩 {sender_name}"
             if message.caption:
                 caption += f"\n\n{message.caption}"
             bot.send_video(target_chat, message.video.file_id, caption=caption[:1024],
-                          parse_mode="Markdown", message_thread_id=target_thread)
+                          parse_mode=None, message_thread_id=target_thread)
+        
+        # ДОКУМЕНТЫ
         elif message.document:
-            caption = f"{reply_info}📩 *{sender_name}*"
+            caption = f"📩 {sender_name}"
             if message.caption:
                 caption += f"\n\n{message.caption}"
             bot.send_document(target_chat, message.document.file_id, caption=caption[:1024],
-                            parse_mode="Markdown", message_thread_id=target_thread)
+                            parse_mode=None, message_thread_id=target_thread)
+        
+        # GIF (АНИМАЦИЯ)
         elif message.animation:
-            caption = f"{reply_info}📩 *{sender_name}*"
+            caption = f"📩 {sender_name}"
             if message.caption:
                 caption += f"\n\n{message.caption}"
             bot.send_animation(target_chat, message.animation.file_id, caption=caption[:1024],
-                              parse_mode="Markdown", message_thread_id=target_thread)
+                              parse_mode=None, message_thread_id=target_thread)
+        
+        # СТИКЕРЫ
         elif message.sticker:
             bot.send_sticker(target_chat, message.sticker.file_id, message_thread_id=target_thread)
-            bot.send_message(target_chat, f"{reply_info}📩 *{sender_name}* (стикер)",
-                            parse_mode="Markdown", message_thread_id=target_thread)
+            bot.send_message(target_chat, f"📩 {sender_name} (стикер)", parse_mode=None,
+                            message_thread_id=target_thread)
+        
+        # ГОЛОСОВЫЕ
         elif message.voice:
-            bot.send_voice(target_chat, message.voice.file_id, caption=f"{reply_info}📩 *{sender_name}*",
-                          parse_mode="Markdown", message_thread_id=target_thread)
+            bot.send_voice(target_chat, message.voice.file_id, caption=f"📩 {sender_name}",
+                          parse_mode=None, message_thread_id=target_thread)
+        
+        # АУДИО
         elif message.audio:
-            bot.send_audio(target_chat, message.audio.file_id, caption=f"{reply_info}📩 *{sender_name}*",
-                          parse_mode="Markdown", message_thread_id=target_thread)
+            bot.send_audio(target_chat, message.audio.file_id, caption=f"📩 {sender_name}",
+                          parse_mode=None, message_thread_id=target_thread)
+        
+        # ВИДЕОСООБЩЕНИЯ
         elif message.video_note:
             bot.send_video_note(target_chat, message.video_note.file_id, message_thread_id=target_thread)
-            bot.send_message(target_chat, f"{reply_info}📩 *{sender_name}* (видеосообщение)",
-                            parse_mode="Markdown", message_thread_id=target_thread)
+            bot.send_message(target_chat, f"📩 {sender_name} (видеосообщение)", parse_mode=None,
+                            message_thread_id=target_thread)
+        
         else:
-            bot.send_message(target_chat, f"{reply_info}📩 *{sender_name}*\n\n[Неизвестный тип сообщения]",
-                            parse_mode="Markdown", message_thread_id=target_thread)
+            bot.send_message(target_chat, f"📩 {sender_name}\n\n[Сообщение]",
+                            parse_mode=None, message_thread_id=target_thread)
+        
         logger.info(f"✅ Переслано из {chat_id} в {target_chat}")
+        
     except Exception as e:
         logger.error(f"Ошибка пересылки: {e}")
-
-# === КЭШ И ИСТОРИЯ ===
-ai_cache = {}
-user_histories = {}
-MAX_HISTORY = 10
-CACHE_TTL = 3600
-
-# === НАСТРОЙКИ ПЕРЕВОДЧИКА ===
-TRANSLATOR_SETTINGS_FILE = os.path.join(tempfile.gettempdir(), "translator_settings.json")
-
-def load_translator_settings():
-    if os.path.exists(TRANSLATOR_SETTINGS_FILE):
-        try:
-            with open(TRANSLATOR_SETTINGS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_translator_settings(settings):
-    try:
-        with open(TRANSLATOR_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
-    except:
-        pass
-
-translator_settings = load_translator_settings()
-
-def is_translator_enabled(chat_id):
-    return translator_settings.get(str(chat_id), False)
-
-def set_translator_enabled(chat_id, enabled):
-    translator_settings[str(chat_id)] = enabled
-    save_translator_settings(translator_settings)
 
 # === НАПОМИНАНИЯ ===
 REMINDERS_FILE = "reminders.json"
@@ -276,32 +258,27 @@ def start_all_reminders():
     for r in reminders:
         schedule_reminder(r)
 
-# === ОСНОВНЫЕ ФУНКЦИИ ===
+# === ИИ ===
+ai_cache = {}
+user_histories = {}
+MAX_HISTORY = 10
+CACHE_TTL = 3600
+
 def ask_groq(user_id, prompt):
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен."
     cache_key = hashlib.md5(prompt.lower().encode()).hexdigest()
-    if cache_key in ai_cache:
-        cached_time, cached_answer = ai_cache[cache_key]
-        if time.time() - cached_time < CACHE_TTL:
-            return cached_answer
+    if cache_key in ai_cache and time.time() - ai_cache[cache_key][0] < CACHE_TTL:
+        return ai_cache[cache_key][1]
     if user_id not in user_histories:
         user_histories[user_id] = []
     user_histories[user_id].append({"role": "user", "content": prompt})
     if len(user_histories[user_id]) > MAX_HISTORY:
         user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
-    messages = [
-        {"role": "system", "content": "Отвечай кратко, по существу."},
-        *user_histories[user_id]
-    ]
+    messages = [{"role": "system", "content": "Отвечай кратко, по существу."}, *user_histories[user_id]]
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "qwen/qwen3-32b",
-        "messages": messages,
-        "max_tokens": 800,
-        "temperature": 0.2
-    }
+    data = {"model": "qwen/qwen3-32b", "messages": messages, "max_tokens": 800, "temperature": 0.2}
     try:
         response = requests.post(url, headers=headers, json=data, timeout=30)
         if response.status_code == 200:
@@ -318,23 +295,14 @@ def web_search(query):
     try:
         encoded_query = urllib.parse.quote(query)
         url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         results = soup.find_all('a', class_='result__a', limit=5)
         if not results:
             return None
-        search_results = []
-        for result in results:
-            title = result.get_text()
-            link = result.get('href')
-            if link and not link.startswith('/'):
-                search_results.append(f"• [{title}]({link})")
-        if search_results:
-            return "🔍 Результаты поиска:\n\n" + "\n".join(search_results)
-        return None
-    except Exception as e:
-        logger.error(f"Search error: {e}")
+        search_results = [f"• {r.get_text()}\n{r.get('href')}" for r in results if r.get('href')]
+        return "🔍 Результаты поиска:\n\n" + "\n".join(search_results)
+    except:
         return None
 
 def search_wikipedia(query):
@@ -355,8 +323,8 @@ def help_command(message):
 
 ⏰ Напоминания (МСК):
 /remind 15:30 ежедневно текст
-/reminds — список
-/delremind ID — удалить
+/reminds - список
+/delremind ID - удалить
 
 🤖 ИИ: /ai вопрос
 
@@ -364,7 +332,7 @@ def help_command(message):
 
 🎲 Игры: /roll | /coin
 
-👑 Админ: /backup - бекап напоминаний"""
+👑 Админ: /backup"""
     bot.reply_to(message, help_text)
 
 @bot.message_handler(commands=['ai'])
@@ -373,11 +341,6 @@ def ai_command(message):
     if not prompt:
         bot.reply_to(message, "ℹ️ /ai Как дела?")
         return
-    if any(word in prompt.lower() for word in ["найди", "поищи", "google"]):
-        search_results = web_search(prompt)
-        if search_results:
-            bot.reply_to(message, search_results, parse_mode="Markdown", disable_web_page_preview=True)
-            return
     msg = bot.reply_to(message, "🤖 Думаю...")
     answer = ask_groq(message.from_user.id, prompt)
     bot.edit_message_text(answer, message.chat.id, msg.message_id)
@@ -388,7 +351,7 @@ def wiki_command(message):
     if not query:
         bot.reply_to(message, "ℹ️ /wiki Python")
         return
-    bot.reply_to(message, search_wikipedia(query), parse_mode="Markdown", disable_web_page_preview=True)
+    bot.reply_to(message, search_wikipedia(query))
 
 @bot.message_handler(commands=['roll'])
 def roll_command(message):
@@ -412,13 +375,7 @@ def backup_reminders(message):
         bot.reply_to(message, "❌ Нет прав")
         return
     try:
-        backup_data = []
-        for r in reminders:
-            r_copy = {}
-            for k, v in r.items():
-                if k not in ["timer", "_timer"]:
-                    r_copy[k] = v
-            backup_data.append(r_copy)
+        backup_data = [{k: v for k, v in r.items() if k not in ["timer", "_timer"]} for r in reminders]
         backup_file = f"reminders_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(backup_file, 'w', encoding='utf-8') as f:
             json.dump(backup_data, f, ensure_ascii=False, indent=2)
@@ -434,7 +391,7 @@ def restore_reminders(message):
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав")
         return
-    bot.send_message(message.chat.id, "📥 Отправьте файл бекапа (reminders_backup_*.json)")
+    bot.send_message(message.chat.id, "📥 Отправьте файл бекапа")
 
 @bot.message_handler(content_types=['document'])
 def handle_backup_file(message):
@@ -443,7 +400,7 @@ def handle_backup_file(message):
     if not message.document.file_name.startswith("reminders_backup_"):
         return
     
-    status_msg = bot.send_message(message.chat.id, "🔄 Восстанавливаю напоминания...")
+    status_msg = bot.send_message(message.chat.id, "🔄 Восстанавливаю...")
     try:
         file_info = bot.get_file(message.document.file_id)
         file_bytes = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
@@ -468,20 +425,18 @@ def handle_backup_file(message):
         start_all_reminders()
         
         bot.delete_message(message.chat.id, status_msg.message_id)
-        bot.send_message(message.chat.id, f"✅ Восстановлено {len(backup_data)} напоминаний!\n\nФайл: {message.document.file_name}")
+        bot.send_message(message.chat.id, f"✅ Восстановлено {len(backup_data)} напоминаний!")
         logger.info(f"Восстановлено {len(backup_data)} напоминаний")
     except Exception as e:
-        logger.error(f"Ошибка восстановления: {e}")
+        logger.error(f"Ошибка: {e}")
         bot.delete_message(message.chat.id, status_msg.message_id)
         bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
 
-# === НАПОМИНАНИЯ КОМАНДЫ (С ПОДДЕРЖКОЙ ТОПИКОВ) ===
+# === НАПОМИНАНИЯ КОМАНДЫ ===
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
     chat_id = message.chat.id
     thread_id = message.message_thread_id
-    user_id = message.from_user.id
-    
     try:
         bot.delete_message(chat_id, message.message_id)
     except:
@@ -489,14 +444,11 @@ def add_reminder(message):
     
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        msg = bot.send_message(chat_id, "ℹ️ /remind 15:30 ежедневно текст", 
-                               message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, "ℹ️ /remind 15:30 ежедневно текст", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id)
         return
     
-    time_str = parts[1]
-    reminder_text = parts[2]
-    
+    time_str, reminder_text = parts[1], parts[2]
     reminder_text_clean = reminder_text
     for kw in ["ежедневно", "каждый", "daily"]:
         if reminder_text_clean.lower().startswith(kw):
@@ -505,18 +457,16 @@ def add_reminder(message):
     
     hours, minutes, weekly_day, daily = parse_time_with_day(time_str)
     if hours is None:
-        msg = bot.send_message(chat_id, "❌ Неправильный формат. Пример: /remind 15:30 текст",
-                               message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, "❌ Неправильный формат. Пример: /remind 15:30 текст", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id)
         return
     
     global reminder_counter
     reminder_counter += 1
-    
     reminder = {
         "id": reminder_counter,
         "chat_id": chat_id,
-        "user_id": user_id,
+        "user_id": message.from_user.id,
         "thread_id": thread_id,
         "text": reminder_text_clean,
         "hours": hours,
@@ -529,24 +479,19 @@ def add_reminder(message):
     save_reminders(reminders)
     schedule_reminder(reminder)
     
-    now_moscow = datetime.now(MOSCOW_TZ)
-    target_today = now_moscow.replace(hour=hours, minute=minutes)
     if daily:
         period = "каждый день"
     elif weekly_day is not None:
         days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
         period = f"каждый {days[weekly_day]}"
     else:
+        now_moscow = datetime.now(MOSCOW_TZ)
+        target_today = now_moscow.replace(hour=hours, minute=minutes)
         period = "сегодня" if target_today > now_moscow else "завтра"
     
-    location = f"в топик {thread_id}" if thread_id else "в этот чат"
-    
+    location = f"в топик" if thread_id else "в этот чат"
     msg = bot.send_message(chat_id, 
-        f"✅ Напоминание добавлено!\n\n"
-        f"⏰ {period} в {hours:02d}:{minutes:02d} МСК\n"
-        f"📍 Придёт {location}\n"
-        f"📝 {reminder_text_clean}\n"
-        f"🆔 ID: {reminder_counter}",
+        f"✅ Напоминание добавлено!\n\n⏰ {period} в {hours:02d}:{minutes:02d} МСК\n📍 {location}\n📝 {reminder_text_clean}\n🆔 ID: {reminder_counter}",
         message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id)
 
@@ -554,30 +499,23 @@ def add_reminder(message):
 def list_reminders(message):
     chat_id = message.chat.id
     thread_id = message.message_thread_id
-    
     try:
         bot.delete_message(chat_id, message.message_id)
     except:
         pass
     
-    user_reminders = []
-    for r in reminders:
-        if r.get("chat_id") != chat_id:
-            continue
-        if thread_id and r.get("thread_id") != thread_id:
-            continue
-        if thread_id and not r.get("thread_id"):
-            continue
-        user_reminders.append(r)
+    user_reminders = [r for r in reminders if r.get("chat_id") == chat_id]
+    if thread_id:
+        user_reminders = [r for r in user_reminders if r.get("thread_id") == thread_id]
+    else:
+        user_reminders = [r for r in user_reminders if not r.get("thread_id")]
     
     if not user_reminders:
-        msg = bot.send_message(chat_id, 
-            "📭 В этом чате/топике нет активных напоминаний.\n\nСоздайте: /remind 15:30 ежедневно текст",
-            message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, "📭 Нет активных напоминаний", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 15)
         return
     
-    response = "📋 Активные напоминания в этом чате/топике:\n\n"
+    response = "📋 Активные напоминания:\n\n"
     for r in user_reminders:
         if r.get("daily"):
             period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}"
@@ -586,9 +524,7 @@ def list_reminders(message):
             period = f"каждый {days[r['weekly_day']]} в {r['hours']:02d}:{r['minutes']:02d}"
         else:
             period = f"в {r['hours']:02d}:{r['minutes']:02d}"
-        
-        topic_info = f" (топик {r['thread_id']})" if r.get('thread_id') else ""
-        response += f"🆔 {r['id']} - {period}{topic_info}\n   📝 {r['text'][:50]}\n\n"
+        response += f"🆔 {r['id']} - {period}\n   📝 {r['text'][:50]}\n\n"
     
     msg = bot.send_message(chat_id, response, message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 30)
@@ -597,7 +533,6 @@ def list_reminders(message):
 def delete_reminder(message):
     chat_id = message.chat.id
     thread_id = message.message_thread_id
-    
     try:
         bot.delete_message(chat_id, message.message_id)
     except:
@@ -605,8 +540,7 @@ def delete_reminder(message):
     
     parts = message.text.split()
     if len(parts) < 2:
-        msg = bot.send_message(chat_id, "ℹ️ /delremind ID\n\nПосмотреть ID можно через /reminds",
-                               message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, "ℹ️ /delremind ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id)
         return
     
@@ -615,16 +549,13 @@ def delete_reminder(message):
         for i, r in enumerate(reminders):
             if r["id"] == rid:
                 if r.get("chat_id") != chat_id:
-                    msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не найдено в этом чате",
-                                          message_thread_id=thread_id)
+                    msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не найдено", message_thread_id=thread_id)
                     delete_after_delay(chat_id, msg.message_id, 15)
                     return
                 if thread_id and r.get("thread_id") != thread_id:
-                    msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не найдено в этом топике",
-                                          message_thread_id=thread_id)
+                    msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не в этом топике", message_thread_id=thread_id)
                     delete_after_delay(chat_id, msg.message_id, 15)
                     return
-                
                 if "_timer" in r:
                     try:
                         r["_timer"].cancel()
@@ -632,19 +563,43 @@ def delete_reminder(message):
                         pass
                 reminders.pop(i)
                 save_reminders(reminders)
-                msg = bot.send_message(chat_id, f"✅ Напоминание {rid} удалено",
-                                      message_thread_id=thread_id)
+                msg = bot.send_message(chat_id, f"✅ Напоминание {rid} удалено", message_thread_id=thread_id)
                 delete_after_delay(chat_id, msg.message_id)
                 return
-        msg = bot.send_message(chat_id, f"❌ Напоминание с ID {rid} не найдено",
-                              message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не найдено", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 15)
     except:
-        msg = bot.send_message(chat_id, "❌ Неверный ID. Используйте цифры, например: /delremind 5",
-                              message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id)
 
 # === ПЕРЕВОДЧИК ===
+def load_translator_settings():
+    f = os.path.join(tempfile.gettempdir(), "translator_settings.json")
+    if os.path.exists(f):
+        try:
+            with open(f, 'r') as fp:
+                return json.load(fp)
+        except:
+            return {}
+    return {}
+
+def save_translator_settings(settings):
+    f = os.path.join(tempfile.gettempdir(), "translator_settings.json")
+    try:
+        with open(f, 'w') as fp:
+            json.dump(settings, fp)
+    except:
+        pass
+
+translator_settings = load_translator_settings()
+
+def is_translator_enabled(chat_id):
+    return translator_settings.get(str(chat_id), False)
+
+def set_translator_enabled(chat_id, enabled):
+    translator_settings[str(chat_id)] = enabled
+    save_translator_settings(translator_settings)
+
 @bot.message_handler(commands=['т'])
 def translate_command(message):
     chat_id = message.chat.id
@@ -666,7 +621,9 @@ def auto_translate(message):
     chat_id = message.chat.id
     if not is_translator_enabled(chat_id):
         return
-    if message.from_user.id == bot.get_me().id or message.text.startswith('/') or message.text.startswith('📩') or message.text.startswith('📨'):
+    if message.from_user.id == bot.get_me().id or message.text.startswith('/'):
+        return
+    if message.text.startswith('📩'):
         return
     text = message.text.strip()
     if not text or len(text) < 3:
@@ -677,8 +634,8 @@ def auto_translate(message):
         translated = translator.translate(text)
         if translated and translated != text:
             bot.reply_to(message, translated)
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
+    except:
+        pass
 
 # === СКРЫТЫЕ СООБЩЕНИЯ ===
 @bot.inline_handler(func=lambda query: True)
@@ -690,8 +647,6 @@ def inline_query(query):
         target_raw, content = text.split(maxsplit=1)
         target_raw = target_raw.lstrip("@")
         
-        target_id = None
-        target_name = target_raw
         try:
             target_info = bot.get_chat(f"@{target_raw}")
             target_id = target_info.id
@@ -716,7 +671,6 @@ def inline_query(query):
             "target_name": target_name,
             "content": content,
             "sender": query.from_user.first_name,
-            "sender_id": query.from_user.id,
             "expires": time.time() + 86400
         }
         markup = InlineKeyboardMarkup()
@@ -726,7 +680,7 @@ def inline_query(query):
             title=f"📨 Для {target_name}",
             description=content[:50],
             input_message_content=types.InputTextMessageContent(
-                f"🔐 Скрытое сообщение\nОт: {query.from_user.first_name}\nДля: {target_name}"
+                f"🔐 Скрытое сообщение\nОт: {query.from_user.first_name}"
             ),
             reply_markup=markup
         )
@@ -742,10 +696,10 @@ def handle_secret_read(call):
         return
     data = secret_messages[msg_id]
     if call.from_user.id != data["target_id"]:
-        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
         return
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Срок действия истёк", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Срок истёк", show_alert=True)
         del secret_messages[msg_id]
         return
     try:
@@ -761,26 +715,21 @@ def clean_old_secrets():
     for mid in to_delete:
         del secret_messages[mid]
 
-def periodic_secret_cleanup():
-    while True:
-        time.sleep(3600)
-        clean_old_secrets()
-
-threading.Thread(target=periodic_secret_cleanup, daemon=True).start()
+threading.Thread(target=lambda: (time.sleep(3600), clean_old_secrets()), daemon=True).start()
 
 # === ПОСТЫ В КАНАЛАХ ===
 @bot.channel_post_handler(func=lambda m: True)
 def channel_reaction(message):
-    allowed_channels = [-1001317416582, -1002185590715]
-    if message.chat.id not in allowed_channels:
+    allowed = [-1001317416582, -1002185590715]
+    if message.chat.id not in allowed:
         return
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
         data = {"chat_id": message.chat.id, "message_id": message.message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
         requests.post(url, json=data, timeout=5)
-        logger.info(f"🔥 Реакция на пост {message.message_id}")
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.info(f"🔥 Реакция на {message.message_id}")
+    except:
+        pass
 
 # === ЗАПУСК ===
 start_all_reminders()
@@ -805,5 +754,4 @@ if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=webhook_url)
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик B: {CHAT_B_THREAD}")
     app.run(host="0.0.0.0", port=port)
