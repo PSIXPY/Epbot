@@ -53,109 +53,7 @@ def get_sender_name(user):
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
-# === ОБЪЕДИНЕНИЕ ЧАТОВ (С ПОДДЕРЖКОЙ ОТВЕТОВ) ===
-@bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not (m.text and m.text.startswith('/')))
-def relay_messages(message):
-    if message.from_user.id == bot.get_me().id:
-        return
-    
-    chat_id = message.chat.id
-    sender_name = get_sender_name(message.from_user)
-    
-    # Формируем информацию об ответе
-    reply_info = ""
-    if message.reply_to_message:
-        original = message.reply_to_message
-        original_sender = get_sender_name(original.from_user)
-        reply_info = f"📨 *{sender_name}* ответил(а) *{original_sender}*\n\n"
-    
-    # Из чата A в B
-    if chat_id == CHAT_A:
-        try:
-            if message.text:
-                bot.send_message(CHAT_B, f"{reply_info}📩 *{sender_name}*\n\n{message.text}", 
-                               parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            elif message.photo:
-                caption = f"{reply_info}📩 *{sender_name}*"
-                if message.caption:
-                    caption += f"\n\n{message.caption}"
-                bot.send_photo(CHAT_B, message.photo[-1].file_id, caption=caption,
-                             parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            elif message.video:
-                caption = f"{reply_info}📩 *{sender_name}*"
-                if message.caption:
-                    caption += f"\n\n{message.caption}"
-                bot.send_video(CHAT_B, message.video.file_id, caption=caption,
-                             parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            elif message.document:
-                caption = f"{reply_info}📩 *{sender_name}*"
-                if message.caption:
-                    caption += f"\n\n{message.caption}"
-                bot.send_document(CHAT_B, message.document.file_id, caption=caption,
-                                parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            elif message.animation:
-                caption = f"{reply_info}📩 *{sender_name}*"
-                if message.caption:
-                    caption += f"\n\n{message.caption}"
-                bot.send_animation(CHAT_B, message.animation.file_id, caption=caption,
-                                 parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            elif message.sticker:
-                bot.send_sticker(CHAT_B, message.sticker.file_id, message_thread_id=CHAT_B_THREAD)
-                bot.send_message(CHAT_B, f"{reply_info}📩 *{sender_name}* (стикер)",
-                               parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            elif message.voice:
-                bot.send_voice(CHAT_B, message.voice.file_id, caption=f"{reply_info}📩 *{sender_name}*",
-                             parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            elif message.audio:
-                bot.send_audio(CHAT_B, message.audio.file_id, caption=f"{reply_info}📩 *{sender_name}*",
-                             parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
-            logger.info(f"✅ Переслано из A в B")
-        except Exception as e:
-            logger.error(f"Ошибка A→B: {e}")
-    
-    # Из чата B в A (только из нужного топика)
-    elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
-        try:
-            if message.text:
-                bot.send_message(CHAT_A, f"{reply_info}📩 *{sender_name}*\n\n{message.text}", 
-                               parse_mode="Markdown")
-            elif message.photo:
-                caption = f"{reply_info}📩 *{sender_name}*"
-                if message.caption:
-                    caption += f"\n\n{message.caption}"
-                bot.send_photo(CHAT_A, message.photo[-1].file_id, caption=caption,
-                             parse_mode="Markdown")
-            elif message.video:
-                caption = f"{reply_info}📩 *{sender_name}*"
-                if message.caption:
-                    caption += f"\n\n{message.caption}"
-                bot.send_video(CHAT_A, message.video.file_id, caption=caption,
-                             parse_mode="Markdown")
-            elif message.document:
-                caption = f"{reply_info}📩 *{sender_name}*"
-                if message.caption:
-                    caption += f"\n\n{message.caption}"
-                bot.send_document(CHAT_A, message.document.file_id, caption=caption,
-                                parse_mode="Markdown")
-            elif message.animation:
-                caption = f"{reply_info}📩 *{sender_name}*"
-                if message.caption:
-                    caption += f"\n\n{message.caption}"
-                bot.send_animation(CHAT_A, message.animation.file_id, caption=caption,
-                                 parse_mode="Markdown")
-            elif message.sticker:
-                bot.send_sticker(CHAT_A, message.sticker.file_id)
-                bot.send_message(CHAT_A, f"{reply_info}📩 *{sender_name}* (стикер)",
-                               parse_mode="Markdown")
-            elif message.voice:
-                bot.send_voice(CHAT_A, message.voice.file_id, caption=f"{reply_info}📩 *{sender_name}*",
-                             parse_mode="Markdown")
-            elif message.audio:
-                bot.send_audio(CHAT_A, message.audio.file_id, caption=f"{reply_info}📩 *{sender_name}*",
-                             parse_mode="Markdown")
-            logger.info(f"✅ Переслано из B в A")
-        except Exception as e:
-            logger.error(f"Ошибка B→A: {e}")
+# === ПЕРЕСЫЛКА МЕЖДУ ЧАТАМИ ОТКЛЮЧЕНА ===
 
 # === КЭШ И ИСТОРИЯ ===
 ai_cache = {}
@@ -838,7 +736,10 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("✅ Пересылка с ответами")
+    logger.info("✅ Пересылка между чатами ОТКЛЮЧЕНА")
+    logger.info("✅ Напоминания работают")
+    logger.info("✅ Википедия работает")
+    logger.info("✅ ИИ работает")
+    logger.info("✅ Бекап работает")
     
     app.run(host="0.0.0.0", port=port)
