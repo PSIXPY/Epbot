@@ -55,7 +55,7 @@ def get_sender_name(user):
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
-# === ОБЪЕДИНЕНИЕ ЧАТОВ (ПОДДЕРЖКА ВСЕХ ТИПОВ СООБЩЕНИЙ) ===
+# === ОБЪЕДИНЕНИЕ ЧАТОВ (ПОДДЕРЖКА ВСЕХ ТИПОВ ФАЙЛОВ) ===
 @bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not (m.text and m.text.startswith('/')))
 def relay_messages(message):
     if message.from_user.id == bot.get_me().id:
@@ -64,6 +64,7 @@ def relay_messages(message):
     chat_id = message.chat.id
     sender_name = get_sender_name(message.from_user)
     
+    # Информация об ответе (если есть)
     reply_info = ""
     if message.reply_to_message:
         original = message.reply_to_message
@@ -71,58 +72,81 @@ def relay_messages(message):
         reply_info = f"📨 *{sender_name}* ответил(а) *{original_sender}*\n\n"
     
     def send_to_target(target_chat_id, target_thread_id):
-        if message.text:
-            text = f"{reply_info}📩 *{sender_name}*\n\n{message.text}"
-            bot.send_message(target_chat_id, text, parse_mode="Markdown", 
-                           message_thread_id=target_thread_id)
-        elif message.photo:
-            caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
-            bot.send_photo(target_chat_id, message.photo[-1].file_id, caption=caption[:1024],
-                         parse_mode="Markdown", message_thread_id=target_thread_id)
-        elif message.video:
-            caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
-            bot.send_video(target_chat_id, message.video.file_id, caption=caption[:1024],
-                         parse_mode="Markdown", message_thread_id=target_thread_id)
-        elif message.document:
-            caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
-            bot.send_document(target_chat_id, message.document.file_id, caption=caption[:1024],
-                            parse_mode="Markdown", message_thread_id=target_thread_id)
-        elif message.audio:
-            caption = f"{reply_info}📩 *{sender_name}*"
-            bot.send_audio(target_chat_id, message.audio.file_id, caption=caption[:1024],
-                          parse_mode="Markdown", message_thread_id=target_thread_id)
-        elif message.voice:
-            caption = f"{reply_info}📩 *{sender_name}*"
-            bot.send_voice(target_chat_id, message.voice.file_id, caption=caption[:1024],
-                          parse_mode="Markdown", message_thread_id=target_thread_id)
-        elif message.animation:
-            caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
-            bot.send_animation(target_chat_id, message.animation.file_id, caption=caption[:1024],
-                             parse_mode="Markdown", message_thread_id=target_thread_id)
-        elif message.sticker:
-            bot.send_sticker(target_chat_id, message.sticker.file_id,
-                           message_thread_id=target_thread_id)
-            bot.send_message(target_chat_id, f"📩 *{sender_name}* (стикер)",
-                           parse_mode="Markdown", message_thread_id=target_thread_id)
-        elif message.video_note:
-            bot.send_video_note(target_chat_id, message.video_note.file_id,
+        try:
+            # ТЕКСТ
+            if message.text:
+                text = f"{reply_info}📩 *{sender_name}*\n\n{message.text}"
+                bot.send_message(target_chat_id, text, parse_mode="Markdown", 
                                message_thread_id=target_thread_id)
-            bot.send_message(target_chat_id, f"📩 *{sender_name}* (видеосообщение)",
-                           parse_mode="Markdown", message_thread_id=target_thread_id)
+            
+            # ФОТО
+            elif message.photo:
+                caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
+                bot.send_photo(target_chat_id, message.photo[-1].file_id, caption=caption[:1024],
+                             parse_mode="Markdown", message_thread_id=target_thread_id)
+            
+            # ВИДЕО
+            elif message.video:
+                caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
+                bot.send_video(target_chat_id, message.video.file_id, caption=caption[:1024],
+                             parse_mode="Markdown", message_thread_id=target_thread_id)
+            
+            # ДОКУМЕНТЫ (PDF, DOCX и др.)
+            elif message.document:
+                caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
+                bot.send_document(target_chat_id, message.document.file_id, caption=caption[:1024],
+                                parse_mode="Markdown", message_thread_id=target_thread_id)
+            
+            # АУДИО (музыка)
+            elif message.audio:
+                caption = f"{reply_info}📩 *{sender_name}*"
+                bot.send_audio(target_chat_id, message.audio.file_id, caption=caption[:1024],
+                              parse_mode="Markdown", message_thread_id=target_thread_id)
+            
+            # ГОЛОСОВЫЕ
+            elif message.voice:
+                caption = f"{reply_info}📩 *{sender_name}*"
+                bot.send_voice(target_chat_id, message.voice.file_id, caption=caption[:1024],
+                              parse_mode="Markdown", message_thread_id=target_thread_id)
+            
+            # GIF (АНИМАЦИЯ)
+            elif message.animation:
+                caption = f"{reply_info}📩 *{sender_name}*\n\n{message.caption or ''}"
+                bot.send_animation(target_chat_id, message.animation.file_id, caption=caption[:1024],
+                                 parse_mode="Markdown", message_thread_id=target_thread_id)
+                logger.info(f"📹 Переслана GIF: {message.animation.file_id}")
+            
+            # СТИКЕРЫ
+            elif message.sticker:
+                bot.send_sticker(target_chat_id, message.sticker.file_id,
+                               message_thread_id=target_thread_id)
+                bot.send_message(target_chat_id, f"📩 *{sender_name}* (стикер)",
+                               parse_mode="Markdown", message_thread_id=target_thread_id)
+            
+            # КРУГЛЫЕ ВИДЕО
+            elif message.video_note:
+                bot.send_video_note(target_chat_id, message.video_note.file_id,
+                                   message_thread_id=target_thread_id)
+                bot.send_message(target_chat_id, f"📩 *{sender_name}* (видеосообщение)",
+                               parse_mode="Markdown", message_thread_id=target_thread_id)
+            
+            else:
+                logger.warning(f"Неизвестный тип сообщения: {message.content_type}")
+                bot.send_message(target_chat_id, f"📩 *{sender_name}*\n\n[Неизвестный тип сообщения]",
+                               parse_mode="Markdown", message_thread_id=target_thread_id)
+                
+        except Exception as e:
+            logger.error(f"Ошибка отправки: {e}")
     
+    # Из чата A в B
     if chat_id == CHAT_A:
-        try:
-            send_to_target(CHAT_B, CHAT_B_THREAD)
-            logger.info(f"✅ Переслано из A в B")
-        except Exception as e:
-            logger.error(f"Ошибка A→B: {e}")
+        send_to_target(CHAT_B, CHAT_B_THREAD)
+        logger.info(f"✅ Переслано из A в B")
     
+    # Из чата B в A (только из нужного топика)
     elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
-        try:
-            send_to_target(CHAT_A, None)
-            logger.info(f"✅ Переслано из B в A")
-        except Exception as e:
-            logger.error(f"Ошибка B→A: {e}")
+        send_to_target(CHAT_A, None)
+        logger.info(f"✅ Переслано из B в A")
 
 # === КЭШ И ИСТОРИЯ ДЛЯ ИИ ===
 ai_cache = {}
@@ -995,7 +1019,7 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат Б: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info(f"👑 Админ ID: {ADMIN_ID}")
-    logger.info("✅ Все типы сообщений пересылаются")
+    logger.info("✅ Все типы сообщений пересылаются (текст, фото, видео, GIF, стикеры, аудио)")
     logger.info("✅ Бекап командой /backup")
     
     app.run(host="0.0.0.0", port=port)
