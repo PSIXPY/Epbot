@@ -442,7 +442,7 @@ def restore_full(message):
         return
     bot.send_message(message.chat.id, "📥 Отправьте файл бекапа (full_backup_*.json)")
 
-# === ОБРАБОТЧИК ФАЙЛОВ ДЛЯ ВОССТАНОВЛЕНИЯ ===
+# === ОБРАБОТЧИК ФАЙЛОВ ДЛЯ ВОССТАНОВЛЕНИЯ (ПОДДЕРЖКА ОБОИХ ФОРМАТОВ) ===
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
     logger.info(f"📁 Файл: {message.document.file_name}, от: {message.from_user.id}")
@@ -451,8 +451,9 @@ def handle_restore_file(message):
         bot.reply_to(message, "❌ У вас нет прав для восстановления")
         return
     
-    if not message.document.file_name.startswith("full_backup_"):
-        bot.reply_to(message, "❌ Это не файл бекапа. Файл должен начинаться с full_backup_")
+    # Поддерживаем оба формата
+    if not (message.document.file_name.startswith("full_backup_") or message.document.file_name.startswith("reminders_backup_")):
+        bot.reply_to(message, "❌ Это не файл бекапа. Файл должен начинаться с full_backup_ или reminders_backup_")
         return
     
     status_msg = bot.reply_to(message, "🔄 Восстанавливаю...")
@@ -462,6 +463,7 @@ def handle_restore_file(message):
         file_bytes = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_bytes.decode('utf-8'))
         
+        # Останавливаем старые таймеры
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -469,30 +471,56 @@ def handle_restore_file(message):
                 except:
                     pass
         
-        reminders.clear()
-        global reminder_counter
-        reminder_counter = 0
-        for r in backup_data.get("reminders", []):
-            reminders.append(r)
-            if r.get("id", 0) > reminder_counter:
-                reminder_counter = r.get("id", 0)
+        # Определяем формат файла
+        if isinstance(backup_data, list):
+            # СТАРЫЙ ФОРМАТ: просто список напоминаний
+            reminders.clear()
+            global reminder_counter
+            reminder_counter = 0
+            for r in backup_data:
+                reminders.append(r)
+                if r.get("id", 0) > reminder_counter:
+                    reminder_counter = r.get("id", 0)
+            
+            save_reminders(reminders)
+            start_all_reminders()
+            
+            bot.edit_message_text(
+                f"✅ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО! (старый формат)\n\n"
+                f"📊 Восстановлено напоминаний: {len(backup_data)}\n"
+                f"⚙️ Настройки переводчика не затронуты",
+                message.chat.id, status_msg.message_id
+            )
+            
+        elif isinstance(backup_data, dict):
+            # НОВЫЙ ФОРМАТ: словарь с reminders и translator_settings
+            if "reminders" in backup_data:
+                reminders.clear()
+                reminder_counter = 0
+                for r in backup_data["reminders"]:
+                    reminders.append(r)
+                    if r.get("id", 0) > reminder_counter:
+                        reminder_counter = r.get("id", 0)
+                
+                save_reminders(reminders)
+                start_all_reminders()
+            
+            if "translator_settings" in backup_data:
+                global translator_settings
+                translator_settings = backup_data["translator_settings"]
+                save_translator_settings(translator_settings)
+            
+            bot.edit_message_text(
+                f"✅ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО! (новый формат)\n\n"
+                f"📊 Восстановлено напоминаний: {len(backup_data.get('reminders', []))}\n"
+                f"⚙️ Восстановлено настроек переводчика: {len(backup_data.get('translator_settings', {}))}",
+                message.chat.id, status_msg.message_id
+            )
+        else:
+            bot.edit_message_text(f"❌ Неизвестный формат файла", message.chat.id, status_msg.message_id)
+            return
         
-        save_reminders(reminders)
-        start_all_reminders()
-        
-        if "translator_settings" in backup_data:
-            global translator_settings
-            translator_settings = backup_data["translator_settings"]
-            save_translator_settings(translator_settings)
-        
-        bot.edit_message_text(
-            f"✅ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО!\n\n"
-            f"📊 Напоминаний: {len(backup_data.get('reminders', []))}\n"
-            f"⚙️ Настроек переводчика: {len(backup_data.get('translator_settings', {}))}",
-            message.chat.id, status_msg.message_id
-        )
-        
-        logger.info(f"📦 Восстановлено {len(backup_data.get('reminders', []))} напоминаний")
+        logger.info(f"📦 Восстановление завершено")
         
     except Exception as e:
         logger.error(f"Ошибка: {e}")
@@ -696,14 +724,13 @@ def inline_query(query):
         target_name = target_raw
         found = False
         
-        # Пробуем разные варианты username
+        # Пробуем разные варианты
         for username in [target_raw, target_raw.lower(), target_raw.capitalize(), target_raw.upper()]:
             try:
                 info = bot.get_chat(f"@{username}")
                 target_id = info.id
                 target_name = info.first_name or info.username or target_raw
                 found = True
-                logger.info(f"✅ Найден: @{username}")
                 break
             except:
                 continue
@@ -760,7 +787,6 @@ def inline_query(query):
         )
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
-        logger.info(f"📨 Создано для {target_id}")
         
     except Exception as e:
         logger.error(f"Inline error: {e}")
@@ -785,15 +811,12 @@ def handle_secret_read(call):
         return
     
     bot.answer_callback_query(call.id, f"📩 От {data['sender_name']}:\n\n{data['content']}", show_alert=True)
-    logger.info(f"📨 Прочитано {msg_id}")
 
 def clean_old_secrets():
     now = time.time()
     to_delete = [mid for mid, d in secret_messages.items() if d.get("expires", 0) < now]
     for mid in to_delete:
         del secret_messages[mid]
-    if to_delete:
-        logger.info(f"🧹 Очищено {len(to_delete)} старых сообщений")
 
 def periodic_secret_cleanup():
     while True:
@@ -837,7 +860,7 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Бекап работает: /backup и /restore")
+    logger.info("✅ Бекап: /backup и /restore (поддержка старых файлов)")
     logger.info("✅ Скрытые сообщения работают")
     
     app.run(host="0.0.0.0", port=port)
