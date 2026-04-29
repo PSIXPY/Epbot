@@ -708,18 +708,30 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка перевода: {e}")
 
-# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) - РАБОЧАЯ ===
+# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) - ИСПРАВЛЕННЫЙ ===
 @bot.channel_post_handler(func=lambda m: True)
 def channel_reaction(message):
-    # ID каналов, где нужно ставить реакцию
+    # ID каналов, где нужно ставить реакцию (замените на свои)
     allowed_channels = [-1001317416582, -1002185590715]
     
     if message.chat.id not in allowed_channels:
         return
     
     try:
-        bot.set_message_reaction(message.chat.id, message.message_id, "🔥")
-        logger.info(f"✅ Реакция 🔥 на пост {message.message_id} в канале {message.chat.id}")
+        # Прямой запрос к API Telegram
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
+        data = {
+            "chat_id": message.chat.id,
+            "message_id": message.message_id,
+            "reaction": [{"type": "emoji", "emoji": "🔥"}]
+        }
+        response = requests.post(url, json=data, timeout=10)
+        result = response.json()
+        
+        if result.get("ok"):
+            logger.info(f"✅ Реакция 🔥 на пост {message.message_id} в канале {message.chat.id}")
+        else:
+            logger.error(f"❌ Ошибка API: {result}")
     except Exception as e:
         logger.error(f"❌ Ошибка реакции: {e}")
 
@@ -873,7 +885,7 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат Б: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("✅ Напоминания сохраняются в корне проекта")
+    logger.info("✅ Напоминания сохраняются в файл reminders.json (в корне проекта)")
     logger.info("✅ Реакции 🔥 на посты в каналах")
     
     app.run(host="0.0.0.0", port=port)
