@@ -65,7 +65,6 @@ def relay_messages(message):
     
     message_text = message.text or message.caption or ""
     
-    # Только информация о том, кому отвечают (без цитирования текста)
     reply_info = ""
     if message.reply_to_message:
         original = message.reply_to_message
@@ -514,7 +513,6 @@ def add_reminder(message):
     time_str = parts[1]
     reminder_text = parts[2]
     
-    # Убираем слово "ежедневно" из текста, если оно там есть
     reminder_text_clean = reminder_text
     daily_keywords = ["ежедневно", "каждый", "daily", "каждый день"]
     for kw in daily_keywords:
@@ -710,30 +708,18 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка перевода: {e}")
 
-# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) ===
+# === ПОСТЫ В КАНАЛАХ (РЕАКЦИЯ 🔥) - РАБОЧАЯ ===
 @bot.channel_post_handler(func=lambda m: True)
 def channel_reaction(message):
+    # ID каналов, где нужно ставить реакцию
     allowed_channels = [-1001317416582, -1002185590715]
     
     if message.chat.id not in allowed_channels:
         return
     
-    logger.info(f"🔥 Канал {message.chat.id}, пост {message.message_id}")
-    
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
-    data = {
-        "chat_id": message.chat.id,
-        "message_id": message.message_id,
-        "reaction": [{"type": "emoji", "emoji": "🔥"}]
-    }
-    
     try:
-        response = requests.post(url, json=data, timeout=10)
-        result = response.json()
-        if result.get("ok"):
-            logger.info(f"✅ Реакция 🔥 на пост {message.message_id}")
-        else:
-            logger.error(f"❌ Ошибка API: {result}")
+        bot.set_message_reaction(message.chat.id, message.message_id, "🔥")
+        logger.info(f"✅ Реакция 🔥 на пост {message.message_id} в канале {message.chat.id}")
     except Exception as e:
         logger.error(f"❌ Ошибка реакции: {e}")
 
@@ -886,9 +872,8 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("✅ Пересылка без цитирования сообщений")
+    logger.info(f"Чат A: {CHAT_A}, Чат Б: {CHAT_B}, топик: {CHAT_B_THREAD}")
     logger.info("✅ Напоминания сохраняются в корне проекта")
-    logger.info("✅ Напоминания приходят без слова 'ежедневно' в тексте")
+    logger.info("✅ Реакции 🔥 на посты в каналах")
     
     app.run(host="0.0.0.0", port=port)
