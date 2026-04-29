@@ -442,15 +442,20 @@ def restore_full(message):
         return
     bot.send_message(message.chat.id, "📥 Отправьте файл бекапа (full_backup_*.json)")
 
+# === ОБРАБОТЧИК ФАЙЛОВ ДЛЯ ВОССТАНОВЛЕНИЯ ===
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
+    logger.info(f"📁 Файл: {message.document.file_name}, от: {message.from_user.id}")
+    
     if message.from_user.id != ADMIN_ID:
-        return
-    if not message.document.file_name.startswith("full_backup_"):
+        bot.reply_to(message, "❌ У вас нет прав для восстановления")
         return
     
-    thread_id = message.message_thread_id
-    status_msg = bot.send_message(message.chat.id, "🔄 Восстанавливаю...", message_thread_id=thread_id)
+    if not message.document.file_name.startswith("full_backup_"):
+        bot.reply_to(message, "❌ Это не файл бекапа. Файл должен начинаться с full_backup_")
+        return
+    
+    status_msg = bot.reply_to(message, "🔄 Восстанавливаю...")
     
     try:
         file_info = bot.get_file(message.document.file_id)
@@ -479,19 +484,19 @@ def handle_restore_file(message):
             global translator_settings
             translator_settings = backup_data["translator_settings"]
             save_translator_settings(translator_settings)
-            logger.info(f"⚙️ Восстановлены настройки переводчика: {len(translator_settings)} чатов")
         
-        bot.delete_message(message.chat.id, status_msg.message_id)
-        bot.send_message(message.chat.id, 
-            f"✅ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО!\n\nНапоминаний: {len(backup_data.get('reminders', []))}\nНастроек переводчика: {len(backup_data.get('translator_settings', {}))}",
-            message_thread_id=thread_id)
+        bot.edit_message_text(
+            f"✅ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО!\n\n"
+            f"📊 Напоминаний: {len(backup_data.get('reminders', []))}\n"
+            f"⚙️ Настроек переводчика: {len(backup_data.get('translator_settings', {}))}",
+            message.chat.id, status_msg.message_id
+        )
         
         logger.info(f"📦 Восстановлено {len(backup_data.get('reminders', []))} напоминаний")
         
     except Exception as e:
-        bot.delete_message(message.chat.id, status_msg.message_id)
-        bot.send_message(message.chat.id, f"❌ Ошибка восстановления: {e}", message_thread_id=thread_id)
-        logger.error(f"Ошибка восстановления: {e}")
+        logger.error(f"Ошибка: {e}")
+        bot.edit_message_text(f"❌ Ошибка восстановления: {e}", message.chat.id, status_msg.message_id)
 
 # === НАПОМИНАНИЯ КОМАНДЫ ===
 @bot.message_handler(commands=['remind'])
@@ -691,23 +696,14 @@ def inline_query(query):
         target_name = target_raw
         found = False
         
-        # Пробуем найти пользователя (регистронезависимо)
-        possible_usernames = [
-            target_raw,
-            target_raw.lower(),
-            target_raw.upper(),
-            target_raw.capitalize(),
-            target_raw.title(),
-        ]
-        possible_usernames = list(dict.fromkeys(possible_usernames))
-        
-        for username in possible_usernames:
+        # Пробуем разные варианты username
+        for username in [target_raw, target_raw.lower(), target_raw.capitalize(), target_raw.upper()]:
             try:
                 info = bot.get_chat(f"@{username}")
                 target_id = info.id
                 target_name = info.first_name or info.username or target_raw
                 found = True
-                logger.info(f"✅ Найден пользователь {target_name} по @{username}")
+                logger.info(f"✅ Найден: @{username}")
                 break
             except:
                 continue
@@ -744,29 +740,27 @@ def inline_query(query):
             "content": content,
             "sender_name": query.from_user.first_name,
             "sender_id": query.from_user.id,
-            "created_at": time.time(),
             "expires": time.time() + 10800
         }
         
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📩 Прочитать сообщение", callback_data=f"secret_read_{msg_id}"))
+        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"secret_read_{msg_id}"))
         
         result = types.InlineQueryResultArticle(
             id=msg_id,
-            title=f"📨 Скрытое сообщение для {target_name}",
+            title=f"📨 Для {target_name}",
             description=content[:50] + ("..." if len(content) > 50 else ""),
             input_message_content=types.InputTextMessageContent(
                 f"🔐 СКРЫТОЕ СООБЩЕНИЕ\n\n"
                 f"👤 От: {query.from_user.first_name}\n"
                 f"👤 Кому: {target_name}\n"
-                f"⏱️ Действует: 3 часа\n\n"
-                f"✅ Нажмите на кнопку, чтобы прочитать"
+                f"⏱️ Действует: 3 часа"
             ),
             reply_markup=markup
         )
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
-        logger.info(f"📨 Создано скрытое сообщение для {target_id} (до {time.ctime(time.time() + 10800)})")
+        logger.info(f"📨 Создано для {target_id}")
         
     except Exception as e:
         logger.error(f"Inline error: {e}")
@@ -776,29 +770,22 @@ def handle_secret_read(call):
     msg_id = call.data.replace("secret_read_", "")
     
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено или удалено", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
         return
     
     data = secret_messages[msg_id]
     
     if call.from_user.id != data["target_id"]:
-        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
         return
     
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Срок действия сообщения истёк (3 часа)", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Истекло 3 часа", show_alert=True)
         del secret_messages[msg_id]
-        try:
-            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        except:
-            pass
         return
     
-    content = data['content']
-    sender = data['sender_name']
-    
-    bot.answer_callback_query(call.id, f"📩 От {sender}:\n\n{content}", show_alert=True)
-    logger.info(f"📨 Скрытое сообщение {msg_id} прочитано пользователем {call.from_user.id}")
+    bot.answer_callback_query(call.id, f"📩 От {data['sender_name']}:\n\n{data['content']}", show_alert=True)
+    logger.info(f"📨 Прочитано {msg_id}")
 
 def clean_old_secrets():
     now = time.time()
@@ -806,7 +793,7 @@ def clean_old_secrets():
     for mid in to_delete:
         del secret_messages[mid]
     if to_delete:
-        logger.info(f"🧹 Очищено {len(to_delete)} старых скрытых сообщений")
+        logger.info(f"🧹 Очищено {len(to_delete)} старых сообщений")
 
 def periodic_secret_cleanup():
     while True:
@@ -850,7 +837,7 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Скрытые сообщения: можно читать несколько раз в течение 3 часов")
-    logger.info("✅ Бекап: /backup и /restore")
+    logger.info("✅ Бекап работает: /backup и /restore")
+    logger.info("✅ Скрытые сообщения работают")
     
     app.run(host="0.0.0.0", port=port)
