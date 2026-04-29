@@ -41,7 +41,6 @@ MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 # === ФУНКЦИЯ ДЛЯ СТАВКИ РЕАКЦИИ ===
 def set_reaction(chat_id, message_id):
-    """Ставит реакцию 🔥 на сообщение"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {
         "chat_id": chat_id,
@@ -53,13 +52,10 @@ def set_reaction(chat_id, message_id):
         result = response.json()
         if result.get("ok"):
             logger.info(f"🔥 Реакция на пост {message_id} в канале {chat_id}")
-            return True
         else:
             logger.error(f"Ошибка реакции: {result}")
-            return False
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        return False
 
 def get_sender_name(user):
     if not user:
@@ -196,8 +192,8 @@ user_histories = {}
 MAX_HISTORY = 10
 CACHE_TTL = 3600
 
-# === НАСТРОЙКИ ПЕРЕВОДЧИКА ===
-TRANSLATOR_SETTINGS_FILE = os.path.join(tempfile.gettempdir(), "translator_settings.json")
+# === НАСТРОЙКИ ПЕРЕВОДЧИКА (СОХРАНЕНИЕ В КОРНЕ) ===
+TRANSLATOR_SETTINGS_FILE = "translator_settings.json"
 
 def load_translator_settings():
     if os.path.exists(TRANSLATOR_SETTINGS_FILE):
@@ -212,8 +208,9 @@ def save_translator_settings(settings):
     try:
         with open(TRANSLATOR_SETTINGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
-    except:
-        pass
+        logger.info(f"💾 Настройки переводчика сохранены")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения: {e}")
 
 translator_settings = load_translator_settings()
 
@@ -357,7 +354,7 @@ def help_command(message):
 
 🎲 *Игры:* /roll | /coin
 
-👑 *Админ:* /backup"""
+👑 *Админ:* /backup - полный бекап"""
     bot.reply_to(message, help_text, parse_mode="Markdown", message_thread_id=thread_id)
 
 @bot.message_handler(commands=['ai'])
@@ -401,44 +398,63 @@ def clear_history(message):
     else:
         bot.reply_to(message, "📭 Нет истории", message_thread_id=thread_id)
 
-# === БЕКАП ===
+# === БЕКАП (ПОЛНЫЙ - НАПОМИНАНИЯ + НАСТРОЙКИ ПЕРЕВОДЧИКА) ===
 @bot.message_handler(commands=['backup'])
-def backup_reminders(message):
-    thread_id = message.message_thread_id
+def backup_full(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав", message_thread_id=thread_id)
+        bot.reply_to(message, "❌ Нет прав")
         return
     try:
-        backup_data = []
+        # Бекап напоминаний
+        backup_reminders_data = []
         for r in reminders:
             r_copy = {}
             for k, v in r.items():
                 if k not in ["timer", "_timer"]:
                     r_copy[k] = v
-            backup_data.append(r_copy)
-        backup_file = f"reminders_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            backup_reminders_data.append(r_copy)
+        
+        # Бекап настроек переводчика
+        backup_translator_data = translator_settings.copy()
+        
+        # Полный бекап
+        full_backup = {
+            "version": "1.0",
+            "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "reminders": backup_reminders_data,
+            "translator_settings": backup_translator_data
+        }
+        
+        backup_file = f"full_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(backup_file, 'w', encoding='utf-8') as f:
-            json.dump(backup_data, f, ensure_ascii=False, indent=2)
+            json.dump(full_backup, f, ensure_ascii=False, indent=2)
+        
         with open(backup_file, 'rb') as f:
-            bot.send_document(message.chat.id, f, caption=f"📦 Бекап напоминаний\n\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\nВсего: {len(backup_data)}")
+            bot.send_document(message.chat.id, f, 
+                caption=f"📦 *ПОЛНЫЙ БЕКАП*\n\n"
+                       f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
+                       f"📊 Напоминаний: {len(backup_reminders_data)}\n"
+                       f"⚙️ Чатов с переводчиком: {len(backup_translator_data)}",
+                parse_mode="Markdown")
+        
         os.remove(backup_file)
-        logger.info(f"📦 Бекап создан ({len(backup_data)})")
+        logger.info(f"📦 Полный бекап создан")
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", message_thread_id=thread_id)
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
 
 @bot.message_handler(commands=['restore'])
-def restore_reminders(message):
-    thread_id = message.message_thread_id
+def restore_full(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав", message_thread_id=thread_id)
+        bot.reply_to(message, "❌ Нет прав")
         return
-    bot.send_message(message.chat.id, "📥 Отправьте файл бекапа", message_thread_id=thread_id)
+    bot.send_message(message.chat.id, "📥 Отправьте файл полного бекапа (full_backup_*.json)")
 
+# === ВОССТАНОВЛЕНИЕ ===
 @bot.message_handler(content_types=['document'])
-def handle_backup_file(message):
+def handle_restore_file(message):
     if message.from_user.id != ADMIN_ID:
         return
-    if not message.document.file_name.startswith("reminders_backup_"):
+    if not message.document.file_name.startswith("full_backup_"):
         return
     
     thread_id = message.message_thread_id
@@ -448,6 +464,7 @@ def handle_backup_file(message):
         file_bytes = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_bytes.decode('utf-8'))
         
+        # Восстановление напоминаний
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -458,7 +475,7 @@ def handle_backup_file(message):
         reminders.clear()
         global reminder_counter
         reminder_counter = 0
-        for r in backup_data:
+        for r in backup_data.get("reminders", []):
             reminders.append(r)
             if r.get("id", 0) > reminder_counter:
                 reminder_counter = r.get("id", 0)
@@ -466,8 +483,19 @@ def handle_backup_file(message):
         save_reminders(reminders)
         start_all_reminders()
         
+        # Восстановление настроек переводчика
+        if "translator_settings" in backup_data:
+            global translator_settings
+            translator_settings = backup_data["translator_settings"]
+            save_translator_settings(translator_settings)
+            logger.info(f"⚙️ Восстановлены настройки переводчика: {len(translator_settings)} чатов")
+        
         bot.delete_message(message.chat.id, status.message_id)
-        bot.send_message(message.chat.id, f"✅ Восстановлено {len(backup_data)} напоминаний!", message_thread_id=thread_id)
+        bot.send_message(message.chat.id, 
+            f"✅ *Восстановлено!*\n\n"
+            f"📊 Напоминаний: {len(backup_data.get('reminders', []))}\n"
+            f"⚙️ Настроек переводчика: {len(backup_data.get('translator_settings', {}))}",
+            parse_mode="Markdown", message_thread_id=thread_id)
     except Exception as e:
         bot.delete_message(message.chat.id, status.message_id)
         bot.send_message(message.chat.id, f"❌ Ошибка: {e}", message_thread_id=thread_id)
@@ -741,23 +769,20 @@ def clean_old():
 
 threading.Thread(target=lambda: (time.sleep(3600), clean_old()), daemon=True).start()
 
-# === ВЕБХУК С ПРЯМОЙ ОБРАБОТКОЙ РЕАКЦИЙ ===
+# === ВЕБХУК ===
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
         
-        # ПРЯМАЯ ОБРАБОТКА ПОСТОВ В КАНАЛАХ (РЕАКЦИИ)
+        # Прямая обработка постов в каналах (реакции)
         if update and "channel_post" in update:
             post = update["channel_post"]
             channel_id = post["chat"]["id"]
-            
-            # Проверяем, нужно ли ставить реакцию
             if channel_id in [-1002185590715, -1001317416582]:
                 message_id = post["message_id"]
                 set_reaction(channel_id, message_id)
         
-        # Обрабатываем остальные обновления через TeleBot
         if update:
             bot.process_new_updates([types.Update.de_json(update)])
         
@@ -776,13 +801,11 @@ start_all_reminders()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
-    
-    # Устанавливаем вебхук
     bot.remove_webhook()
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Пересылка между чатами ОТКЛЮЧЕНА")
-    logger.info("✅ Реакции 🔥 работают через прямой обработчик вебхука")
+    logger.info("✅ Настройки переводчика сохраняются в корне проекта")
+    logger.info("✅ Полный бекап включает напоминания и настройки переводчика")
     
     app.run(host="0.0.0.0", port=port)
