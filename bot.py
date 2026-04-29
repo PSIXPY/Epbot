@@ -41,16 +41,10 @@ secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 def get_sender_name(message):
-    """Правильное получение имени отправителя"""
-    # Если сообщение от анонимного админа (от имени канала)
     if message.sender_chat:
-        return f"Анонимный админ (канал {message.sender_chat.title})"
-    
-    # Если нет отправителя
+        return f"Анонимный админ ({message.sender_chat.title})"
     if not message.from_user:
         return "Неизвестный"
-    
-    # Обычный пользователь
     user = message.from_user
     name = f"{user.first_name or ''} {user.last_name or ''}".strip()
     if not name:
@@ -63,15 +57,18 @@ def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
 # === ОБЪЕДИНЕНИЕ ЧАТОВ ===
-@bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not (m.text and m.text.startswith('/')))
+@bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B])
 def relay_messages(message):
+    if message.text and message.text.startswith('/'):
+        return
     if message.from_user and message.from_user.id == bot.get_me().id:
         return
     
     chat_id = message.chat.id
+    logger.info(f"📩 ПОЛУЧЕНО: chat={chat_id}, type={message.content_type}")
+    
     sender_name = get_sender_name(message)
     
-    # Информация об ответе
     reply_info = ""
     if message.reply_to_message:
         original_sender = get_sender_name(message.reply_to_message)
@@ -79,94 +76,82 @@ def relay_messages(message):
     
     def send_to_target(target_chat_id, target_thread_id):
         try:
-            # ТЕКСТ
-            if message.text:
+            if message.content_type == 'text':
                 text = f"{reply_info}📩 {sender_name}\n\n{message.text}"
-                bot.send_message(target_chat_id, text, parse_mode=None, 
-                               message_thread_id=target_thread_id)
+                bot.send_message(target_chat_id, text, parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"📝 Переслан текст")
             
-            # ФОТО
-            elif message.photo:
+            elif message.content_type == 'photo':
                 caption = f"{reply_info}📩 {sender_name}"
                 if message.caption:
                     caption += f"\n\n{message.caption}"
-                bot.send_photo(target_chat_id, message.photo[-1].file_id, 
-                             caption=caption[:1024], parse_mode=None, 
-                             message_thread_id=target_thread_id)
+                bot.send_photo(target_chat_id, message.photo[-1].file_id, caption=caption[:1024], 
+                             parse_mode=None, message_thread_id=target_thread_id)
                 logger.info(f"📸 Переслано фото")
             
-            # ВИДЕО
-            elif message.video:
+            elif message.content_type == 'video':
                 caption = f"{reply_info}📩 {sender_name}"
                 if message.caption:
                     caption += f"\n\n{message.caption}"
-                bot.send_video(target_chat_id, message.video.file_id, 
-                             caption=caption[:1024], parse_mode=None, 
-                             message_thread_id=target_thread_id)
+                bot.send_video(target_chat_id, message.video.file_id, caption=caption[:1024],
+                             parse_mode=None, message_thread_id=target_thread_id)
                 logger.info(f"🎬 Переслано видео")
             
-            # ДОКУМЕНТЫ
-            elif message.document:
+            elif message.content_type == 'document':
                 caption = f"{reply_info}📩 {sender_name}"
                 if message.caption:
                     caption += f"\n\n{message.caption}"
-                bot.send_document(target_chat_id, message.document.file_id, 
-                                caption=caption[:1024], parse_mode=None, 
-                                message_thread_id=target_thread_id)
+                bot.send_document(target_chat_id, message.document.file_id, caption=caption[:1024],
+                                parse_mode=None, message_thread_id=target_thread_id)
                 logger.info(f"📄 Переслан документ: {message.document.file_name}")
             
-            # АУДИО
-            elif message.audio:
+            elif message.content_type == 'audio':
                 caption = f"{reply_info}📩 {sender_name}"
-                bot.send_audio(target_chat_id, message.audio.file_id, 
-                             caption=caption[:1024], parse_mode=None, 
-                             message_thread_id=target_thread_id)
+                bot.send_audio(target_chat_id, message.audio.file_id, caption=caption[:1024],
+                             parse_mode=None, message_thread_id=target_thread_id)
                 logger.info(f"🎵 Переслано аудио")
             
-            # ГОЛОСОВЫЕ
-            elif message.voice:
+            elif message.content_type == 'voice':
                 caption = f"{reply_info}📩 {sender_name}"
-                bot.send_voice(target_chat_id, message.voice.file_id, 
-                             caption=caption[:1024], parse_mode=None, 
-                             message_thread_id=target_thread_id)
+                bot.send_voice(target_chat_id, message.voice.file_id, caption=caption[:1024],
+                             parse_mode=None, message_thread_id=target_thread_id)
                 logger.info(f"🎤 Переслано голосовое")
             
-            # GIF (АНИМАЦИЯ)
-            elif message.animation:
+            elif message.content_type == 'animation':
+                logger.info(f"🎞️ GIF обнаружен! file_id={message.animation.file_id}")
                 caption = f"{reply_info}📩 {sender_name}"
                 if message.caption:
                     caption += f"\n\n{message.caption}"
-                bot.send_animation(target_chat_id, message.animation.file_id, 
-                                 caption=caption[:1024], parse_mode=None, 
-                                 message_thread_id=target_thread_id)
-                logger.info(f"🎞️ Переслана GIF")
+                bot.send_animation(target_chat_id, message.animation.file_id, caption=caption[:1024],
+                                 parse_mode=None, message_thread_id=target_thread_id)
+                logger.info(f"🎞️ GIF отправлена!")
             
-            # СТИКЕРЫ
-            elif message.sticker:
-                bot.send_sticker(target_chat_id, message.sticker.file_id, 
+            elif message.content_type == 'sticker':
+                logger.info(f"🏷️ Стикер обнаружен! file_id={message.sticker.file_id}")
+                bot.send_sticker(target_chat_id, message.sticker.file_id, message_thread_id=target_thread_id)
+                bot.send_message(target_chat_id, f"📩 {sender_name} (стикер)", parse_mode=None, 
                                message_thread_id=target_thread_id)
-                bot.send_message(target_chat_id, f"📩 {sender_name} (стикер)", 
-                               parse_mode=None, message_thread_id=target_thread_id)
-                logger.info(f"🏷️ Переслан стикер")
+                logger.info(f"🏷️ Стикер отправлен!")
             
-            # КРУГЛЫЕ ВИДЕО
-            elif message.video_note:
-                bot.send_video_note(target_chat_id, message.video_note.file_id, 
-                                  message_thread_id=target_thread_id)
-                bot.send_message(target_chat_id, f"📩 {sender_name} (видеосообщение)",
-                               parse_mode=None, message_thread_id=target_thread_id)
-                logger.info(f"🔄 Переслано видео-сообщение")
+            elif message.content_type == 'video_note':
+                logger.info(f"🔄 Видео-сообщение обнаружено")
+                bot.send_video_note(target_chat_id, message.video_note.file_id, message_thread_id=target_thread_id)
+                bot.send_message(target_chat_id, f"📩 {sender_name} (видеосообщение)", parse_mode=None,
+                               message_thread_id=target_thread_id)
+                logger.info(f"🔄 Видео-сообщение отправлено!")
             
             else:
                 logger.warning(f"❓ Неизвестный тип: {message.content_type}")
+                bot.send_message(target_chat_id, f"📩 {sender_name}\n\n[Неподдерживаемый тип: {message.content_type}]",
+                               parse_mode=None, message_thread_id=target_thread_id)
                 
         except Exception as e:
             logger.error(f"❌ Ошибка отправки: {e}")
     
     if chat_id == CHAT_A:
-        send_to_target(CHAT_B, CHAT_B_THREAD)
+        send_to_target(CHAT_B, CHAT_B_THREAD if CHAT_B_THREAD != 0 else None)
         logger.info(f"✅ Переслано из A в B")
-    elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
+    elif chat_id == CHAT_B:
         send_to_target(CHAT_A, None)
         logger.info(f"✅ Переслано из B в A")
 
@@ -306,7 +291,7 @@ def web_search(query):
             return None
         search_results = [f"• [{r.get_text()}]({r.get('href')})" for r in results if r.get('href')]
         return "🔍 Результаты поиска:\n\n" + "\n".join(search_results)
-    except Exception as e:
+    except:
         return None
 
 def search_wikipedia(query):
@@ -492,7 +477,7 @@ def handle_backup_file(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ {e}")
 
-# === НАПОМИНАНИЯ ===
+# === НАПОМИНАНИЯ КОМАНДЫ ===
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
     chat_id = message.chat.id
