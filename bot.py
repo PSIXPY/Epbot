@@ -53,7 +53,7 @@ def get_sender_name(user):
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
-# === ОБЪЕДИНЕНИЕ ЧАТОВ (ОРИГИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ) ===
+# === ОБЪЕДИНЕНИЕ ЧАТОВ ===
 @bot.message_handler(func=lambda m: m.chat.id in [CHAT_A, CHAT_B] and not (m.text and m.text.startswith('/')))
 def relay_messages(message):
     if message.from_user.id == bot.get_me().id:
@@ -62,7 +62,6 @@ def relay_messages(message):
     chat_id = message.chat.id
     sender_name = get_sender_name(message.from_user)
     
-    # Из чата A в B
     if chat_id == CHAT_A:
         try:
             if message.text:
@@ -86,7 +85,7 @@ def relay_messages(message):
                                  parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
             elif message.sticker:
                 bot.send_sticker(CHAT_B, message.sticker.file_id, message_thread_id=CHAT_B_THREAD)
-                bot.send_message(CHAT_B, f"📩 *{sender_name}* (отправил стикер)",
+                bot.send_message(CHAT_B, f"📩 *{sender_name}* (стикер)",
                                parse_mode="Markdown", message_thread_id=CHAT_B_THREAD)
             elif message.voice:
                 bot.send_voice(CHAT_B, message.voice.file_id, caption=f"📩 *{sender_name}*",
@@ -98,7 +97,6 @@ def relay_messages(message):
         except Exception as e:
             logger.error(f"Ошибка A→B: {e}")
     
-    # Из чата B в A (только из нужного топика)
     elif chat_id == CHAT_B and message.message_thread_id == CHAT_B_THREAD:
         try:
             if message.text:
@@ -122,7 +120,7 @@ def relay_messages(message):
                                  parse_mode="Markdown")
             elif message.sticker:
                 bot.send_sticker(CHAT_A, message.sticker.file_id)
-                bot.send_message(CHAT_A, f"📩 *{sender_name}* (отправил стикер)",
+                bot.send_message(CHAT_A, f"📩 *{sender_name}* (стикер)",
                                parse_mode="Markdown")
             elif message.voice:
                 bot.send_voice(CHAT_A, message.voice.file_id, caption=f"📩 *{sender_name}*",
@@ -191,7 +189,7 @@ def save_reminders(reminders):
     try:
         with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(reminders_to_save, f, ensure_ascii=False, indent=2)
-        logger.info(f"💾 Напоминания сохранены")
+        logger.info(f"💾 Напоминания сохранены ({len(reminders_to_save)} шт.)")
     except Exception as e:
         logger.error(f"Ошибка сохранения: {e}")
 
@@ -507,11 +505,11 @@ def clear_history(message):
     else:
         bot.reply_to(message, "📭 Нет сохранённой истории")
 
-# === БЕКАП ===
+# === БЕКАП (ИСПРАВЛЕННЫЙ) ===
 @bot.message_handler(commands=['backup'])
 def backup_reminders(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ У вас нет прав для этой команды")
+        bot.reply_to(message, "❌ Нет прав")
         return
     try:
         backup_data = []
@@ -525,19 +523,18 @@ def backup_reminders(message):
         with open(backup_file, 'w', encoding='utf-8') as f:
             json.dump(backup_data, f, ensure_ascii=False, indent=2)
         with open(backup_file, 'rb') as f:
-            bot.send_document(message.chat.id, f, caption=f"📦 Бекап напоминаний\n\n📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n📊 Количество: {len(backup_data)}")
+            bot.send_document(message.chat.id, f, caption=f"📦 Бекап напоминаний\n\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\nВсего: {len(backup_data)}")
         os.remove(backup_file)
-        logger.info(f"📦 Админ сделал бекап ({len(backup_data)} напоминаний)")
+        logger.info(f"📦 Бекап создан ({len(backup_data)} напоминаний)")
     except Exception as e:
-        logger.error(f"Ошибка бекапа: {e}")
-        bot.reply_to(message, f"❌ Ошибка: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", parse_mode=None)
 
 @bot.message_handler(commands=['restore'])
 def restore_reminders(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ У вас нет прав для этой команды")
+        bot.reply_to(message, "❌ Нет прав")
         return
-    bot.reply_to(message, "📥 Отправьте файл бекапа (reminders_backup_*.json)")
+    bot.send_message(message.chat.id, "📥 Отправьте файл бекапа (reminders_backup_*.json)", parse_mode=None)
 
 @bot.message_handler(content_types=['document'])
 def handle_backup_file(message):
@@ -545,16 +542,21 @@ def handle_backup_file(message):
         return
     if not message.document.file_name.startswith("reminders_backup_"):
         return
+    
+    status_msg = bot.send_message(message.chat.id, "🔄 Восстанавливаю напоминания...")
+    
     try:
         file_info = bot.get_file(message.document.file_id)
         file_bytes = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_bytes.decode('utf-8'))
+        
         for r in reminders:
             if "_timer" in r:
                 try:
                     r["_timer"].cancel()
                 except:
                     pass
+        
         reminders.clear()
         global reminder_counter
         reminder_counter = 0
@@ -562,13 +564,18 @@ def handle_backup_file(message):
             reminders.append(r)
             if r.get("id", 0) > reminder_counter:
                 reminder_counter = r.get("id", 0)
+        
         save_reminders(reminders)
         start_all_reminders()
-        bot.reply_to(message, f"✅ Восстановлено {len(backup_data)} напоминаний!")
+        
+        bot.delete_message(message.chat.id, status_msg.message_id)
+        bot.send_message(message.chat.id, f"✅ Восстановлено {len(backup_data)} напоминаний!\n\nФайл: {message.document.file_name}", parse_mode=None)
         logger.info(f"📦 Админ восстановил {len(backup_data)} напоминаний")
+        
     except Exception as e:
         logger.error(f"Ошибка восстановления: {e}")
-        bot.reply_to(message, f"❌ Ошибка: {e}")
+        bot.delete_message(message.chat.id, status_msg.message_id)
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", parse_mode=None)
 
 # === НАПОМИНАНИЯ КОМАНДЫ ===
 @bot.message_handler(commands=['remind'])
@@ -764,8 +771,7 @@ def translate_command(message):
 
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def auto_translate(message):
-    chat_id = message.chat.id
-    if not is_translator_enabled(chat_id):
+    chat_id = message.chat.id    if not is_translator_enabled(chat_id):
         return
     if message.from_user.id == bot.get_me().id:
         return
@@ -909,7 +915,7 @@ def channel_reaction(message):
         data = {
             "chat_id": message.chat.id,
             "message_id": message.message_id,
-            "reaction": [{"type": "emoji", "emoji": "🔥"}]
+            "reaction": [{"type": "emoji", "emiqi": "🔥"}]
         }
         requests.post(url, json=data, timeout=5)
         logger.info(f"🔥 Реакция на пост {message.message_id}")
@@ -941,8 +947,7 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"Чат A: {CHAT_A}, Чат B: {CHAT_B}, топик: {CHAT_B_THREAD}")
-    logger.info("✅ Пересылаются ВСЕ типы сообщений")
-    logger.info("✅ Напоминания сохраняются")
-    logger.info("✅ Бекап командой /backup")
+    logger.info("✅ Пересылка всех типов сообщений")
+    logger.info("✅ Напоминания сохраняются в reminders.json")
     
     app.run(host="0.0.0.0", port=port)
