@@ -703,7 +703,7 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-# === СКРЫТЫЕ СООБЩЕНИЯ (РАБОТАЮЩИЙ ПОИСК) ===
+# === СКРЫТЫЕ СООБЩЕНИЯ (ЕДИНЫЙ БЛОК) ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -718,13 +718,19 @@ def inline_query(query):
         target_name = target_raw
         found = False
         
-        logger.info(f"🔍 Поиск пользователя: {target_raw}")
+        logger.info(f"🔍 Поиск: {target_raw}")
         
         # Поиск через прямой API запрос
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChat"
         
         # Пробуем разные варианты username
-        variants = [target_raw, target_raw.lower(), target_raw.capitalize(), target_raw.upper()]
+        variants = [
+            target_raw,
+            target_raw.lower(),
+            target_raw.capitalize(),
+            target_raw.title(),
+            target_raw.upper()
+        ]
         variants = list(dict.fromkeys(variants))
         
         for username in variants:
@@ -761,13 +767,10 @@ def inline_query(query):
             result = types.InlineQueryResultArticle(
                 id="error",
                 title="❌ Пользователь не найден",
-                description=f"{target_raw} - проверьте правильность",
+                description=f"@{target_raw} - проверьте правильность",
                 input_message_content=types.InputTextMessageContent(
                     f"❌ Пользователь {target_raw} не найден\n\n"
-                    f"📌 Возможные причины:\n"
-                    f"• Неправильно указан username\n"
-                    f"• У пользователя нет username\n"
-                    f"• Пользователь не писал боту\n\n"
+                    f"📌 Причина: пользователь не писал боту или неверный username\n\n"
                     f"✅ Решение: узнайте ID у @userinfobot"
                 ),
                 reply_markup=markup
@@ -797,13 +800,14 @@ def inline_query(query):
                 f"🔐 СКРЫТОЕ СООБЩЕНИЕ\n\n"
                 f"👤 От: {query.from_user.first_name}\n"
                 f"👤 Кому: {target_name}\n"
-                f"⏱️ Действует: 3 часа"
+                f"⏱️ Действует: 3 часа\n\n"
+                f"✅ Нажмите на кнопку, чтобы прочитать"
             ),
             reply_markup=markup
         )
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
-        logger.info(f"📨 Создано для {target_name} (ID: {target_id})")
+        logger.info(f"📨 Создано для {target_name}")
         
     except Exception as e:
         logger.error(f"Inline error: {e}")
@@ -834,6 +838,8 @@ def clean_old_secrets():
     to_delete = [mid for mid, d in secret_messages.items() if d.get("expires", 0) < now]
     for mid in to_delete:
         del secret_messages[mid]
+    if to_delete:
+        logger.info(f"🧹 Очищено {len(to_delete)} старых сообщений")
 
 def periodic_secret_cleanup():
     while True:
@@ -877,7 +883,8 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Скрытые сообщения: поиск через прямой API")
+    logger.info("✅ Скрытые сообщения: единый блок, поиск через API")
     logger.info("✅ Бекап: /backup и /restore")
+    logger.info("✅ Реакции на каналы")
     
     app.run(host="0.0.0.0", port=port)
