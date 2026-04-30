@@ -4,6 +4,7 @@ from datetime import datetime
 from flask import Flask, request
 from telebot import TeleBot
 
+# === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 RENDER_URL = os.environ.get("RENDER_URL", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 483977434))
@@ -13,7 +14,7 @@ bot = TeleBot(BOT_TOKEN)
 
 print("=" * 50)
 print("🤖 БОТ ЗАПУЩЕН")
-print(f"BOT_TOKEN: {BOT_TOKEN[:15]}...")
+print(f"BOT_TOKEN: {BOT_TOKEN[:15] if BOT_TOKEN else 'None'}...")
 print(f"RENDER_URL: {RENDER_URL}")
 print(f"ADMIN_ID: {ADMIN_ID}")
 print("=" * 50)
@@ -27,8 +28,8 @@ def test_command(message):
 
 @bot.message_handler(commands=['backup'])
 def backup_test(message):
-    print(f"🔵 Команда /backup от {message.from_user.id} в чате {message.chat.id}")
-    bot.send_message(message.chat.id, "✅ Команда /backup получена!")
+    print(f"🔵 Команда /backup от {message.from_user.id}")
+    bot.send_message(message.chat.id, "✅ Команда /backup получена! Создаю файл...")
     
     try:
         test_data = {
@@ -36,11 +37,11 @@ def backup_test(message):
             "time": str(datetime.now()),
             "user_id": message.from_user.id
         }
-        filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filename = f"test_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(filename, 'w') as f:
             json.dump(test_data, f)
         with open(filename, 'rb') as f:
-            bot.send_document(message.chat.id, f, caption="✅ БЕКАП СОЗДАН")
+            bot.send_document(message.chat.id, f, caption="✅ ТЕСТОВЫЙ БЕКАП")
         os.remove(filename)
         print("🔵 Файл отправлен")
     except Exception as e:
@@ -55,7 +56,7 @@ def start_command(message):
 
 @bot.message_handler(func=lambda m: True)
 def catch_all(message):
-    print(f"🔴🔴🔴 ВСЕ СООБЩЕНИЯ: '{message.text}' | Чат: {message.chat.id} | Тип: {message.chat.type}")
+    print(f"🔴🔴🔴 СООБЩЕНИЕ: '{message.text}' | Чат: {message.chat.id} | Тип: {message.chat.type}")
     if message.chat.type == 'private':
         bot.reply_to(message, f"✅ Бот видит сообщение! Получено: {message.text[:50]}")
 
@@ -78,10 +79,9 @@ def webhook():
         print(f"🔵 UPDATE: {str(update)[:200]}...")
         if update:
             bot.process_new_updates([types.Update.de_json(update)])
-            print("🔵 Update обработан")
         return "OK", 200
     except Exception as e:
-        print(f"🔴 ОШИБКА ВЕБХУКА: {e}")
+        print(f"🔴 ОШИБКА: {e}")
         return "OK", 200
 
 
@@ -93,23 +93,18 @@ if __name__ == "__main__":
     
     print("=" * 50)
     print("🔄 УСТАНОВКА ВЕБХУКА...")
-    print(f"📡 URL вебхука: {webhook_url}")
     
     # Удаляем старый вебхук
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-    result = requests.post(url)
-    print(f"🗑 Удаление вебхука: {result.json()}")
+    r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
+    print(f"🗑 deleteWebhook: {r.json()}")
     
-    # Устанавливаем новый вебхук
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-    data = {"url": webhook_url}
-    result = requests.post(url, data=data)
-    print(f"📡 Установка вебхука: {result.json()}")
+    # Устанавливаем новый
+    r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={webhook_url}")
+    print(f"📡 setWebhook: {r.json()}")
     
-    # Проверяем вебхук
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
-    result = requests.get(url)
-    print(f"🔍 Проверка вебхука: {result.json()}")
+    # Проверяем
+    r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo")
+    print(f"🔍 getWebhookInfo: {r.json()}")
     print("=" * 50)
     
     app.run(host="0.0.0.0", port=port)
