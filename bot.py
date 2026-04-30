@@ -68,24 +68,20 @@ def save_user(user, source=""):
     return was_new
 
 
-# === СБОР ПОЛЬЗОВАТЕЛЕЙ (НЕ КОНФЛИКТУЕТ С КОМАНДАМИ) ===
-@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'sticker', 'voice', 'audio'])
+# === ПРОСТОЙ СБОР ПОЛЬЗОВАТЕЛЕЙ (НЕ КОНФЛИКТУЕТ С КОМАНДАМИ) ===
+@bot.message_handler(content_types=['text'])
 def collect_from_message(message):
-    # Пропускаем команды
-    if message.text and message.text.startswith('/'):
+    # Только группы
+    if message.chat.type not in ['group', 'supergroup']:
         return
     
-    # Пропускаем ЛС (бекап должен работать)
-    if message.chat.type == 'private':
-        return
+    # Сохраняем автора
+    if message.from_user:
+        save_user(message.from_user, "написал")
     
-    if message.chat.type in ['group', 'supergroup']:
-        if message.from_user:
-            save_user(message.from_user, "написал")
-        if message.reply_to_message and message.reply_to_message.from_user:
-            save_user(message.reply_to_message.from_user, "ответили")
-        if message.forward_from:
-            save_user(message.forward_from, "переслали")
+    # Сохраняем того, кому ответили
+    if message.reply_to_message and message.reply_to_message.from_user:
+        save_user(message.reply_to_message.from_user, "ответили")
 
 
 # === НОВЫЕ УЧАСТНИКИ ===
