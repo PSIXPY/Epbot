@@ -65,13 +65,13 @@ def save_user(user, source=""):
 
 
 # === БЕЗОПАСНЫЙ СБОР ПОЛЬЗОВАТЕЛЕЙ ИЗ СООБЩЕНИЙ ===
-@bot.message_handler(func=lambda m: True, content_types=['text'])
+@bot.message_handler(content_types=['text'])
 def collect_from_message(message):
-    # ИГНОРИРУЕМ ЛИЧНЫЕ СООБЩЕНИЯ (команды не трогаем)
+    # Пропускаем ЛС
     if message.chat.type == 'private':
         return
     
-    # ИГНОРИРУЕМ КОМАНДЫ
+    # Пропускаем команды
     if message.text and message.text.startswith('/'):
         return
     
