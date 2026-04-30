@@ -342,56 +342,8 @@ def help_command(message):
 
 🎲 Игры: /roll | /coin
 
-👑 Админ: /backup - полный бекап
-
-🔍 Тест: /test_find @username - проверить поиск пользователя"""
+👑 Админ: /backup - полный бекап"""
     bot.reply_to(message, help_text, message_thread_id=thread_id)
-
-# === ТЕСТОВАЯ КОМАНДА ДЛЯ ПОИСКА ПОЛЬЗОВАТЕЛЯ ===
-@bot.message_handler(commands=['test_find'])
-def test_find_user(message):
-    """Тестовая команда для проверки поиска пользователя"""
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "ℹ️ /test_find @username")
-        return
-    
-    thread_id = message.message_thread_id
-    username = args[1].lstrip("@")
-    
-    result_text = f"🔍 *Поиск пользователя:* @{username}\n\n"
-    
-    # Способ 1: через get_chat
-    try:
-        chat = bot.get_chat(f"@{username}")
-        result_text += f"✅ *Способ 1 (get_chat):*\n"
-        result_text += f"   ID: `{chat.id}`\n"
-        result_text += f"   Имя: {chat.first_name}\n"
-        result_text += f"   Username: @{chat.username}\n\n"
-    except Exception as e:
-        result_text += f"❌ *Способ 1 (get_chat):* {e}\n\n"
-    
-    # Способ 2: через прямой API запрос
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChat"
-        response = requests.post(url, json={"chat_id": f"@{username}"}, timeout=5)
-        result = response.json()
-        if result.get("ok"):
-            info = result["result"]
-            result_text += f"✅ *Способ 2 (прямой API):*\n"
-            result_text += f"   ID: `{info['id']}`\n"
-            result_text += f"   Имя: {info.get('first_name', 'нет')}\n"
-            result_text += f"   Username: @{info.get('username', 'нет')}\n\n"
-        else:
-            result_text += f"❌ *Способ 2 (прямой API):* {result.get('description')}\n\n"
-    except Exception as e:
-        result_text += f"❌ *Способ 2 (прямой API):* {e}\n\n"
-    
-    # Способ 3: через упоминание (если есть в чате)
-    result_text += f"ℹ️ *Способ 3:* Пользователь должен написать боту хотя бы раз, чтобы его можно было найти по username.\n\n"
-    result_text += f"💡 *Совет:* Используйте числовой ID пользователя, если username не находится."
-    
-    bot.reply_to(message, result_text, parse_mode="Markdown", message_thread_id=thread_id)
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
@@ -739,7 +691,7 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-# === СКРЫТЫЕ СООБЩЕНИЯ ===
+# === СКРЫТЫЕ СООБЩЕНИЯ (СТАРАЯ РАБОЧАЯ ВЕРСИЯ) ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -752,74 +704,35 @@ def inline_query(query):
         
         target_id = None
         target_name = target_raw
-        found = False
         
-        logger.info(f"🔍 Поиск: {target_raw}")
-        
-        # Поиск через прямой API запрос
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChat"
-        
-        # Пробуем найти username как есть
+        # Пробуем найти пользователя (как в старом рабочем коде)
         try:
-            response = requests.post(url, json={"chat_id": f"@{target_raw}"}, timeout=5)
-            result = response.json()
-            if result.get("ok"):
-                info = result["result"]
-                target_id = info["id"]
-                target_name = info.get("first_name") or info.get("username") or target_raw
-                found = True
-                logger.info(f"✅ Найден: @{target_raw} (ID: {target_id})")
+            # Прямой поиск через get_chat
+            target_info = bot.get_chat(f"@{target_raw}")
+            target_id = target_info.id
+            target_name = target_info.first_name or target_raw
+            logger.info(f"✅ Найден пользователь: @{target_raw} (ID: {target_id})")
         except Exception as e:
-            logger.info(f"Ошибка: {e}")
-        
-        # Если не нашли, пробуем через telebot
-        if not found:
-            try:
-                chat = bot.get_chat(f"@{target_raw}")
-                target_id = chat.id
-                target_name = chat.first_name or chat.username or target_raw
-                found = True
-                logger.info(f"✅ Найден через telebot: @{target_raw}")
-            except Exception as e:
-                logger.info(f"Telebot не нашёл: {e}")
-        
-        # Если не нашли, пробуем как ID
-        if not found and target_raw.isdigit():
-            try:
-                response = requests.post(url, json={"chat_id": int(target_raw)}, timeout=5)
-                result = response.json()
-                if result.get("ok"):
-                    info = result["result"]
-                    target_id = int(target_raw)
-                    target_name = info.get("first_name") or f"Пользователь {target_raw}"
-                    found = True
-                    logger.info(f"✅ Найден по ID: {target_raw}")
-            except:
-                pass
-        
-        if not found:
-            markup = InlineKeyboardMarkup()
-            markup.add(InlineKeyboardButton("❓ Как узнать ID", url="https://t.me/userinfobot"))
-            
-            result = types.InlineQueryResultArticle(
-                id="error",
-                title="❌ Пользователь не найден",
-                description=f"@{target_raw} - проверьте правильность",
-                input_message_content=types.InputTextMessageContent(
-                    f"❌ *Пользователь {target_raw} не найден*\n\n"
-                    f"📌 *Возможные причины:*\n"
-                    f"• Пользователь никогда не писал боту\n"
-                    f"• Username указан с ошибкой\n\n"
-                    f"✅ *Решение:*\n"
-                    f"1️⃣ Узнайте числовой ID у @userinfobot\n"
-                    f"2️⃣ Отправьте: `@{bot.get_me().username} 123456789 Текст`\n\n"
-                    f"💡 *Совет:* После того как пользователь напишет боту, его можно будет найти по username.",
-                    parse_mode="Markdown"
-                ),
-                reply_markup=markup
-            )
-            bot.answer_inline_query(query.id, [result], cache_time=0)
-            return
+            logger.info(f"Не найден @{target_raw}: {e}")
+            # Если не нашли, пробуем как ID
+            if target_raw.isdigit():
+                target_id = int(target_raw)
+                target_name = f"Пользователь {target_raw}"
+                logger.info(f"✅ Используем как ID: {target_raw}")
+            else:
+                # Если не нашли - показываем ошибку
+                result = types.InlineQueryResultArticle(
+                    id="error",
+                    title="❌ Пользователь не найден",
+                    description=f"@{target_raw} - проверьте правильность",
+                    input_message_content=types.InputTextMessageContent(
+                        f"❌ Пользователь @{target_raw} не найден\n\n"
+                        f"📌 Проверьте правильность написания username\n\n"
+                        f"💡 Совет: используйте числовой ID пользователя"
+                    )
+                )
+                bot.answer_inline_query(query.id, [result], cache_time=0)
+                return
         
         msg_id = f"sec_{int(time.time())}_{query.from_user.id}_{random.randint(1000, 9999)}"
         
@@ -850,7 +763,7 @@ def inline_query(query):
         )
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
-        logger.info(f"📨 Создано для {target_name}")
+        logger.info(f"📨 Создано скрытое сообщение для {target_name}")
         
     except Exception as e:
         logger.error(f"Inline error: {e}")
@@ -866,11 +779,11 @@ def handle_secret_read(call):
     data = secret_messages[msg_id]
     
     if call.from_user.id != data["target_id"]:
-        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас", show_alert=True)
         return
     
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Истекло 3 часа", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Срок действия истёк (3 часа)", show_alert=True)
         del secret_messages[msg_id]
         return
     
@@ -926,7 +839,7 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Команда /test_find для диагностики поиска пользователей")
-    logger.info("✅ Скрытые сообщения: поиск через API")
+    logger.info("✅ Скрытые сообщения: старая рабочая версия")
+    logger.info("✅ Бекап: /backup и /restore")
     
     app.run(host="0.0.0.0", port=port)
