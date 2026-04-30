@@ -366,7 +366,13 @@ def help_command(message):
 
 👑 Админ: /backup - полный бекап
 
-📊 Пользователи: /users - показать кэш"""
+📊 Пользователи: /users - показать кэш
+
+🔔 Массовые упоминания:
+/калл, /все, /all - упомянуть всех
+/админы - упомянуть администраторов
+
+💡 Также можно писать без /: калл, все, всех, админы"""
     bot.reply_to(message, help_text, message_thread_id=thread_id)
 
 @bot.message_handler(commands=['users'])
@@ -388,6 +394,147 @@ def show_users(message):
         result += f"\n\n... и еще {len(chat_users) - 20} пользователей"
     
     bot.reply_to(message, result, parse_mode="Markdown", message_thread_id=thread_id)
+
+# === МАССОВОЕ УПОМИНАНИЕ ВСЕХ УЧАСТНИКОВ ===
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['калл', 'call', 'все', 'всех', 'everyone', 'all'])
+def call_all_without_slash(message):
+    """Пинг всех участников чата без префикса /"""
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    user_id = message.from_user.id
+    
+    status_msg = bot.reply_to(message, "🔄 Собираю список участников...", message_thread_id=thread_id)
+    
+    users = []
+    bot_id = bot.get_me().id
+    for uid, user_data in chat_users.items():
+        uid_int = int(uid)
+        if uid_int == bot_id or uid_int == user_id:
+            continue
+        username = user_data.get('username')
+        if username:
+            users.append(f"@{username}")
+        else:
+            users.append(f"[{user_data.get('first_name', 'Пользователь')}](tg://user?id={uid_int})")
+    
+    if not users:
+        bot.edit_message_text("📭 Нет других участников в кэше.", chat_id, status_msg.message_id)
+        return
+    
+    bot.delete_message(chat_id, status_msg.message_id)
+    
+    mention_text = f"🔔 *{message.from_user.first_name} созывает всех!*\n\n" + " ".join(users[:100])
+    
+    if len(users) > 100:
+        mention_text += f"\n\n... и еще {len(users) - 100} участников"
+    
+    mention_text += f"\n\n📌 *Не злоупотребляйте этой командой!*"
+    
+    bot.send_message(chat_id, mention_text, parse_mode="Markdown", message_thread_id=thread_id)
+    logger.info(f"👥 Пользователь {user_id} сделал массовое упоминание ({len(users)} пользователей)")
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() in ['админы', 'admins'])
+def call_admins_without_slash(message):
+    """Пинг администраторов без префикса /"""
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    
+    status_msg = bot.reply_to(message, "🔄 Собираю список администраторов...", message_thread_id=thread_id)
+    
+    try:
+        admins = bot.get_chat_administrators(chat_id)
+        admin_mentions = []
+        bot_id = bot.get_me().id
+        for admin in admins:
+            admin_user = admin.user
+            if admin_user.id != bot_id:
+                if admin_user.username:
+                    admin_mentions.append(f"@{admin_user.username}")
+                else:
+                    admin_mentions.append(f"[{admin_user.first_name}](tg://user?id={admin_user.id})")
+        
+        if not admin_mentions:
+            bot.edit_message_text("📭 Нет администраторов.", chat_id, status_msg.message_id)
+            return
+        
+        bot.delete_message(chat_id, status_msg.message_id)
+        
+        mention_text = f"👑 *{message.from_user.first_name} созывает администраторов!*\n\n" + " ".join(admin_mentions)
+        bot.send_message(chat_id, mention_text, parse_mode="Markdown", message_thread_id=thread_id)
+        
+    except Exception as e:
+        logger.error(f"Ошибка получения админов: {e}")
+        bot.edit_message_text(f"❌ Ошибка: {e}", chat_id, status_msg.message_id)
+
+@bot.message_handler(commands=['калл', 'все', 'всех', 'all', 'everyone', 'call_all'])
+def call_all_with_slash(message):
+    """Пинг всех участников часта с префиксом /"""
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    user_id = message.from_user.id
+    
+    status_msg = bot.reply_to(message, "🔄 Собираю список участников...", message_thread_id=thread_id)
+    
+    users = []
+    bot_id = bot.get_me().id
+    for uid, user_data in chat_users.items():
+        uid_int = int(uid)
+        if uid_int == bot_id or uid_int == user_id:
+            continue
+        username = user_data.get('username')
+        if username:
+            users.append(f"@{username}")
+        else:
+            users.append(f"[{user_data.get('first_name', 'Пользователь')}](tg://user?id={uid_int})")
+    
+    if not users:
+        bot.edit_message_text("📭 Нет других участников в кэше.", chat_id, status_msg.message_id)
+        return
+    
+    bot.delete_message(chat_id, status_msg.message_id)
+    
+    mention_text = f"🔔 *{message.from_user.first_name} созывает всех!*\n\n" + " ".join(users[:100])
+    
+    if len(users) > 100:
+        mention_text += f"\n\n... и еще {len(users) - 100} участников"
+    
+    mention_text += f"\n\n📌 *Не злоупотребляйте этой командой!*"
+    
+    bot.send_message(chat_id, mention_text, parse_mode="Markdown", message_thread_id=thread_id)
+    logger.info(f"👥 Пользователь {user_id} сделал массовое упоминание ({len(users)} пользователей)")
+
+@bot.message_handler(commands=['админы', 'admins', 'call_admins'])
+def call_admins_with_slash(message):
+    """Пинг администраторов с префиксом /"""
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    
+    status_msg = bot.reply_to(message, "🔄 Собираю список администраторов...", message_thread_id=thread_id)
+    
+    try:
+        admins = bot.get_chat_administrators(chat_id)
+        admin_mentions = []
+        bot_id = bot.get_me().id
+        for admin in admins:
+            admin_user = admin.user
+            if admin_user.id != bot_id:
+                if admin_user.username:
+                    admin_mentions.append(f"@{admin_user.username}")
+                else:
+                    admin_mentions.append(f"[{admin_user.first_name}](tg://user?id={admin_user.id})")
+        
+        if not admin_mentions:
+            bot.edit_message_text("📭 Нет администраторов.", chat_id, status_msg.message_id)
+            return
+        
+        bot.delete_message(chat_id, status_msg.message_id)
+        
+        mention_text = f"👑 *{message.from_user.first_name} созывает администраторов!*\n\n" + " ".join(admin_mentions)
+        bot.send_message(chat_id, mention_text, parse_mode="Markdown", message_thread_id=thread_id)
+        
+    except Exception as e:
+        logger.error(f"Ошибка получения админов: {e}")
+        bot.edit_message_text(f"❌ Ошибка: {e}", chat_id, status_msg.message_id)
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
@@ -470,6 +617,8 @@ def auto_translate(message):
     if message.text.startswith('/'):
         return
     if message.text.startswith('📩') or message.text.startswith('📨'):
+        return
+    if message.text.startswith('🔔'):
         return
     
     text = message.text.strip()
@@ -981,6 +1130,7 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info("✅ Вебхук с поддержкой chat_member")
-    logger.info("✅ Переводчик работает")
+    logger.info("✅ Массовые упоминания: /калл, /все, /all, /админы")
+    logger.info("✅ Также можно писать без /: калл, все, всех, админы")
     
     app.run(host="0.0.0.0", port=port)
