@@ -39,6 +39,28 @@ secret_messages = {}
 
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
+# === КЭШ ПОЛЬЗОВАТЕЛЕЙ ЧАТА ===
+USERS_CACHE_FILE = "chat_users.json"
+
+def load_users_cache():
+    if os.path.exists(USERS_CACHE_FILE):
+        try:
+            with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_users_cache(users):
+    try:
+        with open(USERS_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(users, f, ensure_ascii=False, indent=2)
+        logger.info(f"💾 Сохранено {len(users)} пользователей в кэш")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения кэша: {e}")
+
+chat_users = load_users_cache()
+
 # === ФУНКЦИЯ ДЛЯ СТАВКИ РЕАКЦИИ ===
 def set_reaction(chat_id, message_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
@@ -344,88 +366,29 @@ def help_command(message):
 
 👑 Админ: /backup - полный бекап
 
-🔍 Диагностика:
-/check_chat - информация о чате
-/test_find @username - проверить поиск пользователя"""
+📊 Пользователи: /users - показать кэш"""
     bot.reply_to(message, help_text, message_thread_id=thread_id)
 
-# === ДИАГНОСТИЧЕСКАЯ КОМАНДА ДЛЯ ПРОВЕРКИ ЧАТА ===
-@bot.message_handler(commands=['check_chat'])
-def check_chat_members(message):
-    """Проверяет участников чата"""
-    chat_id = message.chat.id
+@bot.message_handler(commands=['users'])
+def show_users(message):
+    """Показывает список пользователей в кэше"""
     thread_id = message.message_thread_id
-    
-    result = f"📊 *Информация о чате*\n\n"
-    result += f"🆔 ID чата: `{chat_id}`\n"
-    
-    try:
-        # Пробуем получить администраторов
-        admins = bot.get_chat_administrators(chat_id)
-        admin_list = "\n".join([f"• {a.user.first_name} (@{a.user.username}) - ID: `{a.user.id}`" for a in admins[:10]])
-        result += f"\n👥 *Администраторы:*\n{admin_list}\n"
-    except Exception as e:
-        result += f"\n❌ Не удалось получить администраторов: {e}\n"
-    
-    try:
-        # Получаем информацию о чате
-        chat_info = bot.get_chat(chat_id)
-        result += f"\n📌 *Название чата:* {chat_info.title}\n"
-        result += f"📌 *Тип чата:* {chat_info.type}\n"
-    except Exception as e:
-        result += f"\n❌ Ошибка получения информации: {e}\n"
-    
-    result += f"\n💡 *Советы:*\n"
-    result += f"• Если пользователь есть в списке администраторов, бот должен его находить\n"
-    result += f"• Для проверки конкретного пользователя: `/test_find @username`\n"
-    result += f"• Альтернатива: используйте числовой ID пользователя"
-    
-    bot.reply_to(message, result, parse_mode="Markdown", message_thread_id=thread_id)
-
-# === ТЕСТОВАЯ КОМАНДА ДЛЯ ПОИСКА ПОЛЬЗОВАТЕЛЯ ===
-@bot.message_handler(commands=['test_find'])
-def test_find_user(message):
-    """Тестовая команда для проверки поиска пользователя"""
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "ℹ️ /test_find @username")
+    if not chat_users:
+        bot.reply_to(message, "📭 Кэш пользователей пуст. Бот собирает информацию по мере активности участников.", message_thread_id=thread_id)
         return
     
-    thread_id = message.message_thread_id
-    username = args[1].lstrip("@")
+    result = f"👥 *Пользователи в кэше:* {len(chat_users)}\n\n"
+    users_list = []
+    for uid, data in list(chat_users.items())[:20]:
+        username = data.get('username', 'нет')
+        name = data.get('first_name', 'Неизвестный')
+        users_list.append(f"• {name} (@{username}) - ID: `{uid}`")
     
-    result_text = f"🔍 *Поиск пользователя:* @{username}\n\n"
+    result += "\n".join(users_list)
+    if len(chat_users) > 20:
+        result += f"\n\n... и еще {len(chat_users) - 20} пользователей"
     
-    # Способ 1: через get_chat
-    try:
-        chat = bot.get_chat(f"@{username}")
-        result_text += f"✅ *Способ 1 (get_chat):*\n"
-        result_text += f"   ID: `{chat.id}`\n"
-        result_text += f"   Имя: {chat.first_name}\n"
-        result_text += f"   Username: @{chat.username if chat.username else 'нет'}\n\n"
-    except Exception as e:
-        result_text += f"❌ *Способ 1 (get_chat):* {e}\n\n"
-    
-    # Способ 2: через прямой API запрос
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChat"
-        response = requests.post(url, json={"chat_id": f"@{username}"}, timeout=5)
-        result = response.json()
-        if result.get("ok"):
-            info = result["result"]
-            result_text += f"✅ *Способ 2 (прямой API):*\n"
-            result_text += f"   ID: `{info['id']}`\n"
-            result_text += f"   Имя: {info.get('first_name', 'нет')}\n"
-            result_text += f"   Username: @{info.get('username', 'нет')}\n\n"
-        else:
-            result_text += f"❌ *Способ 2 (прямой API):* {result.get('description')}\n\n"
-    except Exception as e:
-        result_text += f"❌ *Способ 2 (прямой API):* {e}\n\n"
-    
-    result_text += f"💡 *Совет:* Если пользователь не найден, используйте его числовой ID.\n"
-    result_text += f"Узнать ID можно у бота @userinfobot"
-    
-    bot.reply_to(message, result_text, parse_mode="Markdown", message_thread_id=thread_id)
+    bot.reply_to(message, result, parse_mode="Markdown", message_thread_id=thread_id)
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
@@ -468,6 +431,95 @@ def clear_history(message):
     else:
         bot.reply_to(message, "📭 Нет истории", message_thread_id=thread_id)
 
+# === ОБРАБОТЧИКИ ДЛЯ СБОРА УЧАСТНИКОВ ===
+@bot.my_chat_member_handler(func=lambda update: True)
+def bot_admin_status(update):
+    """Срабатывает, когда бота делают администратором"""
+    try:
+        new_status = update.my_chat_member.new_chat_member.status
+        chat_id = update.my_chat_member.chat.id
+        
+        if new_status in ['administrator', 'creator']:
+            logger.info(f"🚀 Бот стал администратором в чате {chat_id}")
+            bot.send_message(chat_id, "✅ Бот активирован и готов к работе!")
+    except Exception as e:
+        logger.error(f"Ошибка my_chat_member: {e}")
+
+@bot.chat_member_handler(func=lambda update: True)
+def handle_chat_member_update(update):
+    """Автоматически собирает всех участников чата"""
+    try:
+        chat_member_update = update.chat_member
+        chat_id = chat_member_update.chat.id
+        user = chat_member_update.new_chat_member.user
+        
+        # Пропускаем самого бота
+        if user.id == bot.get_me().id:
+            return
+        
+        user_id = str(user.id)
+        
+        # Сохраняем в кэш
+        was_new = user_id not in chat_users
+        chat_users[user_id] = {
+            "id": user.id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "last_seen": time.time(),
+            "status": chat_member_update.new_chat_member.status
+        }
+        
+        save_users_cache(chat_users)
+        
+        if was_new:
+            logger.info(f"👤 [chat_member] Новый участник в кэше: @{user.username} (ID: {user_id})")
+        
+    except Exception as e:
+        logger.error(f"Ошибка chat_member_handler: {e}")
+
+@bot.message_handler(content_types=['new_chat_members'])
+def handle_new_member(message):
+    """Запоминаем каждого нового участника при входе в чат"""
+    for new_member in message.new_chat_members:
+        if new_member.id == bot.get_me().id:
+            continue
+        
+        user_id = str(new_member.id)
+        
+        chat_users[user_id] = {
+            "id": new_member.id,
+            "first_name": new_member.first_name,
+            "last_name": new_member.last_name,
+            "username": new_member.username,
+            "joined_at": time.time()
+        }
+        
+        logger.info(f"👤 Новый участник: {new_member.first_name}")
+        if new_member.username:
+            logger.info(f"   Username: @{new_member.username}")
+        logger.info(f"   ID: {new_member.id}")
+    
+    save_users_cache(chat_users)
+
+@bot.message_handler(func=lambda m: m.chat.type in ['group', 'supergroup'])
+def collect_user_from_message(message):
+    """Собирает информацию о пользователях из сообщений"""
+    if message.from_user and message.from_user.id != bot.get_me().id:
+        user = message.from_user
+        user_id = str(user.id)
+        
+        if user_id not in chat_users:
+            chat_users[user_id] = {
+                "id": user.id,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "username": user.username,
+                "last_seen": time.time()
+            }
+            save_users_cache(chat_users)
+            logger.info(f"📝 Добавлен пользователь из сообщения: {user.first_name} (@{user.username})")
+
 # === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_full(message):
@@ -484,12 +536,14 @@ def backup_full(message):
             backup_reminders_data.append(r_copy)
         
         backup_translator_data = translator_settings.copy()
+        backup_users_data = chat_users.copy()
         
         full_backup = {
-            "version": "1.0",
+            "version": "2.0",
             "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "reminders": backup_reminders_data,
-            "translator_settings": backup_translator_data
+            "translator_settings": backup_translator_data,
+            "chat_users": backup_users_data
         }
         
         backup_file = f"full_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -498,7 +552,7 @@ def backup_full(message):
         
         with open(backup_file, 'rb') as f:
             bot.send_document(message.chat.id, f, 
-                caption=f"📦 ПОЛНЫЙ БЕКАП\n\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\nНапоминаний: {len(backup_reminders_data)}\nЧатов с переводчиком: {len(backup_translator_data)}")
+                caption=f"📦 ПОЛНЫЙ БЕКАП\n\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\nНапоминаний: {len(backup_reminders_data)}\nЧатов с переводчиком: {len(backup_translator_data)}\nПользователей в кэше: {len(backup_users_data)}")
         
         os.remove(backup_file)
         logger.info(f"📦 Полный бекап создан")
@@ -574,10 +628,17 @@ def handle_restore_file(message):
                 translator_settings = backup_data["translator_settings"]
                 save_translator_settings(translator_settings)
             
+            if "chat_users" in backup_data:
+                global chat_users
+                chat_users = backup_data["chat_users"]
+                save_users_cache(chat_users)
+                logger.info(f"👥 Восстановлено {len(chat_users)} пользователей в кэше")
+            
             bot.edit_message_text(
                 f"✅ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО! (новый формат)\n\n"
                 f"📊 Восстановлено напоминаний: {len(backup_data.get('reminders', []))}\n"
-                f"⚙️ Восстановлено настроек переводчика: {len(backup_data.get('translator_settings', {}))}",
+                f"⚙️ Восстановлено настроек переводчика: {len(backup_data.get('translator_settings', {}))}\n"
+                f"👥 Восстановлено пользователей в кэше: {len(backup_data.get('chat_users', {}))}",
                 message.chat.id, status_msg.message_id
             )
         else:
@@ -787,31 +848,39 @@ def inline_query(query):
         target_id = None
         target_name = target_raw
         
-        # Пробуем найти пользователя
-        try:
-            target_info = bot.get_chat(f"@{target_raw}")
-            target_id = target_info.id
-            target_name = target_info.first_name or target_raw
-            logger.info(f"✅ Найден: @{target_raw} (ID: {target_id})")
-        except Exception as e:
-            logger.info(f"❌ Не найден @{target_raw}: {e}")
-            if target_raw.isdigit():
-                target_id = int(target_raw)
-                target_name = f"Пользователь {target_raw}"
-                logger.info(f"✅ Используем как ID: {target_raw}")
-            else:
-                result = types.InlineQueryResultArticle(
-                    id="error",
-                    title="❌ Пользователь не найден",
-                    description=f"@{target_raw} - проверьте правильность",
-                    input_message_content=types.InputTextMessageContent(
-                        f"❌ Пользователь @{target_raw} не найден\n\n"
-                        f"📌 Проверьте правильность написания username\n\n"
-                        f"💡 Совет: используйте числовой ID пользователя"
-                    )
-                )
-                bot.answer_inline_query(query.id, [result], cache_time=0)
-                return
+        # ===== ПОИСК ПО username В КЭШЕ =====
+        for uid, user_data in chat_users.items():
+            user_username = user_data.get('username')
+            if user_username and user_username.lower() == target_raw.lower():
+                target_id = int(uid)
+                target_name = user_data.get('first_name') or target_raw
+                logger.info(f"✅ Найден в кэше: @{target_raw} (ID: {target_id})")
+                break
+        
+        if not target_id and target_raw.isdigit():
+            target_id = int(target_raw)
+            target_name = f"Пользователь {target_raw}"
+            logger.info(f"✅ Используем как ID: {target_raw}")
+        
+        if not target_id:
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("❓ Как узнать ID", url="https://t.me/userinfobot"))
+            result = types.InlineQueryResultArticle(
+                id="error",
+                title="❌ Пользователь не найден",
+                description=f"@{target_raw} - проверьте правильность",
+                input_message_content=types.InputTextMessageContent(
+                    f"❌ *Пользователь @{target_raw} не найден*\n\n"
+                    f"📌 *Возможные причины:*\n"
+                    f"• Пользователь не писал сообщения в чат\n"
+                    f"• Username указан с ошибкой\n\n"
+                    f"✅ *Решение:* используйте числовой ID (узнайте у @userinfobot)",
+                    parse_mode="Markdown"
+                ),
+                reply_markup=markup
+            )
+            bot.answer_inline_query(query.id, [result], cache_time=0)
+            return
         
         msg_id = f"sec_{int(time.time())}_{query.from_user.id}_{random.randint(1000, 9999)}"
         
@@ -914,11 +983,16 @@ start_all_reminders()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
+    
+    # Устанавливаем вебхук с поддержкой chat_member обновлений
     bot.remove_webhook()
-    bot.set_webhook(url=webhook_url)
+    bot.set_webhook(
+        url=webhook_url,
+        allowed_updates=["message", "channel_post", "my_chat_member", "chat_member"]
+    )
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Диагностика: /check_chat и /test_find")
-    logger.info("✅ Скрытые сообщения: поиск по username и ID")
+    logger.info("✅ chat_member обновления включены")
+    logger.info("✅ Бот будет собирать всех участников чата автоматически")
     
     app.run(host="0.0.0.0", port=port)
