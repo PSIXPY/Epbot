@@ -214,7 +214,7 @@ user_histories = {}
 MAX_HISTORY = 10
 CACHE_TTL = 3600
 
-# === НАСТРОЙКИ ПЕРЕВОДЧИКА ===
+# === ПЕРЕВОДЧИК ===
 TRANSLATOR_SETTINGS_FILE = "translator_settings.json"
 
 def load_translator_settings():
@@ -371,7 +371,6 @@ def help_command(message):
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
-    """Показывает список пользователей в кэше"""
     thread_id = message.message_thread_id
     if not chat_users:
         bot.reply_to(message, "📭 Кэш пользователей пуст.", message_thread_id=thread_id)
@@ -431,23 +430,79 @@ def clear_history(message):
     else:
         bot.reply_to(message, "📭 Нет истории", message_thread_id=thread_id)
 
-# === ОБРАБОТЧИКИ ДЛЯ СБОРА ВСЕХ УЧАСТНИКОВ ===
+# === ПЕРЕВОДЧИК ===
+@bot.message_handler(commands=['т'])
+def translate_command(message):
+    thread_id = message.message_thread_id
+    chat_id = message.chat.id
+    parts = message.text.split()
+    
+    if len(parts) < 2:
+        status = "✅ Включён" if is_translator_enabled(chat_id) else "❌ Выключен"
+        bot.reply_to(
+            message, 
+            f"🌐 *Переводчик RU↔EN*\n\n📊 Статус: {status}\n\n"
+            f"🔹 `/т on` — включить\n"
+            f"🔹 `/т off` — выключить",
+            parse_mode="Markdown",
+            message_thread_id=thread_id
+        )
+        return
+    
+    action = parts[1].lower()
+    if action == "on":
+        set_translator_enabled(chat_id, True)
+        bot.reply_to(message, "✅ Переводчик включён!", parse_mode="Markdown", message_thread_id=thread_id)
+    elif action == "off":
+        set_translator_enabled(chat_id, False)
+        bot.reply_to(message, "❌ Переводчик выключен", parse_mode="Markdown", message_thread_id=thread_id)
+    else:
+        bot.reply_to(message, "ℹ️ /т on - вкл, /т off - выкл", parse_mode="Markdown", message_thread_id=thread_id)
+
+@bot.message_handler(func=lambda m: True, content_types=['text'])
+def auto_translate(message):
+    chat_id = message.chat.id
+    
+    if not is_translator_enabled(chat_id):
+        return
+    if message.from_user.id == bot.get_me().id:
+        return
+    if message.text.startswith('/'):
+        return
+    if message.text.startswith('📩') or message.text.startswith('📨'):
+        return
+    
+    text = message.text.strip()
+    if not text or len(text) < 3:
+        return
+    
+    try:
+        has_cyrillic = any(ord(c) > 1024 for c in text)
+        if has_cyrillic:
+            translated = GoogleTranslator(source='ru', target='en').translate(text)
+        else:
+            translated = GoogleTranslator(source='en', target='ru').translate(text)
+        
+        if translated and translated != text:
+            bot.reply_to(message, translated)
+    except Exception as e:
+        logger.error(f"Ошибка перевода: {e}")
+
+# === ОБРАБОТЧИКИ ДЛЯ СБОРА УЧАСТНИКОВ ===
 @bot.my_chat_member_handler(func=lambda update: True)
 def bot_admin_status(update):
-    """Срабатывает, когда бота делают администратором"""
     try:
         new_status = update.my_chat_member.new_chat_member.status
         chat_id = update.my_chat_member.chat.id
         
         if new_status in ['administrator', 'creator']:
             logger.info(f"🚀 Бот стал администратором в чате {chat_id}")
-            bot.send_message(chat_id, "✅ Бот активирован и готов к работе!")
+            bot.send_message(chat_id, "✅ Бот активирован!")
     except Exception as e:
         logger.error(f"Ошибка my_chat_member: {e}")
 
 @bot.chat_member_handler(func=lambda update: True)
 def handle_chat_member_update(update):
-    """Автоматически собирает всех участников чата"""
     try:
         chat_member_update = update.chat_member
         chat_id = chat_member_update.chat.id
@@ -458,7 +513,6 @@ def handle_chat_member_update(update):
         
         user_id = str(user.id)
         
-        # Сохраняем в кэш
         was_new = user_id not in chat_users
         chat_users[user_id] = {
             "id": user.id,
@@ -472,14 +526,13 @@ def handle_chat_member_update(update):
         save_users_cache(chat_users)
         
         if was_new:
-            logger.info(f"👤 [chat_member] Новый участник в кэше: @{user.username} (ID: {user_id})")
+            logger.info(f"👤 Новый участник в кэше: @{user.username}")
         
     except Exception as e:
-        logger.error(f"Ошибка chat_member_handler: {e}")
+        logger.error(f"Ошибка chat_member: {e}")
 
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
-    """Запоминаем каждого нового участника при входе в чат"""
     for new_member in message.new_chat_members:
         if new_member.id == bot.get_me().id:
             continue
@@ -494,16 +547,12 @@ def handle_new_member(message):
             "joined_at": time.time()
         }
         
-        logger.info(f"👤 Новый участник: {new_member.first_name}")
-        if new_member.username:
-            logger.info(f"   Username: @{new_member.username}")
-        logger.info(f"   ID: {new_member.id}")
+        logger.info(f"👤 Новый участник: {new_member.first_name} (@{new_member.username})")
     
     save_users_cache(chat_users)
 
 @bot.message_handler(func=lambda m: m.chat.type in ['group', 'supergroup'])
 def collect_user_from_message(message):
-    """Собирает информацию о пользователях из сообщений"""
     if message.from_user and message.from_user.id != bot.get_me().id:
         user = message.from_user
         user_id = str(user.id)
@@ -517,7 +566,7 @@ def collect_user_from_message(message):
                 "last_seen": time.time()
             }
             save_users_cache(chat_users)
-            logger.info(f"📝 Добавлен пользователь из сообщения: {user.first_name} (@{user.username})")
+            logger.info(f"📝 Добавлен пользователь: {user.first_name} (@{user.username})")
 
 # === БЕКАП ===
 @bot.message_handler(commands=['backup'])
@@ -551,7 +600,7 @@ def backup_full(message):
         
         with open(backup_file, 'rb') as f:
             bot.send_document(message.chat.id, f, 
-                caption=f"📦 ПОЛНЫЙ БЕКАП\n\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\nНапоминаний: {len(backup_reminders_data)}\nЧатов с переводчиком: {len(backup_translator_data)}\nПользователей в кэше: {len(backup_users_data)}")
+                caption=f"📦 ПОЛНЫЙ БЕКАП\n\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\nНапоминаний: {len(backup_reminders_data)}\nЧатов с переводчиком: {len(backup_translator_data)}\nПользователей: {len(backup_users_data)}")
         
         os.remove(backup_file)
         logger.info(f"📦 Полный бекап создан")
@@ -565,7 +614,6 @@ def restore_full(message):
         return
     bot.send_message(message.chat.id, "📥 Отправьте файл бекапа (full_backup_*.json)")
 
-# === ОБРАБОТЧИК ФАЙЛОВ ДЛЯ ВОССТАНОВЛЕНИЯ ===
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
     logger.info(f"📁 Файл: {message.document.file_name}, от: {message.from_user.id}")
@@ -575,7 +623,7 @@ def handle_restore_file(message):
         return
     
     if not (message.document.file_name.startswith("full_backup_") or message.document.file_name.startswith("reminders_backup_")):
-        bot.reply_to(message, "❌ Это не файл бекапа. Файл должен начинаться с full_backup_ или reminders_backup_")
+        bot.reply_to(message, "❌ Это не файл бекапа")
         return
     
     status_msg = bot.reply_to(message, "🔄 Восстанавливаю...")
@@ -605,8 +653,7 @@ def handle_restore_file(message):
             start_all_reminders()
             
             bot.edit_message_text(
-                f"✅ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО! (старый формат)\n\n"
-                f"📊 Восстановлено напоминаний: {len(backup_data)}",
+                f"✅ Восстановлено {len(backup_data)} напоминаний!",
                 message.chat.id, status_msg.message_id
             )
             
@@ -631,24 +678,19 @@ def handle_restore_file(message):
                 global chat_users
                 chat_users = backup_data["chat_users"]
                 save_users_cache(chat_users)
-                logger.info(f"👥 Восстановлено {len(chat_users)} пользователей в кэше")
             
             bot.edit_message_text(
-                f"✅ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО! (новый формат)\n\n"
-                f"📊 Восстановлено напоминаний: {len(backup_data.get('reminders', []))}\n"
-                f"⚙️ Восстановлено настроек переводчика: {len(backup_data.get('translator_settings', {}))}\n"
-                f"👥 Восстановлено пользователей в кэше: {len(backup_data.get('chat_users', {}))}",
+                f"✅ Восстановлено!\nНапоминаний: {len(backup_data.get('reminders', []))}\n"
+                f"Настроек переводчика: {len(backup_data.get('translator_settings', {}))}\n"
+                f"Пользователей: {len(backup_data.get('chat_users', {}))}",
                 message.chat.id, status_msg.message_id
             )
         else:
-            bot.edit_message_text(f"❌ Неизвестный формат файла", message.chat.id, status_msg.message_id)
-            return
-        
-        logger.info(f"📦 Восстановление завершено")
+            bot.edit_message_text("❌ Неизвестный формат", message.chat.id, status_msg.message_id)
         
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        bot.edit_message_text(f"❌ Ошибка восстановления: {e}", message.chat.id, status_msg.message_id)
+        bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, status_msg.message_id)
 
 # === НАПОМИНАНИЯ КОМАНДЫ ===
 @bot.message_handler(commands=['remind'])
@@ -794,45 +836,6 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id)
 
-# === ПЕРЕВОДЧИК ===
-@bot.message_handler(commands=['т'])
-def translate_command(message):
-    thread_id = message.message_thread_id
-    chat_id = message.chat.id
-    parts = message.text.split()
-    if len(parts) < 2:
-        status = "✅ Включён" if is_translator_enabled(chat_id) else "❌ Выключен"
-        bot.reply_to(message, f"🌐 ПЕРЕВОДЧИК\nСтатус: {status}\n\n/т on - вкл\n/т off - выкл", message_thread_id=thread_id)
-        return
-    action = parts[1].lower()
-    if action == "on":
-        set_translator_enabled(chat_id, True)
-        bot.reply_to(message, "✅ Включён!", message_thread_id=thread_id)
-    elif action == "off":
-        set_translator_enabled(chat_id, False)
-        bot.reply_to(message, "❌ Выключен", message_thread_id=thread_id)
-
-@bot.message_handler(func=lambda m: True, content_types=['text'])
-def auto_translate(message):
-    chat_id = message.chat.id
-    if not is_translator_enabled(chat_id):
-        return
-    if message.from_user.id == bot.get_me().id or message.text.startswith('/') or message.text.startswith('📩') or message.text.startswith('📨'):
-        return
-    text = message.text.strip()
-    if not text or len(text) < 3:
-        return
-    try:
-        has_cyrillic = any(ord(c) > 1024 for c in text)
-        if has_cyrillic:
-            translated = GoogleTranslator(source='ru', target='en').translate(text)
-        else:
-            translated = GoogleTranslator(source='en', target='ru').translate(text)
-        if translated and translated != text:
-            bot.reply_to(message, translated)
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-
 # === СКРЫТЫЕ СООБЩЕНИЯ ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
@@ -859,7 +862,6 @@ def inline_query(query):
         if not target_id and target_raw.isdigit():
             target_id = int(target_raw)
             target_name = f"Пользователь {target_raw}"
-            logger.info(f"✅ Используем как ID: {target_raw}")
         
         if not target_id:
             markup = InlineKeyboardMarkup()
@@ -869,12 +871,7 @@ def inline_query(query):
                 title="❌ Пользователь не найден",
                 description=f"@{target_raw} - проверьте правильность",
                 input_message_content=types.InputTextMessageContent(
-                    f"❌ *Пользователь @{target_raw} не найден*\n\n"
-                    f"📌 *Возможные причины:*\n"
-                    f"• Пользователь не писал сообщения в чат\n"
-                    f"• Username указан с ошибкой\n\n"
-                    f"✅ *Решение:* используйте числовой ID (узнайте у @userinfobot)",
-                    parse_mode="Markdown"
+                    f"❌ Пользователь @{target_raw} не найден\n\nПроверьте username или используйте ID"
                 ),
                 reply_markup=markup
             )
@@ -900,17 +897,12 @@ def inline_query(query):
             title=f"📨 Для {target_name}",
             description=content[:50] + ("..." if len(content) > 50 else ""),
             input_message_content=types.InputTextMessageContent(
-                f"🔐 *Скрытое сообщение*\n\n"
-                f"👤 *От:* {query.from_user.first_name}\n"
-                f"👤 *Кому:* {target_name}\n"
-                f"⏱️ *Действует:* 3 часа",
-                parse_mode="Markdown"
+                f"🔐 Скрытое сообщение\n\nОт: {query.from_user.first_name}\nКому: {target_name}\nДействует: 3 часа"
             ),
             reply_markup=markup
         )
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
-        logger.info(f"📨 Создано для {target_name}")
         
     except Exception as e:
         logger.error(f"Inline error: {e}")
@@ -941,8 +933,6 @@ def clean_old_secrets():
     to_delete = [mid for mid, d in secret_messages.items() if d.get("expires", 0) < now]
     for mid in to_delete:
         del secret_messages[mid]
-    if to_delete:
-        logger.info(f"🧹 Очищено {len(to_delete)} старых сообщений")
 
 def periodic_secret_cleanup():
     while True:
@@ -991,6 +981,6 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info("✅ Вебхук с поддержкой chat_member")
-    logger.info("✅ Бот будет собирать всех участников чата автоматически")
+    logger.info("✅ Переводчик работает")
     
     app.run(host="0.0.0.0", port=port)
