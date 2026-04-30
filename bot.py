@@ -396,7 +396,6 @@ def show_users(message):
 # === ДИАГНОСТИЧЕСКАЯ КОМАНДА ===
 @bot.message_handler(commands=['debug'])
 def debug_command(message):
-    """Диагностика: показывает информацию о чате и кэше"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Только для админа")
         return
@@ -406,7 +405,6 @@ def debug_command(message):
     
     result = "🔍 *ДИАГНОСТИКА БОТА*\n\n"
     
-    # Информация о чате
     try:
         chat = bot.get_chat(chat_id)
         result += f"📌 *Чат:* {chat.title}\n"
@@ -415,10 +413,8 @@ def debug_command(message):
     except:
         result += "❌ Не удалось получить информацию о чате\n\n"
     
-    # Кэш пользователей
     result += f"👥 *Пользователей в кэше:* {len(chat_users)}\n"
     
-    # Администраторы чата
     try:
         admins = bot.get_chat_administrators(chat_id)
         admin_names = []
@@ -429,15 +425,9 @@ def debug_command(message):
     except:
         result += "❌ Не удалось получить администраторов\n\n"
     
-    # Обработчики
-    result += f"⚙️ *Обработчики:*\n"
-    result += f"• my_chat_member: {'✅' if bot.my_chat_member_handler else '❌'}\n"
-    result += f"• chat_member: {'✅' if bot.chat_member_handler else '❌'}\n"
-    result += f"• inline_handler: {'✅' if bot.inline_handler else '❌'}\n"
-    
     bot.reply_to(message, result, parse_mode="Markdown", message_thread_id=thread_id)
 
-# === МАССОВОЕ УПОМИНАНИЕ ВСЕХ УЧАСТНИКОВ ===
+# === МАССОВОЕ УПОМИНАНИЕ ВСЕХ УЧАСТНИКОВ (ИСПРАВЛЕНО) ===
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['калл', 'call', 'все', 'всех', 'everyone', 'all'])
 def call_all_without_slash(message):
     chat_id = message.chat.id
@@ -446,93 +436,72 @@ def call_all_without_slash(message):
     
     status_msg = bot.reply_to(message, "🔄 Собираю список участников...", message_thread_id=thread_id)
     
-    users = []
+    # Разделяем пользователей на тех, у кого есть username (будут уведомления) и без
+    users_with_username = []
+    users_without_username = []
     bot_id = bot.get_me().id
-    for uid, user_data in chat_users.items():
-        uid_int = int(uid)
-        if uid_int == bot_id or uid_int == user_id:
-            continue
-        username = user_data.get('username')
-        if username:
-            users.append(f"@{username}")
-        else:
-            users.append(f"[{user_data.get('first_name', 'Пользователь')}](tg://user?id={uid_int})")
     
-    if not users:
+    for uid, user_data in chat_users.items():
+        try:
+            uid_int = int(uid)
+            if uid_int == bot_id or uid_int == user_id:
+                continue
+            
+            username = user_data.get('username')
+            if username:
+                users_with_username.append(f"@{username}")
+            else:
+                name = user_data.get('first_name', 'Пользователь')
+                users_without_username.append(f"[{name}](tg://user?id={uid_int})")
+        except:
+            continue
+    
+    if not users_with_username and not users_without_username:
         bot.edit_message_text(
-            "📭 *Нет других участников в кэше.*\n\n"
-            "💡 *Как наполнить кэш:*\n"
-            "• Участники добавятся когда напишут сообщение\n"
-            "• Администраторы могут использовать `/adduser @username`\n"
-            "• Используйте `/debug` для диагностики",
+            "❌ *Нет участников для упоминания*\n\n"
+            "💡 *Как добавить участников:*\n"
+            "• Попросите их написать любое сообщение\n"
+            "• Администратор: `/adduser @username`",
             chat_id, status_msg.message_id,
             parse_mode="Markdown",
-            message_thread_id=thread_id)
+            message_thread_id=thread_id
+        )
         return
     
     bot.delete_message(chat_id, status_msg.message_id)
     
-    mention_text = f"🔔 *{message.from_user.first_name} созывает всех!*\n\n" + " ".join(users[:100])
+    # Отправляем сообщения с реальными уведомлениями (только те, у кого есть @username)
+    batch_size = 50
+    for i in range(0, len(users_with_username), batch_size):
+        batch = users_with_username[i:i+batch_size]
+        mention_text = f"🔔 *{message.from_user.first_name} созывает всех!*\n\n" + " ".join(batch)
+        bot.send_message(
+            chat_id, 
+            mention_text, 
+            parse_mode="Markdown",
+            message_thread_id=thread_id,
+            disable_notification=False
+        )
+        time.sleep(0.3)
     
-    if len(users) > 100:
-        mention_text += f"\n\n... и еще {len(users) - 100} участников"
+    # Если есть пользователи без username, отправляем предупреждение
+    if users_without_username:
+        warning = f"⚠️ *Следующие пользователи НЕ ПОЛУЧАТ уведомление* (нет @username):\n\n" + " ".join(users_without_username[:20])
+        if len(users_without_username) > 20:
+            warning += f"\n\n... и еще {len(users_without_username) - 20}"
+        bot.send_message(chat_id, warning, parse_mode="Markdown", message_thread_id=thread_id)
     
-    mention_text += f"\n\n📌 *Не злоупотребляйте этой командой!*"
-    
-    bot.send_message(chat_id, mention_text, parse_mode="Markdown", message_thread_id=thread_id)
-    logger.info(f"👥 Пользователь {user_id} сделал массовое упоминание ({len(users)} пользователей)")
+    logger.info(f"👥 Упомянуто: {len(users_with_username)} с username, {len(users_without_username)} без")
 
 @bot.message_handler(commands=['калл', 'все', 'всех', 'all', 'everyone', 'call_all'])
 def call_all_with_slash(message):
-    chat_id = message.chat.id
-    thread_id = message.message_thread_id
-    user_id = message.from_user.id
-    
-    status_msg = bot.reply_to(message, "🔄 Собираю список участников...", message_thread_id=thread_id)
-    
-    users = []
-    bot_id = bot.get_me().id
-    for uid, user_data in chat_users.items():
-        uid_int = int(uid)
-        if uid_int == bot_id or uid_int == user_id:
-            continue
-        username = user_data.get('username')
-        if username:
-            users.append(f"@{username}")
-        else:
-            users.append(f"[{user_data.get('first_name', 'Пользователь')}](tg://user?id={uid_int})")
-    
-    if not users:
-        bot.edit_message_text(
-            "📭 *Нет других участников в кэше.*\n\n"
-            "💡 *Как наполнить кэш:*\n"
-            "• Участники добавятся когда напишут сообщение\n"
-            "• Администраторы могут использовать `/adduser @username`\n"
-            "• Используйте `/debug` для диагностики",
-            chat_id, status_msg.message_id,
-            parse_mode="Markdown",
-            message_thread_id=thread_id)
-        return
-    
-    bot.delete_message(chat_id, status_msg.message_id)
-    
-    mention_text = f"🔔 *{message.from_user.first_name} созывает всех!*\n\n" + " ".join(users[:100])
-    
-    if len(users) > 100:
-        mention_text += f"\n\n... и еще {len(users) - 100} участников"
-    
-    mention_text += f"\n\n📌 *Не злоупотребляйте этой командой!*"
-    
-    bot.send_message(chat_id, mention_text, parse_mode="Markdown", message_thread_id=thread_id)
-    logger.info(f"👥 Пользователь {user_id} сделал массовое упоминание ({len(users)} пользователей)")
+    call_all_without_slash(message)
 
 @bot.message_handler(commands=['adduser'])
 def add_user_to_cache(message):
-    """Добавляет пользователя в кэш по username (только для админов)"""
     chat_id = message.chat.id
     thread_id = message.message_thread_id
     
-    # Проверяем, что команду вызвал администратор
     try:
         member = bot.get_chat_member(chat_id, message.from_user.id)
         if member.status not in ['creator', 'administrator'] and message.from_user.id != ADMIN_ID:
@@ -545,13 +514,12 @@ def add_user_to_cache(message):
     
     args = message.text.split()
     if len(args) < 2:
-        bot.reply_to(message, "ℹ️ `/adduser @username` или `/adduser ID`\n\nПример: `/adduser @PSIXOnAT`", parse_mode="Markdown", message_thread_id=thread_id)
+        bot.reply_to(message, "ℹ️ `/adduser @username` или `/adduser ID`\n\nПример: `/adduser @username`", parse_mode="Markdown", message_thread_id=thread_id)
         return
     
     target = args[1].lstrip("@")
     
     try:
-        # Пробуем получить пользователя
         user_info = bot.get_chat(target)
         user_id = str(user_info.id)
         
@@ -610,35 +578,7 @@ def call_admins_without_slash(message):
 
 @bot.message_handler(commands=['админы', 'admins', 'call_admins'])
 def call_admins_with_slash(message):
-    chat_id = message.chat.id
-    thread_id = message.message_thread_id
-    
-    status_msg = bot.reply_to(message, "🔄 Собираю список администраторов...", message_thread_id=thread_id)
-    
-    try:
-        admins = bot.get_chat_administrators(chat_id)
-        admin_mentions = []
-        bot_id = bot.get_me().id
-        for admin in admins:
-            admin_user = admin.user
-            if admin_user.id != bot_id:
-                if admin_user.username:
-                    admin_mentions.append(f"@{admin_user.username}")
-                else:
-                    admin_mentions.append(f"[{admin_user.first_name}](tg://user?id={admin_user.id})")
-        
-        if not admin_mentions:
-            bot.edit_message_text("📭 Нет администраторов.", chat_id, status_msg.message_id)
-            return
-        
-        bot.delete_message(chat_id, status_msg.message_id)
-        
-        mention_text = f"👑 *{message.from_user.first_name} созывает администраторов!*\n\n" + " ".join(admin_mentions)
-        bot.send_message(chat_id, mention_text, parse_mode="Markdown", message_thread_id=thread_id)
-        
-    except Exception as e:
-        logger.error(f"Ошибка получения админов: {e}")
-        bot.edit_message_text(f"❌ Ошибка: {e}", chat_id, status_msg.message_id)
+    call_admins_without_slash(message)
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
@@ -741,7 +681,7 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка перевода: {e}")
 
-# === ОБРАБОТЧИКИ ДЛЯ СБОРА УЧАСТНИКОВ ===
+# === СБОР ПОЛЬЗОВАТЕЛЕЙ ===
 @bot.my_chat_member_handler(func=lambda update: True)
 def bot_admin_status(update):
     try:
@@ -753,7 +693,6 @@ def bot_admin_status(update):
             logger.info(f"🚀 Бот стал администратором в чате {chat_id}")
             bot.send_message(chat_id, "✅ Бот активирован! Я буду запоминать участников.")
             
-            # Получаем администраторов
             try:
                 admins = bot.get_chat_administrators(chat_id)
                 for admin in admins:
@@ -842,7 +781,6 @@ def collect_user_from_message(message):
             save_users_cache(chat_users)
             logger.info(f"📝 Добавлен пользователь из сообщения: {user.first_name} (@{user.username})")
     
-    # Также обрабатываем упоминания и ответы
     if message.reply_to_message and message.reply_to_message.from_user:
         replied_user = message.reply_to_message.from_user
         replied_id = str(replied_user.id)
@@ -857,11 +795,11 @@ def collect_user_from_message(message):
             save_users_cache(chat_users)
             logger.info(f"📝 Добавлен пользователь из ответа: {replied_user.first_name} (@{replied_user.username})")
 
-# === БЕКАП ===
+# === БЕКАП (ИСПРАВЛЕНО) ===
 @bot.message_handler(commands=['backup'])
 def backup_full(message):
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда /backup доступна только в личных сообщениях с ботом!\n\nПросто напишите мне в ЛС: https://t.me/" + bot.get_me().username)
+        bot.reply_to(message, "❌ Команда /backup доступна только в личных сообщениях с ботом!")
         return
     
     if message.from_user.id != ADMIN_ID:
@@ -877,28 +815,25 @@ def backup_full(message):
                     r_copy[k] = v
             backup_reminders_data.append(r_copy)
         
-        backup_translator_data = translator_settings.copy()
-        backup_users_data = chat_users.copy()
-        
-        full_backup = {
+        backup_data = {
             "version": "2.0",
             "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "reminders": backup_reminders_data,
-            "translator_settings": backup_translator_data,
-            "chat_users": backup_users_data
+            "translator_settings": translator_settings.copy(),
+            "chat_users": chat_users.copy()
         }
         
         backup_file = f"full_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(backup_file, 'w', encoding='utf-8') as f:
-            json.dump(full_backup, f, ensure_ascii=False, indent=2)
+            json.dump(backup_data, f, ensure_ascii=False, indent=2)
         
         with open(backup_file, 'rb') as f:
             bot.send_document(message.chat.id, f, 
                 caption=f"📦 *ПОЛНЫЙ БЕКАП*\n\n"
                        f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
                        f"📊 Напоминаний: {len(backup_reminders_data)}\n"
-                       f"⚙️ Чатов с переводчиком: {len(backup_translator_data)}\n"
-                       f"👥 Пользователей в кэше: {len(backup_users_data)}",
+                       f"⚙️ Чатов с переводчиком: {len(translator_settings)}\n"
+                       f"👥 Пользователей в кэше: {len(chat_users)}",
                 parse_mode="Markdown")
         
         os.remove(backup_file)
@@ -912,7 +847,7 @@ def backup_full(message):
 @bot.message_handler(commands=['restore'])
 def restore_full(message):
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда /restore доступна только в личных сообщениях с ботом!\n\nПросто напишите мне в ЛС: https://t.me/" + bot.get_me().username)
+        bot.reply_to(message, "❌ Команда /restore доступна только в личных сообщениях с ботом!")
         return
     
     if message.from_user.id != ADMIN_ID:
@@ -924,7 +859,6 @@ def restore_full(message):
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
     if message.chat.type != 'private':
-        bot.send_message(message.from_user.id, "📥 Пожалуйста, отправьте файл бекапа в личные сообщения боту.")
         return
     
     if message.from_user.id != ADMIN_ID:
@@ -1151,7 +1085,7 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id)
 
-# === СКРЫТЫЕ СООБЩЕНИЯ ===
+# === СКРЫТЫЕ СООБЩЕНИЯ (ИСПРАВЛЕНО) ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -1165,13 +1099,11 @@ def inline_query(query):
         target_id = None
         target_name = target_raw
         
-        # Поиск в кэше
         for uid, user_data in chat_users.items():
             username = user_data.get('username')
             if username and username.lower() == target_raw.lower():
                 target_id = int(uid)
                 target_name = user_data.get('first_name') or target_raw
-                logger.info(f"✅ Найден в кэше: @{target_raw}")
                 break
         
         if not target_id and target_raw.isdigit():
@@ -1251,17 +1183,14 @@ def handle_secret_read(call):
     bot.answer_callback_query(call.id, f"📩 От {data['sender_name']}:\n\n{data['content']}", show_alert=True)
 
 def clean_old_secrets():
-    now = time.time()
-    to_delete = [mid for mid, d in secret_messages.items() if d.get("expires", 0) < now]
-    for mid in to_delete:
-        del secret_messages[mid]
-
-def periodic_secret_cleanup():
     while True:
         time.sleep(3600)
-        clean_old_secrets()
+        now = time.time()
+        to_delete = [mid for mid, d in secret_messages.items() if d.get("expires", 0) < now]
+        for mid in to_delete:
+            del secret_messages[mid]
 
-threading.Thread(target=periodic_secret_cleanup, daemon=True).start()
+threading.Thread(target=clean_old_secrets, daemon=True).start()
 
 # === ВЕБХУК ===
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -1302,8 +1231,8 @@ if __name__ == "__main__":
     )
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Вебхук с поддержкой chat_member")
-    logger.info("✅ Команда /adduser для ручного добавления пользователей")
-    logger.info("✅ Команда /debug для диагностики")
+    logger.info("✅ Исправлены массовые упоминания")
+    logger.info("✅ Исправлены скрытые сообщения")
+    logger.info("✅ Исправлен бекап")
     
     app.run(host="0.0.0.0", port=port)
