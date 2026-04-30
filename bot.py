@@ -9,23 +9,16 @@ import re
 import urllib.parse
 import hashlib
 import json
-import tempfile
 from datetime import datetime, timedelta
 from flask import Flask, request
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import PyPDF2
-import docx
-from io import BytesIO
 from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 import pytz
 
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_A = int(os.environ.get("CHAT_A", 0))
-CHAT_B = int(os.environ.get("CHAT_B", 0))
-CHAT_B_THREAD = int(os.environ.get("CHAT_B_THREAD", 0))
 RENDER_URL = os.environ.get("RENDER_URL", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 483977434))
@@ -75,23 +68,10 @@ def set_reaction(chat_id, message_id):
     }
     try:
         response = requests.post(url, json=data, timeout=5)
-        result = response.json()
-        if result.get("ok"):
-            logger.info(f"🔥 Реакция на пост {message_id} в канале {chat_id}")
-        else:
-            logger.error(f"Ошибка реакции: {result}")
+        if response.json().get("ok"):
+            logger.info(f"🔥 Реакция на пост {message_id}")
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
-
-def get_sender_name(user):
-    if not user:
-        return "Неизвестный"
-    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
-    if not name:
-        name = user.username or "Пользователь"
-    if user.username:
-        return f"{name} (@{user.username})"
-    return name
+        logger.error(f"Ошибка реакции: {e}")
 
 # === НАПОМИНАНИЯ ===
 REMINDERS_FILE = "reminders.json"
@@ -285,66 +265,18 @@ def ask_groq(user_id, prompt):
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
 
-def web_search(query):
-    try:
-        encoded_query = urllib.parse.quote(query)
-        url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        results = soup.find_all('a', class_='result__a', limit=5)
-        if not results:
-            return None
-        search_results = []
-        for result in results:
-            title = result.get_text()
-            link = result.get('href')
-            if link and not link.startswith('/'):
-                search_results.append(f"• [{title}]({link})")
-        if search_results:
-            return "🔍 *Результаты поиска:*\n\n" + "\n".join(search_results)
-        return None
-    except Exception as e:
-        logger.error(f"Web search error: {e}")
-        return None
-
 def search_wikipedia(query):
     try:
-        formatted_query = query.strip().capitalize()
         wiki_ru = wikipediaapi.Wikipedia(language='ru', user_agent='TelegramRelayBot/1.0')
-        page_ru = wiki_ru.page(formatted_query)
-        if not page_ru.exists():
-            page_ru = wiki_ru.page(query)
-        if page_ru.exists():
-            summary = page_ru.summary[:500]
-            if len(page_ru.summary) > 500:
+        page = wiki_ru.page(query)
+        if page.exists():
+            summary = page.summary[:500]
+            if len(page.summary) > 500:
                 summary += "..."
-            return f"📖 *{page_ru.title}*\n\n{summary}\n\n[🔗 Читать на Википедии]({page_ru.fullurl})"
-        
-        wiki_en = wikipediaapi.Wikipedia(language='en', user_agent='TelegramRelayBot/1.0')
-        page_en = wiki_en.page(formatted_query)
-        if not page_en.exists():
-            page_en = wiki_en.page(query)
-        if page_en.exists():
-            summary = page_en.summary[:500]
-            if len(page_en.summary) > 500:
-                summary += "..."
-            return f"📖 *{page_en.title}*\n\n{summary}\n\n[🔗 Читать на Wikipedia]({page_en.fullurl})\n\n_На русском не найдено, показан английский вариант_"
-        
-        encoded_query = urllib.parse.quote(query)
-        google_url = f"https://www.google.com/search?q={encoded_query}"
-        yandex_url = f"https://yandex.ru/search/?text={encoded_query}"
-        wiki_search = f"https://ru.wikipedia.org/w/index.php?search={encoded_query}"
-        
-        return (f"❌ *Ничего не найдено в Википедии* по запросу: `{query}`\n\n"
-                f"🔍 *Поиск в интернете:*\n"
-                f"• [Google]({google_url})\n"
-                f"• [Яндекс]({yandex_url})\n"
-                f"• [Поиск в Википедии]({wiki_search})")
-        
+            return f"📖 *{page.title}*\n\n{summary}\n\n[🔗 Читать на Википедии]({page.fullurl})"
+        return f"❌ *Ничего не найдено* по запросу: `{query}`"
     except Exception as e:
-        logger.error(f"Wikipedia error: {e}")
-        return f"❌ Ошибка при поиске: {str(e)[:100]}"
+        return f"❌ Ошибка: {str(e)[:100]}"
 
 # === КОМАНДЫ ===
 @bot.message_handler(commands=['start', 'help'])
@@ -365,10 +297,10 @@ def help_command(message):
 
 🎲 Игры: /roll | /coin
 
-👑 Админ: /backup - полный бекап (в ЛС)
+👑 Админ (в ЛС): /backup, /restore
 
 📊 Пользователи: /users - показать кэш"""
-    bot.reply_to(message, help_text, message_thread_id=thread_id)
+    bot.reply_to(message, help_text, parse_mode="Markdown", message_thread_id=thread_id)
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -395,7 +327,7 @@ def ai_command(message):
     thread_id = message.message_thread_id
     prompt = message.text[3:].strip()
     if not prompt:
-        bot.reply_to(message, "ℹ️ /ai Как дела?", message_thread_id=thread_id)
+        bot.reply_to(message, "ℹ️ /ai вопрос", message_thread_id=thread_id)
         return
     msg = bot.reply_to(message, "🤖 Думаю...", message_thread_id=thread_id)
     answer = ask_groq(message.from_user.id, prompt)
@@ -406,7 +338,7 @@ def wiki_command(message):
     thread_id = message.message_thread_id
     query = message.text[5:].strip()
     if not query:
-        bot.reply_to(message, "ℹ️ /wiki запрос\n\nПример: /wiki Python", message_thread_id=thread_id)
+        bot.reply_to(message, "ℹ️ /wiki запрос", message_thread_id=thread_id)
         return
     result = search_wikipedia(query)
     bot.reply_to(message, result, parse_mode="Markdown", disable_web_page_preview=True, message_thread_id=thread_id)
@@ -444,12 +376,7 @@ def add_reminder(message):
     
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        msg = bot.send_message(
-            chat_id, 
-            "❌ *Ошибка!*\n\nФормат: `/remind 15:30 текст`\n\nПример: `/remind 16:00 Позвонить маме`",
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
+        msg = bot.send_message(chat_id, "ℹ️ /remind 15:30 текст\n\nПример: /remind 16:00 Позвонить", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
         return
     
@@ -462,45 +389,21 @@ def add_reminder(message):
         else:
             hours = int(time_str)
             minutes = 0
-        
         if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
             raise ValueError
     except:
-        msg = bot.send_message(
-            chat_id, 
-            "❌ *Неверный формат времени!*\n\nИспользуйте ЧЧ:ММ, например: 15:30",
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
+        msg = bot.send_message(chat_id, "❌ Неверный формат времени. Используйте ЧЧ:ММ", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
         return
     
     reminder_text_clean = reminder_text
     daily = False
-    weekly_day = None
-    
     if reminder_text_clean.lower().startswith("ежедневно"):
         daily = True
         reminder_text_clean = reminder_text_clean[len("ежедневно"):].lstrip()
     elif reminder_text_clean.lower().startswith("каждый"):
         daily = True
         reminder_text_clean = reminder_text_clean[len("каждый"):].lstrip()
-    
-    days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
-    days_short = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
-    
-    for i, day in enumerate(days):
-        if reminder_text_clean.lower().startswith(day):
-            weekly_day = i
-            reminder_text_clean = reminder_text_clean[len(day):].lstrip()
-            break
-    
-    if weekly_day is None:
-        for i, day in enumerate(days_short):
-            if reminder_text_clean.lower().startswith(day):
-                weekly_day = i
-                reminder_text_clean = reminder_text_clean[len(day):].lstrip()
-                break
     
     global reminder_counter
     reminder_counter += 1
@@ -513,7 +416,6 @@ def add_reminder(message):
         "text": reminder_text_clean,
         "hours": hours,
         "minutes": minutes,
-        "weekly_day": weekly_day,
         "daily": daily
     }
     
@@ -521,23 +423,8 @@ def add_reminder(message):
     save_reminders(reminders)
     schedule_reminder(reminder)
     
-    if daily:
-        period = "каждый день"
-    elif weekly_day is not None:
-        period = f"каждый {days[weekly_day]}"
-    else:
-        period = "однократное"
-    
-    msg = bot.send_message(
-        chat_id,
-        f"✅ *Напоминание создано!*\n\n"
-        f"🆔 ID: `{reminder_counter}`\n"
-        f"⏰ Время: {hours:02d}:{minutes:02d}\n"
-        f"📅 Период: {period}\n"
-        f"📝 Текст: {reminder_text_clean}",
-        parse_mode="Markdown",
-        message_thread_id=thread_id
-    )
+    period = "каждый день" if daily else "однократное"
+    msg = bot.send_message(chat_id, f"✅ Напоминание создано!\n🆔 ID: {reminder_counter}\n⏰ {hours:02d}:{minutes:02d}\n📅 {period}\n📝 {reminder_text_clean}", message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 10)
 
 
@@ -551,45 +438,25 @@ def list_reminders(message):
     except:
         pass
     
-    user_reminders = []
-    for r in reminders:
-        if r.get("chat_id") != chat_id:
-            continue
-        if thread_id and r.get("thread_id") != thread_id:
-            continue
-        user_reminders.append(r)
+    user_reminders = [r for r in reminders if r.get("chat_id") == chat_id]
+    if thread_id:
+        user_reminders = [r for r in user_reminders if r.get("thread_id") == thread_id]
     
     if not user_reminders:
-        msg = bot.send_message(
-            chat_id, 
-            "📭 *Нет активных напоминаний*",
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
+        msg = bot.send_message(chat_id, "📭 Нет активных напоминаний", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 15)
         return
     
-    days = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
-    response = "📋 *АКТИВНЫЕ НАПОМИНАНИЯ:*\n\n"
-    
+    response = "📋 АКТИВНЫЕ НАПОМИНАНИЯ:\n\n"
     for r in user_reminders:
         if r.get("daily"):
             period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}"
-        elif r.get("weekly_day") is not None:
-            period = f"каждый {days[r['weekly_day']]} в {r['hours']:02d}:{r['minutes']:02d}"
         else:
-            period = f"{r['hours']:02d}:{r['minutes']:02d} (однократно)"
-        
-        response += f"🆔 `{r['id']}` • {period}\n   📝 {r['text'][:40]}\n\n"
+            period = f"{r['hours']:02d}:{r['minutes']:02d}"
+        response += f"🆔 {r['id']} - {period}\n   📝 {r['text'][:40]}\n\n"
     
-    response += f"\n💡 *Удалить:* `/delremind ID`"
-    
-    msg = bot.send_message(
-        chat_id, 
-        response, 
-        parse_mode="Markdown",
-        message_thread_id=thread_id
-    )
+    response += f"\n💡 Удалить: /delremind ID"
+    msg = bot.send_message(chat_id, response, message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 30)
 
 
@@ -605,12 +472,7 @@ def delete_reminder(message):
     
     parts = message.text.split()
     if len(parts) < 2:
-        msg = bot.send_message(
-            chat_id, 
-            "ℹ️ `/delremind ID`\n\nПример: `/delremind 1`",
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
+        msg = bot.send_message(chat_id, "ℹ️ /delremind ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
         return
     
@@ -618,47 +480,20 @@ def delete_reminder(message):
         rid = int(parts[1])
         for i, r in enumerate(reminders):
             if r["id"] == rid:
-                if r.get("chat_id") != chat_id:
-                    msg = bot.send_message(
-                        chat_id, 
-                        f"❌ Напоминание {rid} не найдено",
-                        message_thread_id=thread_id
-                    )
-                    delete_after_delay(chat_id, msg.message_id, 10)
-                    return
-                
                 if "_timer" in r:
                     try:
                         r["_timer"].cancel()
                     except:
                         pass
-                
                 reminders.pop(i)
                 save_reminders(reminders)
-                
-                msg = bot.send_message(
-                    chat_id, 
-                    f"✅ *Напоминание {rid} удалено*",
-                    parse_mode="Markdown",
-                    message_thread_id=thread_id
-                )
+                msg = bot.send_message(chat_id, f"✅ Напоминание {rid} удалено", message_thread_id=thread_id)
                 delete_after_delay(chat_id, msg.message_id, 10)
                 return
-        
-        msg = bot.send_message(
-            chat_id, 
-            f"❌ Напоминание {rid} не найдено",
-            message_thread_id=thread_id
-        )
+        msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не найдено", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
-        
     except:
-        msg = bot.send_message(
-            chat_id, 
-            "❌ *Неверный ID*\n\nИспользуйте числа: `/delremind 1`",
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
+        msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
 # === ПЕРЕВОДЧИК ===
@@ -670,25 +505,16 @@ def translate_command(message):
     
     if len(parts) < 2:
         status = "✅ Включён" if is_translator_enabled(chat_id) else "❌ Выключен"
-        bot.reply_to(
-            message, 
-            f"🌐 *Переводчик RU↔EN*\n\n📊 Статус: {status}\n\n"
-            f"🔹 `/т on` — включить\n"
-            f"🔹 `/т off` — выключить",
-            parse_mode="Markdown",
-            message_thread_id=thread_id
-        )
+        bot.reply_to(message, f"🌐 Переводчик RU↔EN\n\nСтатус: {status}\n\n/т on - включить\n/т off - выключить", message_thread_id=thread_id)
         return
     
     action = parts[1].lower()
     if action == "on":
         set_translator_enabled(chat_id, True)
-        bot.reply_to(message, "✅ Переводчик включён!", parse_mode="Markdown", message_thread_id=thread_id)
+        bot.reply_to(message, "✅ Включён!", message_thread_id=thread_id)
     elif action == "off":
         set_translator_enabled(chat_id, False)
-        bot.reply_to(message, "❌ Переводчик выключен", parse_mode="Markdown", message_thread_id=thread_id)
-    else:
-        bot.reply_to(message, "ℹ️ /т on - вкл, /т off - выкл", parse_mode="Markdown", message_thread_id=thread_id)
+        bot.reply_to(message, "❌ Выключен", message_thread_id=thread_id)
 
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def auto_translate(message):
@@ -801,79 +627,73 @@ def collect_user_from_message(message):
             save_users_cache(chat_users)
             logger.info(f"📝 Добавлен пользователь: {user.first_name} (@{user.username})")
 
-# === БЕКАП (РАБОЧАЯ ВЕРСИЯ) ===
+# === БЕКАП (С ОГРАНИЧЕНИЕМ КЭША) ===
 @bot.message_handler(commands=['backup'])
-def backup_command(message):
-    # Проверяем, что команда в ЛС
+def backup_full(message):
+    # Команда только в ЛС
     if message.chat.type != 'private':
         bot.reply_to(message, "❌ Команда /backup доступна только в ЛС!")
         return
     
-    # Проверяем права
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
     
-    status_msg = bot.reply_to(message, "🔄 Создаю бекап...")
+    status_msg = bot.reply_to(message, "🔄 Создаю бекап... (это может занять время)")
     
     try:
-        # Подготавливаем данные
-        backup_reminders = []
+        # Подготавливаем данные напоминаний
+        backup_reminders_data = []
         for r in reminders:
             r_copy = {}
             for k, v in r.items():
                 if k not in ["timer", "_timer"]:
                     r_copy[k] = v
-            backup_reminders.append(r_copy)
+            backup_reminders_data.append(r_copy)
         
-        backup_data = {
+        # Ограничиваем кэш пользователей до 500 записей (для отправки)
+        limited_chat_users = dict(list(chat_users.items())[:500])
+        
+        full_backup = {
             "version": "2.0",
             "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "reminders": backup_reminders,
+            "reminders": backup_reminders_data,
             "translator_settings": translator_settings.copy(),
-            "chat_users": chat_users.copy()
+            "chat_users": limited_chat_users
         }
         
         # Создаём файл
-        filename = f"full_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        backup_file = f"full_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(backup_data, f, ensure_ascii=False, indent=2)
+        with open(backup_file, 'w', encoding='utf-8') as f:
+            json.dump(full_backup, f, ensure_ascii=False, indent=2)
         
-        # Проверяем размер файла
-        file_size = os.path.getsize(filename)
-        logger.info(f"📁 Файл бекапа создан: {filename}, размер: {file_size} байт")
+        file_size = os.path.getsize(backup_file)
+        logger.info(f"📁 Бекап: {file_size} байт, напоминаний: {len(backup_reminders_data)}, пользователей: {len(limited_chat_users)}")
         
-        if file_size > 0:
-            # Отправляем файл
-            with open(filename, 'rb') as f:
-                bot.send_document(
-                    message.chat.id,
-                    f,
-                    caption=f"✅ *Бекап создан!*\n\n"
-                           f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
-                           f"📊 Напоминаний: {len(backup_reminders)}\n"
-                           f"👥 Пользователей: {len(chat_users)}\n"
-                           f"⚙️ Настроек: {len(translator_settings)}",
-                    parse_mode="Markdown"
-                )
-            
-            # Удаляем файл
-            os.remove(filename)
-            logger.info("✅ Бекап отправлен и удалён")
-            
-            # Удаляем статус
-            bot.delete_message(message.chat.id, status_msg.message_id)
-        else:
-            raise Exception("Файл пустой")
+        # Отправляем файл
+        caption = f"✅ *Бекап создан!*\n\n"
+        caption += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
+        caption += f"📊 Напоминаний: {len(backup_reminders_data)}\n"
+        caption += f"👥 Пользователей: {len(limited_chat_users)} (всего в кэше: {len(chat_users)})\n"
+        caption += f"⚙️ Настроек переводчика: {len(translator_settings)}"
+        
+        with open(backup_file, 'rb') as f:
+            bot.send_document(message.chat.id, f, caption=caption, parse_mode="Markdown")
+        
+        os.remove(backup_file)
+        bot.delete_message(message.chat.id, status_msg.message_id)
         
     except Exception as e:
         logger.error(f"Ошибка бекапа: {e}")
-        bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
+        try:
+            bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
+        except:
+            bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)[:200]}")
 
 
 @bot.message_handler(commands=['restore'])
-def restore_command(message):
+def restore_full(message):
     if message.chat.type != 'private':
         bot.reply_to(message, "❌ Команда /restore доступна только в ЛС!")
         return
@@ -893,7 +713,7 @@ def restore_command(message):
 
 
 @bot.message_handler(content_types=['document'])
-def restore_file(message):
+def handle_restore_file(message):
     # Только в ЛС
     if message.chat.type != 'private':
         return
@@ -915,8 +735,6 @@ def restore_file(message):
         file_content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_content.decode('utf-8'))
         
-        logger.info(f"📥 Файл загружен, ключи: {list(backup_data.keys())}")
-        
         # Останавливаем старые таймеры
         for r in reminders:
             if "_timer" in r:
@@ -924,8 +742,6 @@ def restore_file(message):
                     r["_timer"].cancel()
                 except:
                     pass
-        
-        restored_count = 0
         
         # Восстанавливаем напоминания
         if "reminders" in backup_data:
@@ -938,22 +754,18 @@ def restore_file(message):
                     reminder_counter = r.get("id", 0)
             save_reminders(reminders)
             start_all_reminders()
-            restored_count += len(backup_data["reminders"])
-            logger.info(f"📊 Восстановлено напоминаний: {len(backup_data['reminders'])}")
         
         # Восстанавливаем настройки переводчика
         if "translator_settings" in backup_data:
             global translator_settings
             translator_settings = backup_data["translator_settings"]
             save_translator_settings(translator_settings)
-            logger.info(f"⚙️ Восстановлено настроек: {len(translator_settings)}")
         
-        # Восстанавливаем кэш пользователей
+        # Восстанавливаем кэш пользователей (НЕ ограничивая)
         if "chat_users" in backup_data:
             global chat_users
             chat_users = backup_data["chat_users"]
             save_users_cache(chat_users)
-            logger.info(f"👥 Восстановлено пользователей: {len(chat_users)}")
         
         bot.edit_message_text(
             f"✅ *Восстановление завершено!*\n\n"
@@ -965,23 +777,22 @@ def restore_file(message):
             parse_mode="Markdown"
         )
         
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON ошибка: {e}")
+    except json.JSONDecodeError:
         bot.edit_message_text("❌ *Ошибка:* Неверный JSON формат", message.chat.id, status_msg.message_id, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Ошибка восстановления: {e}")
         bot.edit_message_text(f"❌ *Ошибка:* {str(e)[:200]}", message.chat.id, status_msg.message_id, parse_mode="Markdown")
 
 
-# Текстовые команды (без слеша) для надежности
+# Текстовые команды для бекапа (без слеша)
 @bot.message_handler(func=lambda m: m.text and m.text.lower() == 'бекап' and m.chat.type == 'private')
 def backup_text(message):
-    backup_command(message)
+    backup_full(message)
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower() == 'восстановление' and m.chat.type == 'private')
 def restore_text(message):
-    restore_command(message)
+    restore_full(message)
 
 # === СКРЫТЫЕ СООБЩЕНИЯ ===
 @bot.inline_handler(func=lambda query: True)
@@ -1095,6 +906,7 @@ def webhook():
         if update and "channel_post" in update:
             post = update["channel_post"]
             channel_id = post["chat"]["id"]
+            # Реакции на каналах (укажите свои ID каналов)
             if channel_id in [-1002185590715, -1001317416582]:
                 message_id = post["message_id"]
                 set_reaction(channel_id, message_id)
@@ -1129,7 +941,6 @@ if __name__ == "__main__":
     logger.info(f"📡 Webhook: {webhook_url}")
     logger.info("✅ Напоминания: /remind, /reminds, /delremind")
     logger.info("✅ Бекап: /backup (в ЛС) или 'бекап' (текстом)")
-    logger.info("✅ Восстановление: /restore (в ЛС) или 'восстановление' (текстом)")
     logger.info(f"👑 Админ ID: {ADMIN_ID}")
     logger.info("=" * 50)
     
