@@ -298,10 +298,11 @@ def search_wikipedia(query):
                 summary += "..."
             return f"📖 *{page_ru.title}*\n\n{summary}\n\n[🔗 Читать на Википедии]({page_ru.fullurl})"
         
-        search_results = wiki_ru.search(query, results=3)
-        if search_results:
-            first_result = search_results[0]
-            page_ru = wiki_ru.page(first_result)
+        # Поиск через listpages (без results)
+        all_pages = wiki_ru.listpages(prefix=query, total=3)
+        if all_pages:
+            first_result = all_pages[0]
+            page_ru = wiki_ru.page(first_result.title)
             if page_ru.exists():
                 summary = page_ru.summary[:500]
                 if len(page_ru.summary) > 500:
@@ -319,6 +320,18 @@ def search_wikipedia(query):
             if len(page_en.summary) > 500:
                 summary += "..."
             return f"📖 *{page_en.title}*\n\n{summary}\n\n[🔗 Читать на Wikipedia]({page_en.fullurl})\n\n_На русском не найдено, показан английский вариант_"
+        
+        all_pages_en = wiki_en.listpages(prefix=query, total=3)
+        if all_pages_en:
+            first_result = all_pages_en[0]
+            page_en = wiki_en.page(first_result.title)
+            if page_en.exists():
+                summary = page_en.summary[:500]
+                if len(page_en.summary) > 500:
+                    summary += "..."
+                return (f"📖 *{page_en.title}*\n\n{summary}\n\n"
+                       f"[🔗 Читать на Wikipedia]({page_en.fullurl})\n\n"
+                       f"_На русском не найдено, показан ближайший результат на английском_")
         
         encoded_query = urllib.parse.quote(query)
         google_url = f"https://www.google.com/search?q={encoded_query}"
@@ -703,7 +716,7 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-# === СКРЫТЫЕ СООБЩЕНИЯ (ЕДИНЫЙ БЛОК) ===
+# === СКРЫТЫЕ СООБЩЕНИЯ ===
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -723,31 +736,61 @@ def inline_query(query):
         # Поиск через прямой API запрос
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChat"
         
-        # Пробуем разные варианты username
-        variants = [
-            target_raw,
-            target_raw.lower(),
-            target_raw.capitalize(),
-            target_raw.title(),
-            target_raw.upper()
-        ]
-        variants = list(dict.fromkeys(variants))
+        # Пробуем найти username как есть
+        try:
+            response = requests.post(url, json={"chat_id": f"@{target_raw}"}, timeout=5)
+            result = response.json()
+            if result.get("ok"):
+                info = result["result"]
+                target_id = info["id"]
+                target_name = info.get("first_name") or info.get("username") or target_raw
+                found = True
+                logger.info(f"✅ Найден: @{target_raw} (ID: {target_id})")
+        except Exception as e:
+            logger.info(f"Ошибка: {e}")
         
-        for username in variants:
+        # Если не нашли, пробуем через telebot
+        if not found:
             try:
-                response = requests.post(url, json={"chat_id": f"@{username}"}, timeout=5)
+                chat = bot.get_chat(f"@{target_raw}")
+                target_id = chat.id
+                target_name = chat.first_name or chat.username or target_raw
+                found = True
+                logger.info(f"✅ Найден через telebot: @{target_raw}")
+            except Exception as e:
+                logger.info(f"Telebot не нашёл: {e}")
+        
+        # Если не нашли, пробуем с маленькой буквы
+        if not found:
+            try:
+                lower_target = target_raw.lower()
+                response = requests.post(url, json={"chat_id": f"@{lower_target}"}, timeout=5)
                 result = response.json()
                 if result.get("ok"):
                     info = result["result"]
                     target_id = info["id"]
                     target_name = info.get("first_name") or info.get("username") or target_raw
                     found = True
-                    logger.info(f"✅ Найден: @{username} (ID: {target_id})")
-                    break
+                    logger.info(f"✅ Найден через lowercase: @{lower_target}")
             except:
-                continue
+                pass
         
-        # Если не нашли по username, пробуем как ID
+        # Если не нашли, пробуем с большой буквы
+        if not found:
+            try:
+                cap_target = target_raw.capitalize()
+                response = requests.post(url, json={"chat_id": f"@{cap_target}"}, timeout=5)
+                result = response.json()
+                if result.get("ok"):
+                    info = result["result"]
+                    target_id = info["id"]
+                    target_name = info.get("first_name") or info.get("username") or target_raw
+                    found = True
+                    logger.info(f"✅ Найден через capitalize: @{cap_target}")
+            except:
+                pass
+        
+        # Если не нашли, пробуем как ID
         if not found and target_raw.isdigit():
             try:
                 response = requests.post(url, json={"chat_id": int(target_raw)}, timeout=5)
@@ -764,14 +807,21 @@ def inline_query(query):
         if not found:
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton("❓ Как узнать ID", url="https://t.me/userinfobot"))
+            
             result = types.InlineQueryResultArticle(
                 id="error",
                 title="❌ Пользователь не найден",
                 description=f"@{target_raw} - проверьте правильность",
                 input_message_content=types.InputTextMessageContent(
-                    f"❌ Пользователь {target_raw} не найден\n\n"
-                    f"📌 Причина: пользователь не писал боту или неверный username\n\n"
-                    f"✅ Решение: узнайте ID у @userinfobot"
+                    f"❌ *Пользователь {target_raw} не найден*\n\n"
+                    f"📌 *Возможные причины:*\n"
+                    f"• Пользователь никогда не писал боту\n"
+                    f"• Username указан с ошибкой в регистре\n\n"
+                    f"✅ *Решение:*\n"
+                    f"1️⃣ Узнайте числовой ID у @userinfobot\n"
+                    f"2️⃣ Отправьте: `@{bot.get_me().username} 123456789 Текст`\n\n"
+                    f"💡 *Совет:* После того как пользователь напишет боту, его можно будет найти по username.",
+                    parse_mode="Markdown"
                 ),
                 reply_markup=markup
             )
@@ -797,11 +847,11 @@ def inline_query(query):
             title=f"📨 Для {target_name}",
             description=content[:50] + ("..." if len(content) > 50 else ""),
             input_message_content=types.InputTextMessageContent(
-                f"🔐 СКРЫТОЕ СООБЩЕНИЕ\n\n"
-                f"👤 От: {query.from_user.first_name}\n"
-                f"👤 Кому: {target_name}\n"
-                f"⏱️ Действует: 3 часа\n\n"
-                f"✅ Нажмите на кнопку, чтобы прочитать"
+                f"🔐 *Скрытое сообщение*\n\n"
+                f"👤 *От:* {query.from_user.first_name}\n"
+                f"👤 *Кому:* {target_name}\n"
+                f"⏱️ *Действует:* 3 часа",
+                parse_mode="Markdown"
             ),
             reply_markup=markup
         )
@@ -883,8 +933,8 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
-    logger.info("✅ Скрытые сообщения: единый блок, поиск через API")
+    logger.info("✅ Скрытые сообщения: поиск в любом регистре")
     logger.info("✅ Бекап: /backup и /restore")
-    logger.info("✅ Реакции на каналы")
+    logger.info("✅ Википедия: исправлена")
     
     app.run(host="0.0.0.0", port=port)
