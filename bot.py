@@ -69,24 +69,30 @@ def save_user(user, source=""):
     return was_new
 
 
-# === СБОР ПОЛЬЗОВАТЕЛЕЙ ИЗ СООБЩЕНИЙ ===
+# === СБОР ПОЛЬЗОВАТЕЛЕЙ ИЗ СООБЩЕНИЙ (НЕ КОНФЛИКТУЕТ С КОМАНДАМИ) ===
 @bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'sticker', 'voice', 'audio'])
 def collect_from_message(message):
-    """Собирает всех, кто пишет в чат"""
-    if message.chat.type not in ['group', 'supergroup']:
+    # Пропускаем команды
+    if message.text and message.text.startswith('/'):
         return
     
-    # Сохраняем автора
-    if message.from_user:
-        save_user(message.from_user, "написал сообщение")
+    # Пропускаем ЛС (бекап должен работать)
+    if message.chat.type == 'private':
+        return
     
-    # Сохраняем того, кому ответили (ключевой момент для сбора "молчунов")
-    if message.reply_to_message and message.reply_to_message.from_user:
-        save_user(message.reply_to_message.from_user, "ответили на его сообщение")
-    
-    # Сохраняем из пересланных сообщений
-    if message.forward_from:
-        save_user(message.forward_from, "переслали его сообщение")
+    # Только группы и супергруппы
+    if message.chat.type in ['group', 'supergroup']:
+        # Сохраняем автора
+        if message.from_user:
+            save_user(message.from_user, "написал сообщение")
+        
+        # Сохраняем того, кому ответили (ключевой момент для сбора "молчунов")
+        if message.reply_to_message and message.reply_to_message.from_user:
+            save_user(message.reply_to_message.from_user, "ответили на его сообщение")
+        
+        # Сохраняем из пересланных сообщений
+        if message.forward_from:
+            save_user(message.forward_from, "переслали его сообщение")
 
 
 # === НОВЫЕ УЧАСТНИКИ ===
