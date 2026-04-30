@@ -22,15 +22,6 @@ secret_messages = {}
 
 print("🤖 БОТ ЗАПУЩЕН")
 
-
-# === ДИАГНОСТИКА: ЛОВИМ ВСЕ СООБЩЕНИЯ (ВРЕМЕННО) ===
-@bot.message_handler(func=lambda m: True)
-def debug_all(message):
-    print(f"🔴🔴🔴 ДИАГНОСТИКА: '{message.text}' | Чат: {message.chat.id} | Тип: {message.chat.type}")
-    if message.chat.type == 'private':
-        bot.reply_to(message, f"✅ Диагностика: получено '{message.text[:50]}'")
-
-
 # === КЭШ ПОЛЬЗОВАТЕЛЕЙ ===
 USERS_CACHE_FILE = "chat_users.json"
 
@@ -634,14 +625,6 @@ def clean_old_secrets():
             del secret_messages[mid]
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
-
-
-# ========== ECHO (В КОНЦЕ) ==========
-@bot.message_handler(func=lambda m: True)
-def echo(message):
-    print(f"📨 ПОЛУЧЕНО: {message.text} от {message.from_user.id}")
-    if message.chat.type == 'private' and not message.text.startswith('/'):
-        bot.reply_to(message, f"✅ Получено: {message.text[:50]}")
 
 
 # ========== ВЕБХУК ==========
