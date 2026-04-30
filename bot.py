@@ -801,9 +801,9 @@ def collect_user_from_message(message):
             save_users_cache(chat_users)
             logger.info(f"📝 Добавлен пользователь: {user.first_name} (@{user.username})")
 
-# === БЕКАП (ПРОСТАЯ РАБОЧАЯ ВЕРСИЯ) ===
+# === БЕКАП (РАБОЧАЯ ВЕРСИЯ) ===
 @bot.message_handler(commands=['backup'])
-def backup_simple(message):
+def backup_command(message):
     # Проверяем, что команда в ЛС
     if message.chat.type != 'private':
         bot.reply_to(message, "❌ Команда /backup доступна только в ЛС!")
@@ -840,31 +840,40 @@ def backup_simple(message):
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(backup_data, f, ensure_ascii=False, indent=2)
         
-        # Отправляем файл
-        with open(filename, 'rb') as f:
-            bot.send_document(
-                message.chat.id,
-                f,
-                caption=f"✅ *Бекап создан!*\n\n"
-                       f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
-                       f"📊 Напоминаний: {len(backup_reminders)}\n"
-                       f"👥 Пользователей: {len(chat_users)}\n"
-                       f"⚙️ Настроек: {len(translator_settings)}",
-                parse_mode="Markdown"
-            )
+        # Проверяем размер файла
+        file_size = os.path.getsize(filename)
+        logger.info(f"📁 Файл бекапа создан: {filename}, размер: {file_size} байт")
         
-        # Удаляем файл
-        os.remove(filename)
-        
-        # Удаляем статус
-        bot.delete_message(message.chat.id, status_msg.message_id)
+        if file_size > 0:
+            # Отправляем файл
+            with open(filename, 'rb') as f:
+                bot.send_document(
+                    message.chat.id,
+                    f,
+                    caption=f"✅ *Бекап создан!*\n\n"
+                           f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
+                           f"📊 Напоминаний: {len(backup_reminders)}\n"
+                           f"👥 Пользователей: {len(chat_users)}\n"
+                           f"⚙️ Настроек: {len(translator_settings)}",
+                    parse_mode="Markdown"
+                )
+            
+            # Удаляем файл
+            os.remove(filename)
+            logger.info("✅ Бекап отправлен и удалён")
+            
+            # Удаляем статус
+            bot.delete_message(message.chat.id, status_msg.message_id)
+        else:
+            raise Exception("Файл пустой")
         
     except Exception as e:
-        bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, status_msg.message_id)
+        logger.error(f"Ошибка бекапа: {e}")
+        bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
 
 
 @bot.message_handler(commands=['restore'])
-def restore_simple(message):
+def restore_command(message):
     if message.chat.type != 'private':
         bot.reply_to(message, "❌ Команда /restore доступна только в ЛС!")
         return
@@ -884,7 +893,7 @@ def restore_simple(message):
 
 
 @bot.message_handler(content_types=['document'])
-def restore_file_simple(message):
+def restore_file(message):
     # Только в ЛС
     if message.chat.type != 'private':
         return
@@ -906,6 +915,8 @@ def restore_file_simple(message):
         file_content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_content.decode('utf-8'))
         
+        logger.info(f"📥 Файл загружен, ключи: {list(backup_data.keys())}")
+        
         # Останавливаем старые таймеры
         for r in reminders:
             if "_timer" in r:
@@ -913,6 +924,8 @@ def restore_file_simple(message):
                     r["_timer"].cancel()
                 except:
                     pass
+        
+        restored_count = 0
         
         # Восстанавливаем напоминания
         if "reminders" in backup_data:
@@ -925,18 +938,22 @@ def restore_file_simple(message):
                     reminder_counter = r.get("id", 0)
             save_reminders(reminders)
             start_all_reminders()
+            restored_count += len(backup_data["reminders"])
+            logger.info(f"📊 Восстановлено напоминаний: {len(backup_data['reminders'])}")
         
         # Восстанавливаем настройки переводчика
         if "translator_settings" in backup_data:
             global translator_settings
             translator_settings = backup_data["translator_settings"]
             save_translator_settings(translator_settings)
+            logger.info(f"⚙️ Восстановлено настроек: {len(translator_settings)}")
         
         # Восстанавливаем кэш пользователей
         if "chat_users" in backup_data:
             global chat_users
             chat_users = backup_data["chat_users"]
             save_users_cache(chat_users)
+            logger.info(f"👥 Восстановлено пользователей: {len(chat_users)}")
         
         bot.edit_message_text(
             f"✅ *Восстановление завершено!*\n\n"
@@ -948,11 +965,23 @@ def restore_file_simple(message):
             parse_mode="Markdown"
         )
         
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON ошибка: {e}")
         bot.edit_message_text("❌ *Ошибка:* Неверный JSON формат", message.chat.id, status_msg.message_id, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Ошибка восстановления: {e}")
         bot.edit_message_text(f"❌ *Ошибка:* {str(e)[:200]}", message.chat.id, status_msg.message_id, parse_mode="Markdown")
+
+
+# Текстовые команды (без слеша) для надежности
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == 'бекап' and m.chat.type == 'private')
+def backup_text(message):
+    backup_command(message)
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower() == 'восстановление' and m.chat.type == 'private')
+def restore_text(message):
+    restore_command(message)
 
 # === СКРЫТЫЕ СООБЩЕНИЯ ===
 @bot.inline_handler(func=lambda query: True)
@@ -1095,9 +1124,13 @@ if __name__ == "__main__":
         allowed_updates=["message", "channel_post", "inline_query", "callback_query", "chat_member", "my_chat_member"]
     )
     
+    logger.info("=" * 50)
     logger.info("🤖 БОТ ЗАПУЩЕН")
+    logger.info(f"📡 Webhook: {webhook_url}")
     logger.info("✅ Напоминания: /remind, /reminds, /delremind")
-    logger.info("✅ Бекап: /backup (в ЛС для админа)")
-    logger.info("✅ Восстановление: /restore (в ЛС для админа)")
+    logger.info("✅ Бекап: /backup (в ЛС) или 'бекап' (текстом)")
+    logger.info("✅ Восстановление: /restore (в ЛС) или 'восстановление' (текстом)")
+    logger.info(f"👑 Админ ID: {ADMIN_ID}")
+    logger.info("=" * 50)
     
     app.run(host="0.0.0.0", port=port)
