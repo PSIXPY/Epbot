@@ -12,7 +12,7 @@ app = Flask(__name__)
 bot = TeleBot(BOT_TOKEN)
 
 print("=" * 50)
-print("🤖 БОТ ЗАПУЩЕН С ДИАГНОСТИКОЙ")
+print("🤖 БОТ ЗАПУЩЕН")
 print(f"BOT_TOKEN: {BOT_TOKEN[:15]}...")
 print(f"RENDER_URL: {RENDER_URL}")
 print(f"ADMIN_ID: {ADMIN_ID}")
@@ -86,16 +86,30 @@ def webhook():
 
 
 if __name__ == "__main__":
+    import requests
+    
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     
     print("=" * 50)
-    print("🔄 Настройка вебхука...")
-    print(f"📡 Webhook URL: {webhook_url}")
+    print("🔄 УСТАНОВКА ВЕБХУКА...")
+    print(f"📡 URL вебхука: {webhook_url}")
     
-    bot.remove_webhook()
-    result = bot.set_webhook(url=webhook_url)
-    print(f"📡 Результат: {result}")
+    # Удаляем старый вебхук
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+    result = requests.post(url)
+    print(f"🗑 Удаление вебхука: {result.json()}")
+    
+    # Устанавливаем новый вебхук
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+    data = {"url": webhook_url}
+    result = requests.post(url, data=data)
+    print(f"📡 Установка вебхука: {result.json()}")
+    
+    # Проверяем вебхук
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+    result = requests.get(url)
+    print(f"🔍 Проверка вебхука: {result.json()}")
     print("=" * 50)
     
     app.run(host="0.0.0.0", port=port)
