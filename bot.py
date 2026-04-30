@@ -445,7 +445,8 @@ def backup_command(message):
         data = {
             "version": "2.0",
             "date": str(datetime.now()),
-            "reminders": backup_reminders
+            "reminders": backup_reminders,
+            "chat_users": chat_users
         }
         
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -458,7 +459,8 @@ def backup_command(message):
                 f, 
                 caption=f"✅ *Бекап создан!*\n\n"
                        f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
-                       f"📊 Напоминаний: {len(backup_reminders)}",
+                       f"📊 Напоминаний: {len(backup_reminders)}\n"
+                       f"👥 Пользователей: {len(chat_users)}",
                 parse_mode="Markdown"
             )
         
@@ -484,7 +486,7 @@ def restore_command(message):
         "📥 *Восстановление из бекапа*\n\n"
         "1️⃣ Отправьте JSON файл бекапа\n"
         "2️⃣ Файл должен начинаться с `backup_` или `full_backup_`\n"
-        "3️⃣ Бот восстановит ваши напоминания\n\n"
+        "3️⃣ Бот восстановит напоминания и пользователей\n\n"
         "📌 *Пример:* `backup_20250430_175218.json`",
         parse_mode="Markdown"
     )
@@ -513,6 +515,7 @@ def handle_restore_file(message):
         file_content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_content.decode('utf-8'))
         
+        # Останавливаем старые таймеры
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -520,8 +523,10 @@ def handle_restore_file(message):
                 except:
                     pass
         
-        restored_count = 0
+        restored_reminders = 0
+        restored_users = 0
         
+        # Восстанавливаем напоминания
         if "reminders" in backup_data:
             reminders.clear()
             global reminder_counter
@@ -532,7 +537,7 @@ def handle_restore_file(message):
                     reminder_counter = r.get("id", 0)
             save_reminders(reminders)
             start_all_reminders()
-            restored_count = len(backup_data["reminders"])
+            restored_reminders = len(backup_data["reminders"])
         
         elif isinstance(backup_data, list):
             reminders.clear()
@@ -543,15 +548,28 @@ def handle_restore_file(message):
                     reminder_counter = r.get("id", 0)
             save_reminders(reminders)
             start_all_reminders()
-            restored_count = len(backup_data)
+            restored_reminders = len(backup_data)
         
-        else:
-            bot.edit_message_text("❌ Неизвестный формат файла", message.chat.id, status_msg.message_id)
-            return
+        # Восстанавливаем пользователей
+        if "chat_users" in backup_data:
+            global chat_users
+            chat_users = backup_data["chat_users"]
+            save_users_cache(chat_users)
+            restored_users = len(backup_data["chat_users"])
+            print(f"👥 Восстановлено пользователей: {restored_users}")
+        
+        # Для старых full_backup файлов
+        elif "users" in backup_data:
+            global chat_users
+            chat_users = backup_data["users"]
+            save_users_cache(chat_users)
+            restored_users = len(backup_data["users"])
+            print(f"👥 Восстановлено пользователей: {restored_users}")
         
         bot.edit_message_text(
             f"✅ *Восстановление завершено!*\n\n"
-            f"📊 Восстановлено напоминаний: {restored_count}",
+            f"📊 Восстановлено напоминаний: {restored_reminders}\n"
+            f"👥 Восстановлено пользователей: {restored_users}",
             message.chat.id, 
             status_msg.message_id,
             parse_mode="Markdown"
@@ -563,7 +581,7 @@ def handle_restore_file(message):
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
 
 
-# ========== СКРЫТЫЕ СООБЩЕНИЯ (ИНЛАЙН-РЕЖИМ) ==========
+# ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
 
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
@@ -614,7 +632,7 @@ def inline_query(query):
             "content": content,
             "sender_name": query.from_user.first_name,
             "sender_id": query.from_user.id,
-            "expires": time.time() + 3600  # 1 час
+            "expires": time.time() + 3600
         }
         
         markup = InlineKeyboardMarkup()
@@ -664,11 +682,8 @@ def handle_secret_read(call):
         f"📩 От {data['sender_name']}:\n\n{data['content']}", 
         show_alert=True
     )
-    
-    # НЕ УДАЛЯЕМ сообщение после прочтения!
 
 
-# Очистка старых секретных сообщений
 def clean_old_secrets():
     while True:
         time.sleep(3600)
@@ -682,7 +697,7 @@ def clean_old_secrets():
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
 
-# ========== ECHO (В КОНЦЕ) ==========
+# ========== ECHO ==========
 
 @bot.message_handler(func=lambda m: True)
 def echo(message):
