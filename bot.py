@@ -1,53 +1,41 @@
 import os
-import json
-from datetime import datetime
 from flask import Flask, request
 from telebot import TeleBot
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 RENDER_URL = os.environ.get("RENDER_URL", "")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", 483977434))
 
 app = Flask(__name__)
 bot = TeleBot(BOT_TOKEN)
 
-print("🤖 БОТ ЗАПУЩЕН")
+print("=" * 50)
+print("ТЕСТОВЫЙ БОТ ЗАПУЩЕН")
+print(f"Токен: {BOT_TOKEN[:15] if BOT_TOKEN else 'None'}...")
+print(f"URL: {RENDER_URL}")
+print("=" * 50)
 
 
-@bot.message_handler(commands=['start', 'help', 'test'])
-def start(message):
-    bot.send_message(message.chat.id, "✅ Бот работает!")
-
-
-@bot.message_handler(commands=['backup'])
-def backup(message):
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Только в ЛС!")
-        return
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
-        return
-    
-    bot.send_message(message.chat.id, "✅ Создаю файл...")
+@bot.message_handler(func=lambda m: True)
+def echo(message):
+    print(f"🔴 ПОЛУЧЕНО: {message.text} от {message.from_user.id}")
     try:
-        data = {"time": str(datetime.now()), "user": message.from_user.id}
-        filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, 'w') as f:
-            json.dump(data, f)
-        with open(filename, 'rb') as f:
-            bot.send_document(message.chat.id, f, caption="✅ БЕКАП")
-        os.remove(filename)
+        bot.reply_to(message, f"✅ Эхо: {message.text[:100]}")
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+        print(f"Ошибка ответа: {e}")
 
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
+    print("🔵 WEBHOOK ВЫЗВАН")
     try:
-        bot.process_new_updates([types.Update.de_json(request.get_json())])
+        update = request.get_json()
+        print(f"🔵 UPDATE: {str(update)[:200]}")
+        if update:
+            bot.process_new_updates([types.Update.de_json(update)])
+            print("🔵 Обработано")
         return "OK", 200
     except Exception as e:
-        print(e)
+        print(f"🔴 ОШИБКА: {e}")
         return "OK", 200
 
 
@@ -57,11 +45,16 @@ def health():
 
 
 if __name__ == "__main__":
+    import requests
+    
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     
-    bot.remove_webhook()
-    bot.set_webhook(url=webhook_url)
+    print("🔄 Установка вебхука...")
+    r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
+    print(f"Удаление: {r.json()}")
+    r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={webhook_url}")
+    print(f"Установка: {r.json()}")
+    print("=" * 50)
     
-    print(f"📡 Webhook: {webhook_url}")
     app.run(host="0.0.0.0", port=port)
