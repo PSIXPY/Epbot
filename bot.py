@@ -40,19 +40,16 @@ def save_users_cache(users):
             json.dump(users, f, ensure_ascii=False, indent=2)
         print(f"💾 Сохранено {len(users)} пользователей в кэш")
     except Exception as e:
-        print(f"Ошибка сохранения кэша: {e}")
+        print(f"Ошибка: {e}")
 
 chat_users = load_users_cache()
 
 
-# === ФУНКЦИЯ СОХРАНЕНИЯ ПОЛЬЗОВАТЕЛЯ ===
 def save_user(user, source=""):
     if not user or user.id == bot.get_me().id:
         return False
-    
     user_id = str(user.id)
     was_new = user_id not in chat_users
-    
     chat_users[user_id] = {
         "id": user.id,
         "username": user.username,
@@ -60,31 +57,13 @@ def save_user(user, source=""):
         "last_name": user.last_name or "",
         "last_seen": time.time()
     }
-    
     if was_new:
         print(f"📝 НОВЫЙ: {user.first_name} (@{user.username}) - {source}")
         save_users_cache(chat_users)
-    
     return was_new
 
 
-# === ПРОСТОЙ СБОР ПОЛЬЗОВАТЕЛЕЙ (НЕ КОНФЛИКТУЕТ С КОМАНДАМИ) ===
-@bot.message_handler(content_types=['text'])
-def collect_from_message(message):
-    # Только группы
-    if message.chat.type not in ['group', 'supergroup']:
-        return
-    
-    # Сохраняем автора
-    if message.from_user:
-        save_user(message.from_user, "написал")
-    
-    # Сохраняем того, кому ответили
-    if message.reply_to_message and message.reply_to_message.from_user:
-        save_user(message.reply_to_message.from_user, "ответили")
-
-
-# === НОВЫЕ УЧАСТНИКИ ===
+# === ТОЛЬКО НОВЫЕ УЧАСТНИКИ (НЕ КОНФЛИКТУЕТ) ===
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
     for new_member in message.new_chat_members:
@@ -93,28 +72,24 @@ def handle_new_member(message):
         save_user(new_member, "вступил")
 
 
-# === КОМАНДЫ КЭША ===
+# === КОМАНДЫ ===
 @bot.message_handler(commands=['users'])
 def show_users(message):
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Только для админа")
         return
-    
     if not chat_users:
         bot.reply_to(message, "📭 Кэш пуст")
         return
-    
     result = f"👥 *Пользователей:* {len(chat_users)}\n\n"
     users_list = []
     for uid, data in list(chat_users.items())[:30]:
         username = data.get('username', 'нет')
         name = data.get('first_name', 'Неизвестный')
         users_list.append(f"• {name} (@{username}) - ID: `{uid}`")
-    
     result += "\n".join(users_list)
     if len(chat_users) > 30:
         result += f"\n\n... и еще {len(chat_users) - 30}"
-    
     bot.reply_to(message, result, parse_mode="Markdown")
 
 
@@ -123,14 +98,11 @@ def add_user_to_cache(message):
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Только для админа")
         return
-    
     args = message.text.split()
     if len(args) < 2:
         bot.reply_to(message, "ℹ️ /adduser @username")
         return
-    
     target = args[1].lstrip("@")
-    
     try:
         user_info = bot.get_chat(target)
         save_user(user_info, "добавлен админом")
@@ -148,7 +120,6 @@ CACHE_TTL = 3600
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
-
 def set_reaction(chat_id, message_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
@@ -158,7 +129,6 @@ def set_reaction(chat_id, message_id):
             print(f"🔥 Реакция на {message_id}")
     except Exception as e:
         print(f"Ошибка: {e}")
-
 
 def ask_groq(user_id, prompt):
     if not GROQ_API_KEY:
@@ -395,13 +365,13 @@ def delete_reminder(message):
 # === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
-    print(f"🔵 BACKUP от {message.from_user.id} в чате {message.chat.id}, тип {message.chat.type}")
+    print(f"🔵 BACKUP от {message.from_user.id}")
     
     if message.chat.type != 'private':
         bot.reply_to(message, "❌ Только в ЛС!")
         return
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, f"❌ Нет прав! Ваш ID: {message.from_user.id}")
+        bot.reply_to(message, "❌ Нет прав!")
         return
     
     status_msg = bot.reply_to(message, "🔄 Создаю бекап...")
