@@ -2,7 +2,7 @@ import os
 import json
 from datetime import datetime
 from flask import Flask, request
-from telebot import TeleBot
+from telebot import TeleBot, types  # ← ДОБАВИЛИ types
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 RENDER_URL = os.environ.get("RENDER_URL", "")
@@ -43,8 +43,10 @@ def backup_command(message):
         with open(filename, 'rb') as f:
             bot.send_document(message.chat.id, f, caption="✅ БЕКАП")
         os.remove(filename)
+        print("🔵 Бекап отправлен")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+        print(f"🔴 Ошибка: {e}")
 
 
 @bot.message_handler(func=lambda m: True)
@@ -56,13 +58,16 @@ def echo(message):
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
+    print("🔵 WEBHOOK ВЫЗВАН")
     try:
         update = request.get_json()
+        print(f"🔵 UPDATE: {str(update)[:100]}...")
         if update:
             bot.process_new_updates([types.Update.de_json(update)])
+            print("🔵 Update обработан")
         return "OK", 200
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"🔴 Ошибка: {e}")
         return "OK", 200
 
 
