@@ -484,15 +484,14 @@ def delete_reminder(message):
 def translate_command(message):
     thread_id = message.message_thread_id
     chat_id = message.chat.id
-    text = message.text[2:].strip()
-    parts = text.split()
+    parts = message.text.split()
     
-    if len(parts) < 1:
+    if len(parts) < 2:
         status = "✅ Включён" if is_translator_enabled(chat_id) else "❌ Выключен"
         bot.reply_to(message, f"🌐 Переводчик RU↔EN\n\nСтатус: {status}\n\n/т on - включить\n/т off - выключить", message_thread_id=thread_id)
         return
     
-    action = parts[0].lower()
+    action = parts[1].lower()
     if action == "on":
         set_translator_enabled(chat_id, True)
         bot.reply_to(message, "✅ Включён!", message_thread_id=thread_id)
@@ -567,16 +566,21 @@ def collect_user_from_message(message):
             save_users_cache(chat_users)
             logger.info(f"📝 Добавлен пользователь: {user.first_name} (@{user.username})")
 
-# === БЕКАП ===
+# === БЕКАП (С ДИАГНОСТИКОЙ) ===
 @bot.message_handler(commands=['backup'])
 def backup_full(message):
+    print(f"🔴🔴🔴 КОМАНДА BACKUP ВЫЗВАНА от {message.from_user.id} в чате {message.chat.id}")
+    bot.send_message(message.chat.id, "🔍 Диагностика: команда backup получена!")
+    
     if message.chat.type != 'private':
         bot.reply_to(message, "❌ Команда /backup доступна только в ЛС!")
         return
     
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
+        bot.reply_to(message, f"❌ Нет прав! Ваш ID: {message.from_user.id}, Админ ID: {ADMIN_ID}")
         return
+    
+    bot.send_message(message.chat.id, "✅ Права проверены, создаю бекап...")
     
     status_msg = bot.reply_to(message, "🔄 Создаю бекап...")
     
@@ -619,6 +623,7 @@ def backup_full(message):
         
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
+        print(f"🔴 Ошибка бекапа: {e}")
 
 @bot.message_handler(commands=['restore'])
 def restore_full(message):
