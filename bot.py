@@ -45,7 +45,7 @@ def set_reaction(chat_id, message_id):
     except Exception as e:
         print(f"Ошибка реакции: {e}")
 
-# === ИИ (РАБОЧАЯ ВЕРСИЯ) ===
+# === ИИ ===
 def ask_groq(user_id, prompt):
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен."
@@ -146,7 +146,9 @@ def start_all_reminders():
     for r in reminders:
         schedule_reminder(r)
 
-# === КОМАНДЫ ===
+
+# ========== КОМАНДЫ (СНАЧАЛА ВСЕ КОМАНДЫ) ==========
+
 @bot.message_handler(commands=['start', 'help'])
 def start_command(message):
     bot.send_message(message.chat.id, "✅ Бот работает!\n\n"
@@ -298,7 +300,6 @@ def delete_reminder(message):
         delete_after_delay(chat_id, msg.message_id, 10)
 
 
-# === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
     print(f"🔵 BACKUP от {message.from_user.id}")
@@ -361,14 +362,22 @@ def restore_command(message):
     bot.send_message(
         message.chat.id,
         "📥 *Восстановление из бекапа*\n\n"
-        "Отправьте JSON файл бекапа (начинается с backup_ или full_backup_)",
+        "1️⃣ Отправьте JSON файл бекапа\n"
+        "2️⃣ Файл должен начинаться с `backup_` или `full_backup_`\n"
+        "3️⃣ Бот восстановит ваши напоминания\n\n"
+        "📌 *Пример:* `backup_20250430_175218.json`",
         parse_mode="Markdown"
     )
 
 
+# ========== ОБРАБОТЧИК ФАЙЛОВ ==========
+
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
+    print(f"🔵 Получен файл: {message.document.file_name}")
+    
     if message.chat.type != 'private':
+        bot.reply_to(message, "❌ Отправьте файл в ЛС")
         return
     
     if message.from_user.id != ADMIN_ID:
@@ -386,6 +395,7 @@ def handle_restore_file(message):
         file_content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_content.decode('utf-8'))
         
+        # Останавливаем старые таймеры
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -395,6 +405,7 @@ def handle_restore_file(message):
         
         restored_count = 0
         
+        # Новый формат
         if "reminders" in backup_data:
             reminders.clear()
             global reminder_counter
@@ -407,6 +418,7 @@ def handle_restore_file(message):
             start_all_reminders()
             restored_count = len(backup_data["reminders"])
         
+        # Старый формат
         elif isinstance(backup_data, list):
             reminders.clear()
             reminder_counter = 0
@@ -436,6 +448,8 @@ def handle_restore_file(message):
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
 
 
+# ========== ECHO В САМОМ КОНЦЕ (НЕ ПЕРЕХВАТЫВАЕТ КОМАНДЫ) ==========
+
 @bot.message_handler(func=lambda m: True)
 def echo(message):
     print(f"📨 ПОЛУЧЕНО: {message.text} от {message.from_user.id}")
@@ -443,7 +457,8 @@ def echo(message):
         bot.reply_to(message, f"✅ Получено: {message.text[:50]}")
 
 
-# === ВЕБХУК ===
+# ========== ВЕБХУК ==========
+
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
@@ -468,6 +483,8 @@ def webhook():
 def health():
     return "OK", 200
 
+
+# ========== ЗАПУСК ==========
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
