@@ -2,6 +2,7 @@ import os
 import json
 import time
 import threading
+import requests
 from datetime import datetime, timedelta
 from flask import Flask, request
 from telebot import TeleBot, types
@@ -81,7 +82,14 @@ def start_all_reminders():
 # === КОМАНДЫ ===
 @bot.message_handler(commands=['start', 'help', 'test'])
 def start_command(message):
-    bot.send_message(message.chat.id, "✅ Бот работает!\n\n/remind 15:30 текст - создать напоминание\n/reminds - список\n/delremind ID - удалить\n/backup - бекап")
+    bot.send_message(message.chat.id, "✅ Бот работает!\n\n"
+        "⏰ Напоминания:\n"
+        "/remind 15:30 текст - создать\n"
+        "/reminds - список\n"
+        "/delremind ID - удалить\n\n"
+        "💾 Бекап (в ЛС):\n"
+        "/backup - создать бекап\n"
+        "/restore - восстановить из бекапа")
 
 
 @bot.message_handler(commands=['remind'])
@@ -210,6 +218,7 @@ def delete_reminder(message):
         delete_after_delay(chat_id, msg.message_id, 10)
 
 
+# === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
     print(f"🔵 BACKUP от {message.from_user.id}")
@@ -221,7 +230,8 @@ def backup_command(message):
         bot.reply_to(message, "❌ Нет прав!")
         return
     
-    bot.send_message(message.chat.id, "🔄 Создаю бекап...")
+    status_msg = bot.reply_to(message, "🔄 Создаю бекап...")
+    
     try:
         backup_reminders = []
         for r in reminders:
@@ -232,18 +242,122 @@ def backup_command(message):
             backup_reminders.append(r_copy)
         
         data = {
-            "version": "1.0",
+            "version": "2.0",
             "date": str(datetime.now()),
             "reminders": backup_reminders
         }
+        
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, 'w') as f:
-            json.dump(data, f)
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        
         with open(filename, 'rb') as f:
-            bot.send_document(message.chat.id, f, caption=f"✅ БЕКАП\nНапоминаний: {len(backup_reminders)}")
+            bot.send_document(
+                message.chat.id, 
+                f, 
+                caption=f"✅ *Бекап создан!*\n\n"
+                       f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
+                       f"📊 Напоминаний: {len(backup_reminders)}",
+                parse_mode="Markdown"
+            )
+        
         os.remove(filename)
+        bot.delete_message(message.chat.id, status_msg.message_id)
+        
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+        bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
+
+
+@bot.message_handler(commands=['restore'])
+def restore_command(message):
+    if message.chat.type != 'private':
+        bot.reply_to(message, "❌ Команда /restore только в ЛС!")
+        return
+    
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав!")
+        return
+    
+    bot.send_message(
+        message.chat.id,
+        "📥 *Восстановление из бекапа*\n\n"
+        "Отправьте JSON файл бекапа (начинается с `backup_` или `full_backup_`)",
+        parse_mode="Markdown"
+    )
+
+
+@bot.message_handler(content_types=['document'])
+def handle_restore_file(message):
+    if message.chat.type != 'private':
+        return
+    
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав!")
+        return
+    
+    # ПОДДЕРЖКА backup_ И full_backup_
+    if not (message.document.file_name.startswith("backup_") or message.document.file_name.startswith("full_backup_")):
+        bot.reply_to(message, "❌ Это не файл бекапа!\n\nФайл должен начинаться с `backup_` или `full_backup_`", parse_mode="Markdown")
+        return
+    
+    status_msg = bot.reply_to(message, "🔄 Восстанавливаю...")
+    
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        file_content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
+        backup_data = json.loads(file_content.decode('utf-8'))
+        
+        # Останавливаем старые таймеры
+        for r in reminders:
+            if "_timer" in r:
+                try:
+                    r["_timer"].cancel()
+                except:
+                    pass
+        
+        restored_count = 0
+        
+        # ПОДДЕРЖКА НОВОГО ФОРМАТА (с обёрткой)
+        if "reminders" in backup_data:
+            reminders.clear()
+            global reminder_counter
+            reminder_counter = 0
+            for r in backup_data["reminders"]:
+                reminders.append(r)
+                if r.get("id", 0) > reminder_counter:
+                    reminder_counter = r.get("id", 0)
+            save_reminders(reminders)
+            start_all_reminders()
+            restored_count = len(backup_data["reminders"])
+        
+        # ПОДДЕРЖКА СТАРОГО ФОРМАТА (просто список напоминаний)
+        elif isinstance(backup_data, list):
+            reminders.clear()
+            reminder_counter = 0
+            for r in backup_data:
+                reminders.append(r)
+                if r.get("id", 0) > reminder_counter:
+                    reminder_counter = r.get("id", 0)
+            save_reminders(reminders)
+            start_all_reminders()
+            restored_count = len(backup_data)
+        
+        else:
+            bot.edit_message_text("❌ Неизвестный формат файла", message.chat.id, status_msg.message_id)
+            return
+        
+        bot.edit_message_text(
+            f"✅ *Восстановление завершено!*\n\n"
+            f"📊 Восстановлено напоминаний: {restored_count}",
+            message.chat.id, 
+            status_msg.message_id,
+            parse_mode="Markdown"
+        )
+        
+    except json.JSONDecodeError:
+        bot.edit_message_text("❌ Ошибка: Неверный JSON формат", message.chat.id, status_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
 
 
 @bot.message_handler(func=lambda m: True)
@@ -271,8 +385,6 @@ def health():
 
 
 if __name__ == "__main__":
-    import requests
-    
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
     
