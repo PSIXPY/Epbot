@@ -17,7 +17,7 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", 483977434))
 app = Flask(__name__)
 bot = TeleBot(BOT_TOKEN)
 
-print("🤖 БОТ С НАПОМИНАНИЯМИ И ИИ ЗАПУЩЕН")
+print("🤖 БОТ С НАПОМИНАНИЯМИ, ИИ И РЕАКЦИЯМИ ЗАПУЩЕН")
 
 # === КЭШ И ИСТОРИЯ ===
 ai_cache = {}
@@ -28,6 +28,24 @@ CACHE_TTL = 3600
 # === ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
+
+# === ФУНКЦИЯ ДЛЯ СТАВКИ РЕАКЦИИ НА КАНАЛЫ ===
+def set_reaction(chat_id, message_id, reaction="🔥"):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "reaction": [{"type": "emoji", "emoji": reaction}]
+    }
+    try:
+        response = requests.post(url, json=data, timeout=5)
+        result = response.json()
+        if result.get("ok"):
+            print(f"🔥 Реакция {reaction} на пост {message_id} в канале {chat_id}")
+        else:
+            print(f"Ошибка реакции: {result}")
+    except Exception as e:
+        print(f"Ошибка: {e}")
 
 # === ИИ ===
 def ask_groq(user_id, prompt):
@@ -54,16 +72,20 @@ def ask_groq(user_id, prompt):
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     data = {
-        "model": "qwen/qwen3-32b",
+        "model": "llama3-8b-8192",
         "messages": messages,
         "max_tokens": 800,
-        "temperature": 0.2
+        "temperature": 0.7
     }
     
     try:
+        print(f"🔵 Groq запрос: {prompt[:50]}...")
         response = requests.post(url, headers=headers, json=data, timeout=30)
+        print(f"🔵 Groq ответ: {response.status_code}")
+        
         if response.status_code == 200:
-            answer = response.json()["choices"][0]["message"]["content"]
+            result = response.json()
+            answer = result["choices"][0]["message"]["content"]
             answer = re.sub(r'<think>.*?</think>|/think', '', answer, flags=re.DOTALL)
             answer = answer.strip()
             user_histories[user_id].append({"role": "assistant", "content": answer})
@@ -71,8 +93,12 @@ def ask_groq(user_id, prompt):
             return answer
         elif response.status_code == 429:
             return "⚠️ Лимит запросов. Подождите."
-        return f"❌ Ошибка: {response.status_code}"
+        else:
+            error_text = response.json().get("error", {}).get("message", str(response.status_code))
+            print(f"🔴 Ошибка: {error_text}")
+            return f"❌ Ошибка: {error_text}"
     except Exception as e:
+        print(f"🔴 Исключение: {e}")
         return f"❌ Ошибка: {str(e)[:100]}"
 
 # === НАПОМИНАНИЯ ===
@@ -153,9 +179,15 @@ def start_command(message):
 def ai_command(message):
     thread_id = message.message_thread_id
     prompt = message.text[3:].strip()
+    
     if not prompt:
         bot.reply_to(message, "ℹ️ /ai вопрос\n\nПример: /ai Как дела?", message_thread_id=thread_id)
         return
+    
+    if not GROQ_API_KEY:
+        bot.reply_to(message, "❌ Groq API не настроен!\n\nДобавьте GROQ_API_KEY в переменные Render", message_thread_id=thread_id)
+        return
+    
     msg = bot.reply_to(message, "🤖 Думаю...", message_thread_id=thread_id)
     answer = ask_groq(message.from_user.id, prompt)
     bot.edit_message_text(answer, message.chat.id, msg.message_id, message_thread_id=thread_id)
@@ -434,12 +466,26 @@ def echo(message):
         bot.reply_to(message, f"✅ Получено: {message.text[:50]}")
 
 
+# === ВЕБХУК С РЕАКЦИЯМИ НА КАНАЛЫ ===
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
+        
         if update:
+            # Обработка постов в каналах для реакций
+            if "channel_post" in update:
+                post = update["channel_post"]
+                channel_id = post["chat"]["id"]
+                message_id = post["message_id"]
+                
+                # СТАВИМ РЕАКЦИИ НА КАНАЛЫ (укажите свои ID каналов)
+                if channel_id in [-1002185590715, -1001317416582]:
+                    set_reaction(channel_id, message_id, "🔥")
+            
+            # Обработка обычных сообщений
             bot.process_new_updates([types.Update.de_json(update)])
+        
         return "OK", 200
     except Exception as e:
         print(f"Ошибка: {e}")
