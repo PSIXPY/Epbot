@@ -3,18 +3,77 @@ import json
 import time
 import threading
 import requests
+import hashlib
+import re
 from datetime import datetime, timedelta
 from flask import Flask, request
 from telebot import TeleBot, types
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 RENDER_URL = os.environ.get("RENDER_URL", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 483977434))
 
 app = Flask(__name__)
 bot = TeleBot(BOT_TOKEN)
 
-print("🤖 БОТ С НАПОМИНАНИЯМИ ЗАПУЩЕН")
+print("🤖 БОТ С НАПОМИНАНИЯМИ И ИИ ЗАПУЩЕН")
+
+# === КЭШ И ИСТОРИЯ ===
+ai_cache = {}
+user_histories = {}
+MAX_HISTORY = 10
+CACHE_TTL = 3600
+
+# === ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
+def delete_after_delay(chat_id, message_id, delay=10):
+    threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
+
+# === ИИ ===
+def ask_groq(user_id, prompt):
+    if not GROQ_API_KEY:
+        return "❌ Groq API не настроен."
+    
+    cache_key = hashlib.md5(prompt.lower().encode()).hexdigest()
+    if cache_key in ai_cache:
+        cached_time, cached_answer = ai_cache[cache_key]
+        if time.time() - cached_time < CACHE_TTL:
+            return cached_answer
+    
+    if user_id not in user_histories:
+        user_histories[user_id] = []
+    user_histories[user_id].append({"role": "user", "content": prompt})
+    if len(user_histories[user_id]) > MAX_HISTORY:
+        user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
+    
+    messages = [
+        {"role": "system", "content": "Отвечай кратко, по существу."},
+        *user_histories[user_id]
+    ]
+    
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    data = {
+        "model": "qwen/qwen3-32b",
+        "messages": messages,
+        "max_tokens": 800,
+        "temperature": 0.2
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        if response.status_code == 200:
+            answer = response.json()["choices"][0]["message"]["content"]
+            answer = re.sub(r'<think>.*?</think>|/think', '', answer, flags=re.DOTALL)
+            answer = answer.strip()
+            user_histories[user_id].append({"role": "assistant", "content": answer})
+            ai_cache[cache_key] = (time.time(), answer)
+            return answer
+        elif response.status_code == 429:
+            return "⚠️ Лимит запросов. Подождите."
+        return f"❌ Ошибка: {response.status_code}"
+    except Exception as e:
+        return f"❌ Ошибка: {str(e)[:100]}"
 
 # === НАПОМИНАНИЯ ===
 REMINDERS_FILE = "reminders.json"
@@ -44,9 +103,6 @@ def save_reminders(reminders):
 
 reminders = load_reminders()
 reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
-
-def delete_after_delay(chat_id, message_id, delay=10):
-    threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
 def send_reminder(reminder):
     try:
@@ -80,16 +136,29 @@ def start_all_reminders():
         schedule_reminder(r)
 
 # === КОМАНДЫ ===
-@bot.message_handler(commands=['start', 'help', 'test'])
+@bot.message_handler(commands=['start', 'help'])
 def start_command(message):
     bot.send_message(message.chat.id, "✅ Бот работает!\n\n"
+        "🤖 ИИ: /ai вопрос\n\n"
         "⏰ Напоминания:\n"
         "/remind 15:30 текст - создать\n"
         "/reminds - список\n"
         "/delremind ID - удалить\n\n"
         "💾 Бекап (в ЛС):\n"
         "/backup - создать бекап\n"
-        "/restore - восстановить из бекапа")
+        "/restore - восстановить")
+
+
+@bot.message_handler(commands=['ai'])
+def ai_command(message):
+    thread_id = message.message_thread_id
+    prompt = message.text[3:].strip()
+    if not prompt:
+        bot.reply_to(message, "ℹ️ /ai вопрос\n\nПример: /ai Как дела?", message_thread_id=thread_id)
+        return
+    msg = bot.reply_to(message, "🤖 Думаю...", message_thread_id=thread_id)
+    answer = ask_groq(message.from_user.id, prompt)
+    bot.edit_message_text(answer, message.chat.id, msg.message_id, message_thread_id=thread_id)
 
 
 @bot.message_handler(commands=['remind'])
@@ -244,7 +313,8 @@ def backup_command(message):
         data = {
             "version": "2.0",
             "date": str(datetime.now()),
-            "reminders": backup_reminders
+            "reminders": backup_reminders,
+            "user_histories": user_histories
         }
         
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -257,7 +327,8 @@ def backup_command(message):
                 f, 
                 caption=f"✅ *Бекап создан!*\n\n"
                        f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
-                       f"📊 Напоминаний: {len(backup_reminders)}",
+                       f"📊 Напоминаний: {len(backup_reminders)}\n"
+                       f"📝 Историй: {len(user_histories)}",
                 parse_mode="Markdown"
             )
         
@@ -295,7 +366,6 @@ def handle_restore_file(message):
         bot.reply_to(message, "❌ Нет прав!")
         return
     
-    # ПОДДЕРЖКА backup_ И full_backup_
     if not (message.document.file_name.startswith("backup_") or message.document.file_name.startswith("full_backup_")):
         bot.reply_to(message, "❌ Это не файл бекапа!\n\nФайл должен начинаться с `backup_` или `full_backup_`", parse_mode="Markdown")
         return
@@ -307,7 +377,6 @@ def handle_restore_file(message):
         file_content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_content.decode('utf-8'))
         
-        # Останавливаем старые таймеры
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -317,7 +386,6 @@ def handle_restore_file(message):
         
         restored_count = 0
         
-        # ПОДДЕРЖКА НОВОГО ФОРМАТА (с обёрткой)
         if "reminders" in backup_data:
             reminders.clear()
             global reminder_counter
@@ -330,7 +398,6 @@ def handle_restore_file(message):
             start_all_reminders()
             restored_count = len(backup_data["reminders"])
         
-        # ПОДДЕРЖКА СТАРОГО ФОРМАТА (просто список напоминаний)
         elif isinstance(backup_data, list):
             reminders.clear()
             reminder_counter = 0
