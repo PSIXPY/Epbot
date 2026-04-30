@@ -296,6 +296,8 @@ def ai_command(message):
 
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
+    global reminder_counter
+    
     chat_id = message.chat.id
     thread_id = message.message_thread_id
     
@@ -331,7 +333,6 @@ def add_reminder(message):
         daily = True
         reminder_text = reminder_text[len("ежедневно"):].lstrip()
     
-    global reminder_counter
     reminder_counter += 1
     
     reminder = {
@@ -385,6 +386,8 @@ def list_reminders(message):
 
 @bot.message_handler(commands=['delremind'])
 def delete_reminder(message):
+    global reminders
+    
     chat_id = message.chat.id
     thread_id = message.message_thread_id
     
@@ -494,6 +497,8 @@ def restore_command(message):
 
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
+    global chat_users, reminder_counter  # ← В САМОМ НАЧАЛЕ!
+    
     print(f"🔵 Получен файл: {message.document.file_name}")
     
     if message.chat.type != 'private':
@@ -529,7 +534,6 @@ def handle_restore_file(message):
         # Восстанавливаем напоминания
         if "reminders" in backup_data:
             reminders.clear()
-            global reminder_counter
             reminder_counter = 0
             for r in backup_data["reminders"]:
                 reminders.append(r)
@@ -552,18 +556,9 @@ def handle_restore_file(message):
         
         # Восстанавливаем пользователей
         if "chat_users" in backup_data:
-            global chat_users
             chat_users = backup_data["chat_users"]
             save_users_cache(chat_users)
             restored_users = len(backup_data["chat_users"])
-            print(f"👥 Восстановлено пользователей: {restored_users}")
-        
-        # Для старых full_backup файлов
-        elif "users" in backup_data:
-            global chat_users
-            chat_users = backup_data["users"]
-            save_users_cache(chat_users)
-            restored_users = len(backup_data["users"])
             print(f"👥 Восстановлено пользователей: {restored_users}")
         
         bot.edit_message_text(
