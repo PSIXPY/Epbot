@@ -45,6 +45,7 @@ def save_users_cache(users):
 chat_users = load_users_cache()
 
 
+# === ФУНКЦИЯ СОХРАНЕНИЯ ПОЛЬЗОВАТЕЛЯ ===
 def save_user(user, source=""):
     if not user or user.id == bot.get_me().id:
         return False
@@ -63,16 +64,36 @@ def save_user(user, source=""):
     return was_new
 
 
-# === ТОЛЬКО НОВЫЕ УЧАСТНИКИ (НЕ КОНФЛИКТУЕТ) ===
+# === БЕЗОПАСНЫЙ СБОР ПОЛЬЗОВАТЕЛЕЙ ИЗ СООБЩЕНИЙ ===
+@bot.message_handler(func=lambda m: True, content_types=['text'])
+def collect_from_message(message):
+    # ИГНОРИРУЕМ ЛИЧНЫЕ СООБЩЕНИЯ (команды не трогаем)
+    if message.chat.type == 'private':
+        return
+    
+    # ИГНОРИРУЕМ КОМАНДЫ
+    if message.text and message.text.startswith('/'):
+        return
+    
+    # Сохраняем автора
+    if message.from_user:
+        save_user(message.from_user, "написал в чат")
+    
+    # Сохраняем того, кому ответили
+    if message.reply_to_message and message.reply_to_message.from_user:
+        save_user(message.reply_to_message.from_user, "ответили на сообщение")
+
+
+# === НОВЫЕ УЧАСТНИКИ ===
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
     for new_member in message.new_chat_members:
         if new_member.id == bot.get_me().id:
             continue
-        save_user(new_member, "вступил")
+        save_user(new_member, "вступил в чат")
 
 
-# === КОМАНДЫ ===
+# === КОМАНДЫ ДЛЯ РАБОТЫ С КЭШЕМ ===
 @bot.message_handler(commands=['users'])
 def show_users(message):
     if message.from_user.id != ADMIN_ID:
@@ -109,6 +130,26 @@ def add_user_to_cache(message):
         bot.reply_to(message, f"✅ *{user_info.first_name}* (@{user_info.username}) добавлен!\n🆔 `{user_info.id}`", parse_mode="Markdown")
     except:
         bot.reply_to(message, f"❌ Пользователь @{target} не найден")
+
+
+@bot.message_handler(commands=['sync'])
+def sync_users(message):
+    """Собрать всех администраторов чата (безопасно)"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Только для админа")
+        return
+    chat_id = message.chat.id
+    status_msg = bot.reply_to(message, "🔄 Синхронизация...")
+    try:
+        admins = bot.get_chat_administrators(chat_id)
+        count = 0
+        for admin in admins:
+            if save_user(admin.user, "синхронизация"):
+                count += 1
+        bot.edit_message_text(f"✅ Синхронизация завершена!\n👥 Добавлено: {count} администраторов", 
+                              chat_id, status_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"❌ Ошибка: {e}", chat_id, status_msg.message_id)
 
 
 # === ИИ ===
@@ -228,7 +269,7 @@ def start_command(message):
         "⏰ Напоминания:\n/remind 15:30 текст\n/reminds\n/delremind ID\n\n"
         "💾 Бекап (в ЛС):\n/backup\n/restore\n\n"
         "📨 Скрытые сообщения:\n@бот username текст\n\n"
-        "👥 Пользователи:\n/users\n/adduser @username")
+        "👥 Пользователи:\n/users\n/adduser @username\n/sync - синхронизация админов")
 
 
 @bot.message_handler(commands=['ai'])
