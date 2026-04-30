@@ -44,41 +44,93 @@ def save_users_cache(users):
 
 chat_users = load_users_cache()
 
-# === СБОР ПОЛЬЗОВАТЕЛЕЙ ===
+
+# === ФУНКЦИЯ СОХРАНЕНИЯ ПОЛЬЗОВАТЕЛЯ ===
+def save_user(user, source=""):
+    """Сохраняет пользователя в кэш"""
+    if not user or user.id == bot.get_me().id:
+        return False
+    
+    user_id = str(user.id)
+    was_new = user_id not in chat_users
+    
+    chat_users[user_id] = {
+        "id": user.id,
+        "username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name or "",
+        "last_seen": time.time()
+    }
+    
+    if was_new:
+        print(f"📝 НОВЫЙ ПОЛЬЗОВАТЕЛЬ: {user.first_name} (@{user.username}) - {source}")
+        save_users_cache(chat_users)
+    
+    return was_new
+
+
+# === 1. СБОР ИЗ СООБЩЕНИЙ ===
+@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'sticker', 'voice', 'audio'])
+def collect_from_message(message):
+    """Собирает всех, кто пишет в чат"""
+    if message.chat.type not in ['group', 'supergroup']:
+        return
+    
+    # Сохраняем автора
+    if message.from_user:
+        save_user(message.from_user, "написал сообщение")
+    
+    # Сохраняем того, кому ответили (ЭТО КЛЮЧЕВОЙ МОМЕНТ!)
+    if message.reply_to_message and message.reply_to_message.from_user:
+        save_user(message.reply_to_message.from_user, "ответили на его сообщение")
+    
+    # Сохраняем из пересланных сообщений
+    if message.forward_from:
+        save_user(message.forward_from, "переслали его сообщение")
+
+
+# === 2. СБОР НОВЫХ УЧАСТНИКОВ ===
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
     for new_member in message.new_chat_members:
         if new_member.id == bot.get_me().id:
             continue
-        
-        user_id = str(new_member.id)
-        chat_users[user_id] = {
-            "id": new_member.id,
-            "first_name": new_member.first_name,
-            "last_name": new_member.last_name,
-            "username": new_member.username,
-            "joined_at": time.time()
-        }
-        save_users_cache(chat_users)
-        print(f"👤 Новый участник: {new_member.first_name}")
+        save_user(new_member, "вступил в чат")
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group', 'supergroup'])
-def collect_user_from_message(message):
-    if message.from_user and message.from_user.id != bot.get_me().id:
-        user = message.from_user
-        user_id = str(user.id)
-        
-        if user_id not in chat_users:
-            chat_users[user_id] = {
-                "id": user.id,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "username": user.username,
-                "last_seen": time.time()
-            }
-            save_users_cache(chat_users)
-            print(f"📝 Добавлен пользователь: {user.first_name}")
 
+# === 3. СБОР ПРИ ВХОДЕ/ВЫХОДЕ (ЕСЛИ БОТ АДМИН) ===
+@bot.chat_member_handler(func=lambda update: True)
+def catch_chat_member(update):
+    """Срабатывает, когда кто-то заходит/выходит из чата"""
+    if update.chat_member.chat.type not in ['group', 'supergroup']:
+        return
+    
+    user = update.chat_member.new_chat_member.user
+    if user.id == bot.get_me().id:
+        return
+    
+    status = update.chat_member.new_chat_member.status
+    if status in ['member', 'left', 'kicked']:
+        save_user(user, f"изменил статус: {status}")
+
+
+# === 4. ПРИ ПОЛУЧЕНИИ АДМИНКИ - ЗАГРУЖАЕМ ВСЕХ АДМИНОВ ===
+@bot.my_chat_member_handler(func=lambda update: True)
+def on_become_admin(update):
+    if update.new_chat_member.status in ['administrator', 'creator']:
+        chat_id = update.chat.id
+        print(f"🚀 Бот стал админом в чате {chat_id}. Загружаю администраторов...")
+        
+        try:
+            admins = bot.get_chat_administrators(chat_id)
+            for admin in admins:
+                save_user(admin.user, "администратор (при получении админки)")
+            print(f"👑 Загружено {len(admins)} администраторов")
+        except Exception as e:
+            print(f"Ошибка загрузки админов: {e}")
+
+
+# === КОМАНДА ДЛЯ ПРОСМОТРА КЭША ===
 @bot.message_handler(commands=['users'])
 def show_users(message):
     if message.from_user.id != ADMIN_ID:
@@ -91,16 +143,17 @@ def show_users(message):
     
     result = f"👥 *Пользователей в кэше:* {len(chat_users)}\n\n"
     users_list = []
-    for uid, data in list(chat_users.items())[:20]:
+    for uid, data in list(chat_users.items())[:30]:
         username = data.get('username', 'нет')
         name = data.get('first_name', 'Неизвестный')
         users_list.append(f"• {name} (@{username}) - ID: `{uid}`")
     
     result += "\n".join(users_list)
-    if len(chat_users) > 20:
-        result += f"\n\n... и еще {len(chat_users) - 20}"
+    if len(chat_users) > 30:
+        result += f"\n\n... и еще {len(chat_users) - 30}"
     
     bot.reply_to(message, result, parse_mode="Markdown")
+
 
 @bot.message_handler(commands=['adduser'])
 def add_user_to_cache(message):
@@ -117,32 +170,24 @@ def add_user_to_cache(message):
     
     try:
         user_info = bot.get_chat(target)
-        user_id = str(user_info.id)
-        
-        chat_users[user_id] = {
-            "id": user_info.id,
-            "username": user_info.username,
-            "first_name": user_info.first_name,
-            "last_name": user_info.last_name or "",
-            "added_by": ADMIN_ID,
-            "added_at": time.time()
-        }
-        save_users_cache(chat_users)
-        
-        bot.reply_to(message, f"✅ Пользователь *{user_info.first_name}* (@{user_info.username}) добавлен в кэш!\n🆔 ID: `{user_id}`", parse_mode="Markdown")
+        save_user(user_info, "добавлен админом вручную")
+        bot.reply_to(message, f"✅ Пользователь *{user_info.first_name}* (@{user_info.username}) добавлен в кэш!\n🆔 ID: `{user_info.id}`", parse_mode="Markdown")
         
     except Exception as e:
         bot.reply_to(message, f"❌ Пользователь @{target} не найден")
 
-# === КЭШ И ИСТОРИЯ ===
+
+# === КЭШ И ИСТОРИЯ ДЛЯ ИИ ===
 ai_cache = {}
 user_histories = {}
 MAX_HISTORY = 10
 CACHE_TTL = 3600
 
+
 # === ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
+
 
 # === ФУНКЦИЯ ДЛЯ СТАВКИ РЕАКЦИИ ===
 def set_reaction(chat_id, message_id):
@@ -159,6 +204,7 @@ def set_reaction(chat_id, message_id):
             print(f"🔥 Реакция на пост {message_id}")
     except Exception as e:
         print(f"Ошибка реакции: {e}")
+
 
 # === ИИ ===
 def ask_groq(user_id, prompt):
@@ -200,6 +246,7 @@ def ask_groq(user_id, prompt):
         return f"❌ Ошибка: {response.status_code}"
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
+
 
 # === НАПОМИНАНИЯ ===
 REMINDERS_FILE = "reminders.json"
@@ -497,7 +544,7 @@ def restore_command(message):
 
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
-    global chat_users, reminder_counter  # ← В САМОМ НАЧАЛЕ!
+    global chat_users, reminder_counter
     
     print(f"🔵 Получен файл: {message.document.file_name}")
     
@@ -520,7 +567,6 @@ def handle_restore_file(message):
         file_content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_content.decode('utf-8'))
         
-        # Останавливаем старые таймеры
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -531,7 +577,6 @@ def handle_restore_file(message):
         restored_reminders = 0
         restored_users = 0
         
-        # Восстанавливаем напоминания
         if "reminders" in backup_data:
             reminders.clear()
             reminder_counter = 0
@@ -554,7 +599,6 @@ def handle_restore_file(message):
             start_all_reminders()
             restored_reminders = len(backup_data)
         
-        # Восстанавливаем пользователей
         if "chat_users" in backup_data:
             chat_users = backup_data["chat_users"]
             save_users_cache(chat_users)
