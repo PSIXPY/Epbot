@@ -364,7 +364,7 @@ def help_command(message):
 
 🎲 Игры: /roll | /coin
 
-👑 Админ (в ЛС): /backup - бекап, /restore - восстановление
+👑 Админ: /backup - бекап (в ЛС), /debug - диагностика
 
 🔔 Массовые упоминания:
 /калл, /все, /all - упомянуть всех
@@ -377,7 +377,7 @@ def help_command(message):
 def show_users(message):
     thread_id = message.message_thread_id
     if not chat_users:
-        bot.reply_to(message, "📭 Кэш пользователей пуст.\n\n💡 Участники добавятся когда напишут сообщение.", message_thread_id=thread_id)
+        bot.reply_to(message, "📭 Кэш пользователей пуст.\n\n💡 Участники добавятся когда напишут сообщение или их упомянут.", message_thread_id=thread_id)
         return
     
     result = f"👥 *Пользователи в кэше:* {len(chat_users)}\n\n"
@@ -390,6 +390,50 @@ def show_users(message):
     result += "\n".join(users_list)
     if len(chat_users) > 20:
         result += f"\n\n... и еще {len(chat_users) - 20} пользователей"
+    
+    bot.reply_to(message, result, parse_mode="Markdown", message_thread_id=thread_id)
+
+# === ДИАГНОСТИЧЕСКАЯ КОМАНДА ===
+@bot.message_handler(commands=['debug'])
+def debug_command(message):
+    """Диагностика: показывает информацию о чате и кэше"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Только для админа")
+        return
+    
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    
+    result = "🔍 *ДИАГНОСТИКА БОТА*\n\n"
+    
+    # Информация о чате
+    try:
+        chat = bot.get_chat(chat_id)
+        result += f"📌 *Чат:* {chat.title}\n"
+        result += f"🆔 *ID:* `{chat_id}`\n"
+        result += f"📊 *Тип:* {chat.type}\n\n"
+    except:
+        result += "❌ Не удалось получить информацию о чате\n\n"
+    
+    # Кэш пользователей
+    result += f"👥 *Пользователей в кэше:* {len(chat_users)}\n"
+    
+    # Администраторы чата
+    try:
+        admins = bot.get_chat_administrators(chat_id)
+        admin_names = []
+        for admin in admins[:10]:
+            user = admin.user
+            admin_names.append(f"@{user.username}" if user.username else user.first_name)
+        result += f"👑 *Администраторы:* {', '.join(admin_names)}\n\n"
+    except:
+        result += "❌ Не удалось получить администраторов\n\n"
+    
+    # Обработчики
+    result += f"⚙️ *Обработчики:*\n"
+    result += f"• my_chat_member: {'✅' if bot.my_chat_member_handler else '❌'}\n"
+    result += f"• chat_member: {'✅' if bot.chat_member_handler else '❌'}\n"
+    result += f"• inline_handler: {'✅' if bot.inline_handler else '❌'}\n"
     
     bot.reply_to(message, result, parse_mode="Markdown", message_thread_id=thread_id)
 
@@ -415,7 +459,15 @@ def call_all_without_slash(message):
             users.append(f"[{user_data.get('first_name', 'Пользователь')}](tg://user?id={uid_int})")
     
     if not users:
-        bot.edit_message_text("📭 Нет других участников в кэше.\n\n💡 Участники добавятся когда напишут сообщение.", chat_id, status_msg.message_id)
+        bot.edit_message_text(
+            "📭 *Нет других участников в кэше.*\n\n"
+            "💡 *Как наполнить кэш:*\n"
+            "• Участники добавятся когда напишут сообщение\n"
+            "• Администраторы могут использовать `/adduser @username`\n"
+            "• Используйте `/debug` для диагностики",
+            chat_id, status_msg.message_id,
+            parse_mode="Markdown",
+            message_thread_id=thread_id)
         return
     
     bot.delete_message(chat_id, status_msg.message_id)
@@ -451,7 +503,15 @@ def call_all_with_slash(message):
             users.append(f"[{user_data.get('first_name', 'Пользователь')}](tg://user?id={uid_int})")
     
     if not users:
-        bot.edit_message_text("📭 Нет других участников в кэше.\n\n💡 Участники добавятся когда напишут сообщение.", chat_id, status_msg.message_id)
+        bot.edit_message_text(
+            "📭 *Нет других участников в кэше.*\n\n"
+            "💡 *Как наполнить кэш:*\n"
+            "• Участники добавятся когда напишут сообщение\n"
+            "• Администраторы могут использовать `/adduser @username`\n"
+            "• Используйте `/debug` для диагностики",
+            chat_id, status_msg.message_id,
+            parse_mode="Markdown",
+            message_thread_id=thread_id)
         return
     
     bot.delete_message(chat_id, status_msg.message_id)
@@ -465,6 +525,56 @@ def call_all_with_slash(message):
     
     bot.send_message(chat_id, mention_text, parse_mode="Markdown", message_thread_id=thread_id)
     logger.info(f"👥 Пользователь {user_id} сделал массовое упоминание ({len(users)} пользователей)")
+
+@bot.message_handler(commands=['adduser'])
+def add_user_to_cache(message):
+    """Добавляет пользователя в кэш по username (только для админов)"""
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    
+    # Проверяем, что команду вызвал администратор
+    try:
+        member = bot.get_chat_member(chat_id, message.from_user.id)
+        if member.status not in ['creator', 'administrator'] and message.from_user.id != ADMIN_ID:
+            bot.reply_to(message, "❌ Эта команда доступна только администраторам!", message_thread_id=thread_id)
+            return
+    except:
+        if message.from_user.id != ADMIN_ID:
+            bot.reply_to(message, "❌ Ошибка проверки прав", message_thread_id=thread_id)
+            return
+    
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "ℹ️ `/adduser @username` или `/adduser ID`\n\nПример: `/adduser @PSIXOnAT`", parse_mode="Markdown", message_thread_id=thread_id)
+        return
+    
+    target = args[1].lstrip("@")
+    
+    try:
+        # Пробуем получить пользователя
+        user_info = bot.get_chat(target)
+        user_id = str(user_info.id)
+        
+        chat_users[user_id] = {
+            "id": user_info.id,
+            "username": user_info.username,
+            "first_name": user_info.first_name,
+            "last_name": user_info.last_name or "",
+            "added_by": message.from_user.id,
+            "added_at": time.time()
+        }
+        save_users_cache(chat_users)
+        
+        bot.reply_to(message,
+            f"✅ *Пользователь добавлен в кэш!*\n\n"
+            f"👤 *Имя:* {user_info.first_name}\n"
+            f"🆔 *ID:* `{user_id}`\n"
+            f"👤 *Username:* @{user_info.username if user_info.username else '—'}",
+            parse_mode="Markdown",
+            message_thread_id=thread_id)
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Пользователь `{target}` не найден.\n\nУбедитесь, что username правильный.", parse_mode="Markdown", message_thread_id=thread_id)
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower() in ['админы', 'admins'])
 def call_admins_without_slash(message):
@@ -612,7 +722,7 @@ def auto_translate(message):
         return
     if message.text.startswith('📩') or message.text.startswith('📨'):
         return
-    if message.text.startswith('🔔'):
+    if message.text.startswith('🔔') or message.text.startswith('👑'):
         return
     
     text = message.text.strip()
@@ -731,12 +841,27 @@ def collect_user_from_message(message):
             }
             save_users_cache(chat_users)
             logger.info(f"📝 Добавлен пользователь из сообщения: {user.first_name} (@{user.username})")
+    
+    # Также обрабатываем упоминания и ответы
+    if message.reply_to_message and message.reply_to_message.from_user:
+        replied_user = message.reply_to_message.from_user
+        replied_id = str(replied_user.id)
+        if replied_id not in chat_users:
+            chat_users[replied_id] = {
+                "id": replied_user.id,
+                "first_name": replied_user.first_name,
+                "last_name": replied_user.last_name,
+                "username": replied_user.username,
+                "last_seen": time.time()
+            }
+            save_users_cache(chat_users)
+            logger.info(f"📝 Добавлен пользователь из ответа: {replied_user.first_name} (@{replied_user.username})")
 
 # === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_full(message):
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда /backup доступна только в личных сообщениях с ботом!")
+        bot.reply_to(message, "❌ Команда /backup доступна только в личных сообщениях с ботом!\n\nПросто напишите мне в ЛС: https://t.me/" + bot.get_me().username)
         return
     
     if message.from_user.id != ADMIN_ID:
@@ -778,6 +903,7 @@ def backup_full(message):
         
         os.remove(backup_file)
         logger.info(f"📦 Бекап создан админом {message.from_user.id}")
+        bot.send_message(message.chat.id, "✅ Бекап успешно создан и отправлен!")
         
     except Exception as e:
         logger.error(f"Ошибка бекапа: {e}")
@@ -786,7 +912,7 @@ def backup_full(message):
 @bot.message_handler(commands=['restore'])
 def restore_full(message):
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда /restore доступна только в личных сообщениях с ботом!")
+        bot.reply_to(message, "❌ Команда /restore доступна только в личных сообщениях с ботом!\n\nПросто напишите мне в ЛС: https://t.me/" + bot.get_me().username)
         return
     
     if message.from_user.id != ADMIN_ID:
@@ -836,7 +962,7 @@ def handle_restore_file(message):
             start_all_reminders()
             
             bot.edit_message_text(
-                f"✅ *Восстановлено {len(backup_data)} напоминаний!*\n\n(старый формат)",
+                f"✅ *Восстановлено {len(backup_data)} напоминаний!*",
                 message.chat.id, status_msg.message_id,
                 parse_mode="Markdown"
             )
@@ -1060,7 +1186,14 @@ def inline_query(query):
                 title="❌ Пользователь не найден",
                 description=f"@{target_raw} - проверьте правильность",
                 input_message_content=types.InputTextMessageContent(
-                    f"❌ Пользователь @{target_raw} не найден\n\n💡 Участники добавятся в кэш когда напишут сообщение"
+                    f"❌ *Пользователь @{target_raw} не найден*\n\n"
+                    f"📌 *Возможные причины:*\n"
+                    f"• Участник не писал сообщения после добавления бота\n"
+                    f"• Username указан с ошибкой\n\n"
+                    f"✅ *Решение:*\n"
+                    f"• Используйте `/adduser @{target_raw}` (для админов)\n"
+                    f"• Или используйте числовой ID",
+                    parse_mode="Markdown"
                 ),
                 reply_markup=markup
             )
@@ -1170,7 +1303,7 @@ if __name__ == "__main__":
     
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info("✅ Вебхук с поддержкой chat_member")
-    logger.info("✅ Бекап: /backup и /restore (только в ЛС)")
-    logger.info("✅ Массовые упоминания: /калл, /все, /all, /админы")
+    logger.info("✅ Команда /adduser для ручного добавления пользователей")
+    logger.info("✅ Команда /debug для диагностики")
     
     app.run(host="0.0.0.0", port=port)
