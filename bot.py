@@ -520,13 +520,15 @@ def translate_command(message):
 
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def auto_translate(message):
+    # ПРОПУСКАЕМ КОМАНДЫ
+    if message.text.startswith('/'):
+        return
+    
     chat_id = message.chat.id
     
     if not is_translator_enabled(chat_id):
         return
     if message.from_user.id == bot.get_me().id:
-        return
-    if message.text.startswith('/'):
         return
     if message.text.startswith('📩') or message.text.startswith('📨'):
         return
@@ -547,7 +549,56 @@ def auto_translate(message):
     except Exception as e:
         logger.error(f"Ошибка перевода: {e}")
 
-# === ОБРАБОТЧИКИ ДЛЯ СБОРА УЧАСТНИКОВ ===
+# === ОБРАБОТЧИКИ ДЛЯ СБОРА УЧАСТНИКОВ (НЕ БЛОКИРУЮТ ЛС) ===
+@bot.chat_member_handler(func=lambda update: True)
+def handle_chat_member_update(update):
+    # РАБОТАЕМ ТОЛЬКО В ГРУППАХ И КАНАЛАХ, ИГНОРИРУЕМ ЛС
+    if update.chat_member.chat.type not in ['group', 'supergroup', 'channel']:
+        return
+    
+    try:
+        chat_member_update = update.chat_member
+        user = chat_member_update.new_chat_member.user
+        
+        if user.id == bot.get_me().id:
+            return
+        
+        user_id = str(user.id)
+        
+        was_new = user_id not in chat_users
+        chat_users[user_id] = {
+            "id": user.id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "last_seen": time.time(),
+            "status": chat_member_update.new_chat_member.status
+        }
+        
+        save_users_cache(chat_users)
+        
+        if was_new:
+            logger.info(f"👤 Новый участник в кэше: @{user.username}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка chat_member: {e}")
+
+@bot.my_chat_member_handler(func=lambda update: True)
+def bot_admin_status(update):
+    # РАБОТАЕМ ТОЛЬКО В ГРУППАХ И КАНАЛАХ
+    if update.my_chat_member.chat.type not in ['group', 'supergroup', 'channel']:
+        return
+    
+    try:
+        new_status = update.my_chat_member.new_chat_member.status
+        chat_id = update.my_chat_member.chat.id
+        
+        if new_status in ['administrator', 'creator']:
+            logger.info(f"🚀 Бот стал администратором в чате {chat_id}")
+            bot.send_message(chat_id, "✅ Бот активирован!")
+    except Exception as e:
+        logger.error(f"Ошибка my_chat_member: {e}")
+
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
     for new_member in message.new_chat_members:
@@ -586,7 +637,7 @@ def collect_user_from_message(message):
 @bot.message_handler(commands=['backup'])
 def backup_full(message):
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда /backup только в ЛС!")
+        bot.reply_to(message, "❌ Команда /backup доступна только в ЛС!")
         return
     
     if message.from_user.id != ADMIN_ID:
@@ -638,7 +689,7 @@ def backup_full(message):
 @bot.message_handler(commands=['restore'])
 def restore_full(message):
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда /restore только в ЛС!")
+        bot.reply_to(message, "❌ Команда /restore доступна только в ЛС!")
         return
     
     if message.from_user.id != ADMIN_ID:
@@ -860,7 +911,7 @@ if __name__ == "__main__":
     logger.info(f"📡 Webhook: {webhook_url}")
     logger.info("✅ Напоминания: /remind, /reminds, /delremind")
     logger.info("✅ Бекап: /backup (в ЛС)")
-    logger.info("✅ Восстановление: /restore (в ЛС)")
+    logger.info("✅ Сбор пользователей работает только в группах (не блокирует ЛС)")
     logger.info(f"👑 Админ ID: {ADMIN_ID}")
     logger.info("=" * 50)
     
