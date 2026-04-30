@@ -69,7 +69,7 @@ def save_user(user, source=""):
     return was_new
 
 
-# === 1. СБОР ИЗ СООБЩЕНИЙ ===
+# === СБОР ПОЛЬЗОВАТЕЛЕЙ ИЗ СООБЩЕНИЙ ===
 @bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'sticker', 'voice', 'audio'])
 def collect_from_message(message):
     """Собирает всех, кто пишет в чат"""
@@ -80,7 +80,7 @@ def collect_from_message(message):
     if message.from_user:
         save_user(message.from_user, "написал сообщение")
     
-    # Сохраняем того, кому ответили (ЭТО КЛЮЧЕВОЙ МОМЕНТ!)
+    # Сохраняем того, кому ответили (ключевой момент для сбора "молчунов")
     if message.reply_to_message and message.reply_to_message.from_user:
         save_user(message.reply_to_message.from_user, "ответили на его сообщение")
     
@@ -89,7 +89,7 @@ def collect_from_message(message):
         save_user(message.forward_from, "переслали его сообщение")
 
 
-# === 2. СБОР НОВЫХ УЧАСТНИКОВ ===
+# === НОВЫЕ УЧАСТНИКИ ===
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
     for new_member in message.new_chat_members:
@@ -98,39 +98,7 @@ def handle_new_member(message):
         save_user(new_member, "вступил в чат")
 
 
-# === 3. СБОР ПРИ ВХОДЕ/ВЫХОДЕ (ЕСЛИ БОТ АДМИН) ===
-@bot.chat_member_handler(func=lambda update: True)
-def catch_chat_member(update):
-    """Срабатывает, когда кто-то заходит/выходит из чата"""
-    if update.chat_member.chat.type not in ['group', 'supergroup']:
-        return
-    
-    user = update.chat_member.new_chat_member.user
-    if user.id == bot.get_me().id:
-        return
-    
-    status = update.chat_member.new_chat_member.status
-    if status in ['member', 'left', 'kicked']:
-        save_user(user, f"изменил статус: {status}")
-
-
-# === 4. ПРИ ПОЛУЧЕНИИ АДМИНКИ - ЗАГРУЖАЕМ ВСЕХ АДМИНОВ ===
-@bot.my_chat_member_handler(func=lambda update: True)
-def on_become_admin(update):
-    if update.new_chat_member.status in ['administrator', 'creator']:
-        chat_id = update.chat.id
-        print(f"🚀 Бот стал админом в чате {chat_id}. Загружаю администраторов...")
-        
-        try:
-            admins = bot.get_chat_administrators(chat_id)
-            for admin in admins:
-                save_user(admin.user, "администратор (при получении админки)")
-            print(f"👑 Загружено {len(admins)} администраторов")
-        except Exception as e:
-            print(f"Ошибка загрузки админов: {e}")
-
-
-# === КОМАНДА ДЛЯ ПРОСМОТРА КЭША ===
+# === КОМАНДЫ ДЛЯ РАБОТЫ С КЭШЕМ ===
 @bot.message_handler(commands=['users'])
 def show_users(message):
     if message.from_user.id != ADMIN_ID:
@@ -470,6 +438,7 @@ def delete_reminder(message):
         delete_after_delay(chat_id, msg.message_id, 10)
 
 
+# === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
     print(f"🔵 BACKUP от {message.from_user.id}")
