@@ -9,6 +9,8 @@ import re
 import urllib.parse
 import hashlib
 import json
+import shutil
+import zipfile
 from datetime import datetime, timedelta
 from flask import Flask, request
 from telebot import TeleBot, types
@@ -627,62 +629,63 @@ def collect_user_from_message(message):
             save_users_cache(chat_users)
             logger.info(f"📝 Добавлен пользователь: {user.first_name} (@{user.username})")
 
-# === БЕКАП (С ОГРАНИЧЕНИЕМ КЭША) ===
+# === БЕКАП (ZIP АРХИВ) ===
 @bot.message_handler(commands=['backup'])
-def backup_full(message):
-    # Команда только в ЛС
+def backup_command(message):
+    # Только ЛС и админ
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда /backup доступна только в ЛС!")
+        bot.reply_to(message, "❌ Команда /backup только в ЛС!")
         return
     
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
     
-    status_msg = bot.reply_to(message, "🔄 Создаю бекап... (это может занять время)")
+    status_msg = bot.reply_to(message, "🔄 Создаю бекап...")
     
     try:
-        # Подготавливаем данные напоминаний
-        backup_reminders_data = []
-        for r in reminders:
-            r_copy = {}
-            for k, v in r.items():
-                if k not in ["timer", "_timer"]:
-                    r_copy[k] = v
-            backup_reminders_data.append(r_copy)
+        # Создаём временную папку
+        backup_folder = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        os.makedirs(backup_folder, exist_ok=True)
         
-        # Ограничиваем кэш пользователей до 500 записей (для отправки)
-        limited_chat_users = dict(list(chat_users.items())[:500])
+        # Копируем файлы
+        files_to_backup = [
+            ("chat_users.json", USERS_CACHE_FILE),
+            ("reminders.json", REMINDERS_FILE),
+            ("translator_settings.json", TRANSLATOR_SETTINGS_FILE)
+        ]
         
-        full_backup = {
-            "version": "2.0",
-            "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "reminders": backup_reminders_data,
-            "translator_settings": translator_settings.copy(),
-            "chat_users": limited_chat_users
-        }
+        for backup_name, original_name in files_to_backup:
+            if os.path.exists(original_name):
+                shutil.copy(original_name, os.path.join(backup_folder, backup_name))
+                logger.info(f"📁 Скопирован: {original_name}")
         
-        # Создаём файл
-        backup_file = f"full_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        # Создаём ZIP архив
+        zip_filename = f"{backup_folder}.zip"
+        with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(backup_folder):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, backup_folder)
+                    zipf.write(file_path, arcname)
         
-        with open(backup_file, 'w', encoding='utf-8') as f:
-            json.dump(full_backup, f, ensure_ascii=False, indent=2)
+        # Отправляем архив
+        with open(zip_filename, 'rb') as f:
+            bot.send_document(
+                message.chat.id,
+                f,
+                caption=f"✅ *Бекап создан!*\n\n"
+                       f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
+                       f"📄 В архиве: reminders.json, chat_users.json, translator_settings.json",
+                parse_mode="Markdown"
+            )
         
-        file_size = os.path.getsize(backup_file)
-        logger.info(f"📁 Бекап: {file_size} байт, напоминаний: {len(backup_reminders_data)}, пользователей: {len(limited_chat_users)}")
+        # Удаляем временные файлы
+        shutil.rmtree(backup_folder)
+        os.remove(zip_filename)
         
-        # Отправляем файл
-        caption = f"✅ *Бекап создан!*\n\n"
-        caption += f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
-        caption += f"📊 Напоминаний: {len(backup_reminders_data)}\n"
-        caption += f"👥 Пользователей: {len(limited_chat_users)} (всего в кэше: {len(chat_users)})\n"
-        caption += f"⚙️ Настроек переводчика: {len(translator_settings)}"
-        
-        with open(backup_file, 'rb') as f:
-            bot.send_document(message.chat.id, f, caption=caption, parse_mode="Markdown")
-        
-        os.remove(backup_file)
         bot.delete_message(message.chat.id, status_msg.message_id)
+        logger.info("✅ Бекап создан и отправлен")
         
     except Exception as e:
         logger.error(f"Ошибка бекапа: {e}")
@@ -693,9 +696,9 @@ def backup_full(message):
 
 
 @bot.message_handler(commands=['restore'])
-def restore_full(message):
+def restore_command(message):
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда /restore доступна только в ЛС!")
+        bot.reply_to(message, "❌ Команда /restore только в ЛС!")
         return
     
     if message.from_user.id != ADMIN_ID:
@@ -705,16 +708,16 @@ def restore_full(message):
     bot.reply_to(
         message,
         "📥 *Восстановление из бекапа*\n\n"
-        "1️⃣ Отправьте JSON файл бекапа\n"
-        "2️⃣ Файл должен начинаться с `full_backup_`\n\n"
-        "📌 Пример: `full_backup_20260430_092407.json`",
+        "1️⃣ Отправьте ZIP архив, созданный командой /backup\n"
+        "2️⃣ Бот восстановит все данные\n\n"
+        "⚠️ *Внимание:* Текущие данные будут заменены!",
         parse_mode="Markdown"
     )
 
 
 @bot.message_handler(content_types=['document'])
-def handle_restore_file(message):
-    # Только в ЛС
+def restore_file(message):
+    # Только ЛС и админ
     if message.chat.type != 'private':
         return
     
@@ -722,77 +725,80 @@ def handle_restore_file(message):
         bot.reply_to(message, "❌ Нет прав!")
         return
     
-    # Проверяем имя файла
-    if not message.document.file_name.startswith("full_backup_"):
-        bot.reply_to(message, "❌ Это не файл бекапа!\n\nФайл должен начинаться с `full_backup_`", parse_mode="Markdown")
+    # Проверяем, что это ZIP архив
+    if not message.document.file_name.endswith('.zip'):
+        bot.reply_to(message, "❌ Это не ZIP архив! Отправьте файл, созданный командой /backup")
         return
     
     status_msg = bot.reply_to(message, "🔄 Восстанавливаю данные...")
     
     try:
-        # Скачиваем файл
+        # Скачиваем архив
         file_info = bot.get_file(message.document.file_id)
         file_content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
-        backup_data = json.loads(file_content.decode('utf-8'))
         
-        # Останавливаем старые таймеры
-        for r in reminders:
-            if "_timer" in r:
-                try:
-                    r["_timer"].cancel()
-                except:
-                    pass
+        # Сохраняем и распаковываем
+        zip_filename = "restore_temp.zip"
+        with open(zip_filename, 'wb') as f:
+            f.write(file_content)
+        
+        extract_folder = "restore_temp"
+        with zipfile.ZipFile(zip_filename, 'r') as zipf:
+            zipf.extractall(extract_folder)
+        
+        restored = []
+        
+        # Восстанавливаем пользователей
+        if os.path.exists(f"{extract_folder}/chat_users.json"):
+            with open(f"{extract_folder}/chat_users.json", 'r', encoding='utf-8') as f:
+                global chat_users
+                chat_users = json.load(f)
+            save_users_cache(chat_users)
+            restored.append("chat_users.json")
         
         # Восстанавливаем напоминания
-        if "reminders" in backup_data:
+        if os.path.exists(f"{extract_folder}/reminders.json"):
+            with open(f"{extract_folder}/reminders.json", 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            global reminders, reminder_counter
             reminders.clear()
-            global reminder_counter
             reminder_counter = 0
-            for r in backup_data["reminders"]:
+            for r in data:
                 reminders.append(r)
                 if r.get("id", 0) > reminder_counter:
                     reminder_counter = r.get("id", 0)
             save_reminders(reminders)
             start_all_reminders()
+            restored.append("reminders.json")
         
         # Восстанавливаем настройки переводчика
-        if "translator_settings" in backup_data:
-            global translator_settings
-            translator_settings = backup_data["translator_settings"]
+        if os.path.exists(f"{extract_folder}/translator_settings.json"):
+            with open(f"{extract_folder}/translator_settings.json", 'r', encoding='utf-8') as f:
+                global translator_settings
+                translator_settings = json.load(f)
             save_translator_settings(translator_settings)
+            restored.append("translator_settings.json")
         
-        # Восстанавливаем кэш пользователей (НЕ ограничивая)
-        if "chat_users" in backup_data:
-            global chat_users
-            chat_users = backup_data["chat_users"]
-            save_users_cache(chat_users)
+        # Очистка
+        shutil.rmtree(extract_folder)
+        os.remove(zip_filename)
         
         bot.edit_message_text(
             f"✅ *Восстановление завершено!*\n\n"
-            f"📊 Напоминаний: {len(backup_data.get('reminders', []))}\n"
-            f"👥 Пользователей: {len(backup_data.get('chat_users', {}))}\n"
-            f"⚙️ Настроек: {len(backup_data.get('translator_settings', {}))}",
+            f"📄 Восстановлено: {', '.join(restored)}",
             message.chat.id,
             status_msg.message_id,
             parse_mode="Markdown"
         )
         
-    except json.JSONDecodeError:
-        bot.edit_message_text("❌ *Ошибка:* Неверный JSON формат", message.chat.id, status_msg.message_id, parse_mode="Markdown")
+        logger.info(f"✅ Восстановлены файлы: {', '.join(restored)}")
+        
     except Exception as e:
         logger.error(f"Ошибка восстановления: {e}")
-        bot.edit_message_text(f"❌ *Ошибка:* {str(e)[:200]}", message.chat.id, status_msg.message_id, parse_mode="Markdown")
-
-
-# Текстовые команды для бекапа (без слеша)
-@bot.message_handler(func=lambda m: m.text and m.text.lower() == 'бекап' and m.chat.type == 'private')
-def backup_text(message):
-    backup_full(message)
-
-
-@bot.message_handler(func=lambda m: m.text and m.text.lower() == 'восстановление' and m.chat.type == 'private')
-def restore_text(message):
-    restore_full(message)
+        try:
+            bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id, parse_mode="Markdown")
+        except:
+            bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)[:200]}")
 
 # === СКРЫТЫЕ СООБЩЕНИЯ ===
 @bot.inline_handler(func=lambda query: True)
@@ -906,7 +912,6 @@ def webhook():
         if update and "channel_post" in update:
             post = update["channel_post"]
             channel_id = post["chat"]["id"]
-            # Реакции на каналах (укажите свои ID каналов)
             if channel_id in [-1002185590715, -1001317416582]:
                 message_id = post["message_id"]
                 set_reaction(channel_id, message_id)
@@ -940,7 +945,8 @@ if __name__ == "__main__":
     logger.info("🤖 БОТ ЗАПУЩЕН")
     logger.info(f"📡 Webhook: {webhook_url}")
     logger.info("✅ Напоминания: /remind, /reminds, /delremind")
-    logger.info("✅ Бекап: /backup (в ЛС) или 'бекап' (текстом)")
+    logger.info("✅ Бекап: /backup (в ЛС) - создаёт ZIP архив")
+    logger.info("✅ Восстановление: /restore (в ЛС)")
     logger.info(f"👑 Админ ID: {ADMIN_ID}")
     logger.info("=" * 50)
     
