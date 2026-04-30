@@ -586,7 +586,7 @@ def collect_user_from_message(message):
 @bot.message_handler(commands=['backup'])
 def backup_full(message):
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда /backup доступна только в ЛС!")
+        bot.reply_to(message, "❌ Команда /backup только в ЛС!")
         return
     
     if message.from_user.id != ADMIN_ID:
@@ -638,7 +638,7 @@ def backup_full(message):
 @bot.message_handler(commands=['restore'])
 def restore_full(message):
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда /restore доступна только в ЛС!")
+        bot.reply_to(message, "❌ Команда /restore только в ЛС!")
         return
     
     if message.from_user.id != ADMIN_ID:
