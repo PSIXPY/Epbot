@@ -5,9 +5,11 @@ import threading
 import requests
 import hashlib
 import re
+import random
 from datetime import datetime, timedelta
 from flask import Flask, request
 from telebot import TeleBot, types
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 RENDER_URL = os.environ.get("RENDER_URL", "")
@@ -16,8 +18,121 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", 483977434))
 
 app = Flask(__name__)
 bot = TeleBot(BOT_TOKEN)
+secret_messages = {}
 
 print("🤖 БОТ ЗАПУЩЕН")
+
+# === КЭШ ПОЛЬЗОВАТЕЛЕЙ ===
+USERS_CACHE_FILE = "chat_users.json"
+
+def load_users_cache():
+    if os.path.exists(USERS_CACHE_FILE):
+        try:
+            with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_users_cache(users):
+    try:
+        with open(USERS_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(users, f, ensure_ascii=False, indent=2)
+        print(f"💾 Сохранено {len(users)} пользователей в кэш")
+    except Exception as e:
+        print(f"Ошибка сохранения кэша: {e}")
+
+chat_users = load_users_cache()
+
+# === СБОР ПОЛЬЗОВАТЕЛЕЙ ===
+@bot.message_handler(content_types=['new_chat_members'])
+def handle_new_member(message):
+    for new_member in message.new_chat_members:
+        if new_member.id == bot.get_me().id:
+            continue
+        
+        user_id = str(new_member.id)
+        chat_users[user_id] = {
+            "id": new_member.id,
+            "first_name": new_member.first_name,
+            "last_name": new_member.last_name,
+            "username": new_member.username,
+            "joined_at": time.time()
+        }
+        save_users_cache(chat_users)
+        print(f"👤 Новый участник: {new_member.first_name}")
+
+@bot.message_handler(func=lambda m: m.chat.type in ['group', 'supergroup'])
+def collect_user_from_message(message):
+    if message.from_user and message.from_user.id != bot.get_me().id:
+        user = message.from_user
+        user_id = str(user.id)
+        
+        if user_id not in chat_users:
+            chat_users[user_id] = {
+                "id": user.id,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "username": user.username,
+                "last_seen": time.time()
+            }
+            save_users_cache(chat_users)
+            print(f"📝 Добавлен пользователь: {user.first_name}")
+
+@bot.message_handler(commands=['users'])
+def show_users(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Только для админа")
+        return
+    
+    if not chat_users:
+        bot.reply_to(message, "📭 Кэш пользователей пуст")
+        return
+    
+    result = f"👥 *Пользователей в кэше:* {len(chat_users)}\n\n"
+    users_list = []
+    for uid, data in list(chat_users.items())[:20]:
+        username = data.get('username', 'нет')
+        name = data.get('first_name', 'Неизвестный')
+        users_list.append(f"• {name} (@{username}) - ID: `{uid}`")
+    
+    result += "\n".join(users_list)
+    if len(chat_users) > 20:
+        result += f"\n\n... и еще {len(chat_users) - 20}"
+    
+    bot.reply_to(message, result, parse_mode="Markdown")
+
+@bot.message_handler(commands=['adduser'])
+def add_user_to_cache(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Только для админа")
+        return
+    
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "ℹ️ /adduser @username\n\nПример: /adduser @username")
+        return
+    
+    target = args[1].lstrip("@")
+    
+    try:
+        user_info = bot.get_chat(target)
+        user_id = str(user_info.id)
+        
+        chat_users[user_id] = {
+            "id": user_info.id,
+            "username": user_info.username,
+            "first_name": user_info.first_name,
+            "last_name": user_info.last_name or "",
+            "added_by": ADMIN_ID,
+            "added_at": time.time()
+        }
+        save_users_cache(chat_users)
+        
+        bot.reply_to(message, f"✅ Пользователь *{user_info.first_name}* (@{user_info.username}) добавлен в кэш!\n🆔 ID: `{user_id}`", parse_mode="Markdown")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Пользователь @{target} не найден")
 
 # === КЭШ И ИСТОРИЯ ===
 ai_cache = {}
@@ -147,7 +262,7 @@ def start_all_reminders():
         schedule_reminder(r)
 
 
-# ========== КОМАНДЫ (СНАЧАЛА ВСЕ КОМАНДЫ) ==========
+# ========== КОМАНДЫ ==========
 
 @bot.message_handler(commands=['start', 'help'])
 def start_command(message):
@@ -159,7 +274,12 @@ def start_command(message):
         "/delremind ID - удалить\n\n"
         "💾 Бекап (в ЛС):\n"
         "/backup - создать\n"
-        "/restore - восстановить")
+        "/restore - восстановить\n\n"
+        "📨 Скрытые сообщения:\n"
+        "Введите @бот username текст в любом чате\n\n"
+        "👥 Пользователи:\n"
+        "/users - показать кэш\n"
+        "/adduser @username - добавить в кэш")
 
 
 @bot.message_handler(commands=['ai'])
@@ -370,8 +490,6 @@ def restore_command(message):
     )
 
 
-# ========== ОБРАБОТЧИК ФАЙЛОВ ==========
-
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
     print(f"🔵 Получен файл: {message.document.file_name}")
@@ -395,7 +513,6 @@ def handle_restore_file(message):
         file_content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_content.decode('utf-8'))
         
-        # Останавливаем старые таймеры
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -405,7 +522,6 @@ def handle_restore_file(message):
         
         restored_count = 0
         
-        # Новый формат
         if "reminders" in backup_data:
             reminders.clear()
             global reminder_counter
@@ -418,7 +534,6 @@ def handle_restore_file(message):
             start_all_reminders()
             restored_count = len(backup_data["reminders"])
         
-        # Старый формат
         elif isinstance(backup_data, list):
             reminders.clear()
             reminder_counter = 0
@@ -448,7 +563,126 @@ def handle_restore_file(message):
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
 
 
-# ========== ECHO В САМОМ КОНЦЕ (НЕ ПЕРЕХВАТЫВАЕТ КОМАНДЫ) ==========
+# ========== СКРЫТЫЕ СООБЩЕНИЯ (ИНЛАЙН-РЕЖИМ) ==========
+
+@bot.inline_handler(func=lambda query: True)
+def inline_query(query):
+    try:
+        text = query.query.strip()
+        if not text or len(text.split(maxsplit=1)) < 2:
+            return
+        
+        target_raw, content = text.split(maxsplit=1)
+        target_raw = target_raw.lstrip("@")
+        
+        target_id = None
+        target_name = target_raw
+        
+        for uid, user_data in chat_users.items():
+            username = user_data.get('username')
+            if username and username.lower() == target_raw.lower():
+                target_id = int(uid)
+                target_name = user_data.get('first_name') or target_raw
+                break
+        
+        if not target_id and target_raw.isdigit():
+            target_id = int(target_raw)
+            target_name = f"Пользователь {target_raw}"
+        
+        if not target_id:
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("❓ Как узнать ID", url="https://t.me/userinfobot"))
+            result = types.InlineQueryResultArticle(
+                id="error",
+                title="❌ Пользователь не найден",
+                description=f"@{target_raw} - проверьте правильность",
+                input_message_content=types.InputTextMessageContent(
+                    f"❌ Пользователь @{target_raw} не найден\n\n"
+                    f"💡 Убедитесь, что username правильный\n"
+                    f"📌 Или используйте числовой ID"
+                ),
+                reply_markup=markup
+            )
+            bot.answer_inline_query(query.id, [result], cache_time=0)
+            return
+        
+        msg_id = f"sec_{int(time.time())}_{query.from_user.id}_{random.randint(1000, 9999)}"
+        
+        secret_messages[msg_id] = {
+            "target_id": target_id,
+            "target_name": target_name,
+            "content": content,
+            "sender_name": query.from_user.first_name,
+            "sender_id": query.from_user.id,
+            "expires": time.time() + 3600  # 1 час
+        }
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"secret_read_{msg_id}"))
+        
+        result = types.InlineQueryResultArticle(
+            id=msg_id,
+            title=f"📨 Скрытое сообщение для {target_name}",
+            description=content[:50] + ("..." if len(content) > 50 else ""),
+            input_message_content=types.InputTextMessageContent(
+                f"🔐 *Скрытое сообщение*\n\n"
+                f"📤 От: {query.from_user.first_name}\n"
+                f"📥 Кому: {target_name}\n"
+                f"⏰ Действует: 1 час",
+                parse_mode="Markdown"
+            ),
+            reply_markup=markup
+        )
+        
+        bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
+        
+    except Exception as e:
+        print(f"Инлайн ошибка: {e}")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("secret_read_"))
+def handle_secret_read(call):
+    msg_id = call.data.replace("secret_read_", "")
+    
+    if msg_id not in secret_messages:
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
+        return
+    
+    data = secret_messages[msg_id]
+    
+    if call.from_user.id != data["target_id"]:
+        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
+        return
+    
+    if time.time() > data["expires"]:
+        bot.answer_callback_query(call.id, "❌ Срок действия истёк (1 час)", show_alert=True)
+        del secret_messages[msg_id]
+        return
+    
+    bot.answer_callback_query(
+        call.id, 
+        f"📩 От {data['sender_name']}:\n\n{data['content']}", 
+        show_alert=True
+    )
+    
+    # НЕ УДАЛЯЕМ сообщение после прочтения!
+
+
+# Очистка старых секретных сообщений
+def clean_old_secrets():
+    while True:
+        time.sleep(3600)
+        now = time.time()
+        to_delete = [mid for mid, d in secret_messages.items() if d.get("expires", 0) < now]
+        for mid in to_delete:
+            del secret_messages[mid]
+        if to_delete:
+            print(f"🧹 Удалено {len(to_delete)} просроченных сообщений")
+
+threading.Thread(target=clean_old_secrets, daemon=True).start()
+
+
+# ========== ECHO (В КОНЦЕ) ==========
 
 @bot.message_handler(func=lambda m: True)
 def echo(message):
