@@ -17,7 +17,7 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", 483977434))
 app = Flask(__name__)
 bot = TeleBot(BOT_TOKEN)
 
-print("🤖 БОТ С НАПОМИНАНИЯМИ, ИИ И РЕАКЦИЯМИ ЗАПУЩЕН")
+print("🤖 БОТ ЗАПУЩЕН")
 
 # === КЭШ И ИСТОРИЯ ===
 ai_cache = {}
@@ -29,63 +29,52 @@ CACHE_TTL = 3600
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
-# === ФУНКЦИЯ ДЛЯ СТАВКИ РЕАКЦИИ НА КАНАЛЫ ===
-def set_reaction(chat_id, message_id, reaction="🔥"):
+# === ФУНКЦИЯ ДЛЯ СТАВКИ РЕАКЦИИ ===
+def set_reaction(chat_id, message_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {
         "chat_id": chat_id,
         "message_id": message_id,
-        "reaction": [{"type": "emoji", "emoji": reaction}]
+        "reaction": [{"type": "emoji", "emoji": "🔥"}]
     }
     try:
         response = requests.post(url, json=data, timeout=5)
         result = response.json()
         if result.get("ok"):
-            print(f"🔥 Реакция {reaction} на пост {message_id} в канале {chat_id}")
-        else:
-            print(f"Ошибка реакции: {result}")
+            print(f"🔥 Реакция на пост {message_id}")
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"Ошибка реакции: {e}")
 
-# === ИИ ===
+# === ИИ (РАБОЧАЯ ВЕРСИЯ) ===
 def ask_groq(user_id, prompt):
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен."
-    
     cache_key = hashlib.md5(prompt.lower().encode()).hexdigest()
     if cache_key in ai_cache:
         cached_time, cached_answer = ai_cache[cache_key]
         if time.time() - cached_time < CACHE_TTL:
             return cached_answer
-    
     if user_id not in user_histories:
         user_histories[user_id] = []
     user_histories[user_id].append({"role": "user", "content": prompt})
     if len(user_histories[user_id]) > MAX_HISTORY:
         user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
-    
     messages = [
         {"role": "system", "content": "Отвечай кратко, по существу."},
         *user_histories[user_id]
     ]
-    
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     data = {
-        "model": "llama3-8b-8192",
+        "model": "qwen/qwen3-32b",
         "messages": messages,
         "max_tokens": 800,
-        "temperature": 0.7
+        "temperature": 0.2
     }
-    
     try:
-        print(f"🔵 Groq запрос: {prompt[:50]}...")
         response = requests.post(url, headers=headers, json=data, timeout=30)
-        print(f"🔵 Groq ответ: {response.status_code}")
-        
         if response.status_code == 200:
-            result = response.json()
-            answer = result["choices"][0]["message"]["content"]
+            answer = response.json()["choices"][0]["message"]["content"]
             answer = re.sub(r'<think>.*?</think>|/think', '', answer, flags=re.DOTALL)
             answer = answer.strip()
             user_histories[user_id].append({"role": "assistant", "content": answer})
@@ -93,12 +82,8 @@ def ask_groq(user_id, prompt):
             return answer
         elif response.status_code == 429:
             return "⚠️ Лимит запросов. Подождите."
-        else:
-            error_text = response.json().get("error", {}).get("message", str(response.status_code))
-            print(f"🔴 Ошибка: {error_text}")
-            return f"❌ Ошибка: {error_text}"
+        return f"❌ Ошибка: {response.status_code}"
     except Exception as e:
-        print(f"🔴 Исключение: {e}")
         return f"❌ Ошибка: {str(e)[:100]}"
 
 # === НАПОМИНАНИЯ ===
@@ -171,7 +156,7 @@ def start_command(message):
         "/reminds - список\n"
         "/delremind ID - удалить\n\n"
         "💾 Бекап (в ЛС):\n"
-        "/backup - создать бекап\n"
+        "/backup - создать\n"
         "/restore - восстановить")
 
 
@@ -179,18 +164,12 @@ def start_command(message):
 def ai_command(message):
     thread_id = message.message_thread_id
     prompt = message.text[3:].strip()
-    
     if not prompt:
-        bot.reply_to(message, "ℹ️ /ai вопрос\n\nПример: /ai Как дела?", message_thread_id=thread_id)
+        bot.reply_to(message, "ℹ️ /ai вопрос", message_thread_id=thread_id)
         return
-    
-    if not GROQ_API_KEY:
-        bot.reply_to(message, "❌ Groq API не настроен!\n\nДобавьте GROQ_API_KEY в переменные Render", message_thread_id=thread_id)
-        return
-    
     msg = bot.reply_to(message, "🤖 Думаю...", message_thread_id=thread_id)
     answer = ask_groq(message.from_user.id, prompt)
-    bot.edit_message_text(answer, message.chat.id, msg.message_id, message_thread_id=thread_id)
+    bot.edit_message_text(answer, message.chat.id, msg.message_id)
 
 
 @bot.message_handler(commands=['remind'])
@@ -345,8 +324,7 @@ def backup_command(message):
         data = {
             "version": "2.0",
             "date": str(datetime.now()),
-            "reminders": backup_reminders,
-            "user_histories": user_histories
+            "reminders": backup_reminders
         }
         
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -359,8 +337,7 @@ def backup_command(message):
                 f, 
                 caption=f"✅ *Бекап создан!*\n\n"
                        f"📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n"
-                       f"📊 Напоминаний: {len(backup_reminders)}\n"
-                       f"📝 Историй: {len(user_histories)}",
+                       f"📊 Напоминаний: {len(backup_reminders)}",
                 parse_mode="Markdown"
             )
         
@@ -384,7 +361,7 @@ def restore_command(message):
     bot.send_message(
         message.chat.id,
         "📥 *Восстановление из бекапа*\n\n"
-        "Отправьте JSON файл бекапа (начинается с `backup_` или `full_backup_`)",
+        "Отправьте JSON файл бекапа (начинается с backup_ или full_backup_)",
         parse_mode="Markdown"
     )
 
@@ -466,24 +443,19 @@ def echo(message):
         bot.reply_to(message, f"✅ Получено: {message.text[:50]}")
 
 
-# === ВЕБХУК С РЕАКЦИЯМИ НА КАНАЛЫ ===
+# === ВЕБХУК ===
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
         
+        if update and "channel_post" in update:
+            post = update["channel_post"]
+            channel_id = post["chat"]["id"]
+            if channel_id in [-1002185590715, -1001317416582]:
+                set_reaction(channel_id, post["message_id"])
+        
         if update:
-            # Обработка постов в каналах для реакций
-            if "channel_post" in update:
-                post = update["channel_post"]
-                channel_id = post["chat"]["id"]
-                message_id = post["message_id"]
-                
-                # СТАВИМ РЕАКЦИИ НА КАНАЛЫ (укажите свои ID каналов)
-                if channel_id in [-1002185590715, -1001317416582]:
-                    set_reaction(channel_id, message_id, "🔥")
-            
-            # Обработка обычных сообщений
             bot.process_new_updates([types.Update.de_json(update)])
         
         return "OK", 200
