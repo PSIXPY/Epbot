@@ -26,7 +26,7 @@ def save_users(users):
         print(f"Ошибка сохранения: {e}")
 
 def save_user_from_message(message, chat_users):
-    """Сохраняет пользователя из сообщения"""
+    """Сохраняет пользователя из сообщения и выводит в лог"""
     user = message.from_user
     if not user:
         return chat_users
@@ -35,6 +35,9 @@ def save_user_from_message(message, chat_users):
     username = user.username if user.username else None
     first_name = user.first_name or ""
     last_name = user.last_name or ""
+    
+    # Проверяем, новый это пользователь или обновление
+    is_new = user_id not in chat_users
     
     chat_users[user_id] = {
         "id": user.id,
@@ -46,4 +49,12 @@ def save_user_from_message(message, chat_users):
     }
     
     save_users(chat_users)
+    
+    # Выводим в лог с меткой времени
+    time_now = datetime.now(MOSCOW_TZ).strftime('%H:%M:%S')
+    if is_new:
+        print(f"👤 [{time_now}] НОВЫЙ пользователь: @{username} ({first_name}) [ID: {user_id}]")
+    else:
+        print(f"👤 [{time_now}] Обновлён: @{username} ({first_name}) [ID: {user_id}]")
+    
     return chat_users
