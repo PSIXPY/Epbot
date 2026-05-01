@@ -11,6 +11,7 @@ from flask import Flask, request
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pytz
+import user_cache  # Импортируем наш модуль для кэша пользователей
 
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -26,32 +27,12 @@ MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 print("🤖 БОТ ЗАПУЩЕН")
 
-# === КЭШ ПОЛЬЗОВАТЕЛЕЙ (ПРОСТОЙ, БЕЗ ОБРАБОТЧИКОВ) ===
-USERS_CACHE_FILE = "chat_users.json"
-
-def load_users_cache():
-    if os.path.exists(USERS_CACHE_FILE):
-        try:
-            with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_users_cache(users):
-    try:
-        with open(USERS_CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(users, f, ensure_ascii=False, indent=2)
-        print(f"💾 Сохранено {len(users)} пользователей в кэш")
-    except Exception as e:
-        print(f"Ошибка: {e}")
-
-chat_users = load_users_cache()
+# === ЗАГРУЗКА КЭША ПОЛЬЗОВАТЕЛЕЙ ===
+chat_users = user_cache.load_users()
 
 # === ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
-
 
 # === НАПОМИНАНИЯ ===
 REMINDERS_FILE = "reminders.json"
@@ -109,7 +90,6 @@ def start_all_reminders():
     for r in reminders:
         schedule_reminder(r)
 
-
 # === ИИ ===
 ai_cache = {}
 user_histories = {}
@@ -147,7 +127,6 @@ def ask_groq(user_id, prompt):
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
 
-
 def set_reaction(chat_id, message_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
@@ -157,7 +136,6 @@ def set_reaction(chat_id, message_id):
             print(f"🔥 Реакция на {message_id}")
     except Exception as e:
         print(f"Ошибка: {e}")
-
 
 # ========== КОМАНДЫ ==========
 
@@ -170,7 +148,6 @@ def start_command(message):
         "📨 Скрытые сообщения:\n@бот username текст\n\n"
         "👥 Пользователи:\n/users\n/adduser @username")
 
-
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
     thread_id = message.message_thread_id
@@ -181,7 +158,6 @@ def ai_command(message):
     msg = bot.reply_to(message, "🤖 Думаю...", message_thread_id=thread_id)
     answer = ask_groq(message.from_user.id, prompt)
     bot.edit_message_text(answer, message.chat.id, msg.message_id)
-
 
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
@@ -254,7 +230,6 @@ def add_reminder(message):
         message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 10)
 
-
 @bot.message_handler(commands=['reminds'])
 def list_reminders(message):
     chat_id = message.chat.id
@@ -285,7 +260,6 @@ def list_reminders(message):
     response += f"\n💡 *Удалить:* `/delremind ID`"
     msg = bot.send_message(chat_id, response, parse_mode="Markdown", message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 30)
-
 
 @bot.message_handler(commands=['delremind'])
 def delete_reminder(message):
@@ -331,7 +305,6 @@ def delete_reminder(message):
     except:
         msg = bot.send_message(chat_id, "❌ *Неверный ID*\n\nИспользуйте числа: `/delremind 1`", parse_mode="Markdown", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
-
 
 # === БЕКАП ===
 @bot.message_handler(commands=['backup'])
@@ -381,7 +354,6 @@ def backup_command(message):
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
 
-
 @bot.message_handler(commands=['restore'])
 def restore_command(message):
     if message.chat.type != 'private':
@@ -393,7 +365,6 @@ def restore_command(message):
         return
     
     bot.send_message(message.chat.id, "📥 Отправьте JSON файл бекапа (backup_*.json или full_backup_*.json)")
-
 
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
@@ -450,7 +421,7 @@ def handle_restore_file(message):
         
         if "chat_users" in backup_data:
             chat_users = backup_data["chat_users"]
-            save_users_cache(chat_users)
+            user_cache.save_users(chat_users)
         
         bot.edit_message_text(
             f"✅ *Восстановление завершено!*\n\n📊 Напоминаний: {restored_reminders}\n👥 Пользователей: {len(backup_data.get('chat_users', {}))}",
@@ -461,7 +432,6 @@ def handle_restore_file(message):
         bot.edit_message_text("❌ Неверный JSON формат", message.chat.id, status_msg.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
-
 
 # ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
 @bot.inline_handler(func=lambda query: True)
@@ -528,7 +498,6 @@ def inline_query(query):
     except Exception as e:
         print(f"Инлайн ошибка: {e}")
 
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("secret_read_"))
 def handle_secret_read(call):
     msg_id = call.data.replace("secret_read_", "")
@@ -550,7 +519,6 @@ def handle_secret_read(call):
     
     bot.answer_callback_query(call.id, f"📩 От {data['sender_name']}:\n\n{data['content']}", show_alert=True)
 
-
 def clean_old_secrets():
     while True:
         time.sleep(3600)
@@ -561,6 +529,18 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (НЕ ЛОМАЕТ КОМАНДЫ) ==========
+# ВАЖНО: ЭТОТ ОБРАБОТЧИК ДОЛЖЕН БЫТЬ В САМОМ КОНЦЕ, ПОСЛЕ ВСЕХ КОМАНД!
+@bot.message_handler(func=lambda message: True)
+def auto_collect_users(message):
+    """Автоматически сохраняет пользователей из групп - НЕ отправляет ответ, НЕ ломает команды"""
+    # Только группы и супергруппы
+    if message.chat.type not in ['group', 'supergroup']:
+        return
+    
+    global chat_users
+    # Сохраняем пользователя через функцию из user_cache
+    chat_users = user_cache.save_user_from_message(message, chat_users)
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -578,11 +558,9 @@ def webhook():
         print(f"Ошибка: {e}")
         return "OK", 200
 
-
 @app.route("/", methods=["GET"])
 def health():
     return "OK", 200
-
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
