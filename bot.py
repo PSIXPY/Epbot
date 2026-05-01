@@ -12,6 +12,7 @@ from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pytz
 
+# === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 RENDER_URL = os.environ.get("RENDER_URL", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
@@ -23,95 +24,10 @@ secret_messages = {}
 
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН")
+print("🤖 ОСНОВНОЙ БОТ ЗАПУЩЕН")
 
-# === КЭШ ПОЛЬЗОВАТЕЛЕЙ ===
-USERS_CACHE_FILE = "chat_users.json"
-
-def load_users_cache():
-    if os.path.exists(USERS_CACHE_FILE):
-        try:
-            with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_users_cache(users):
-    try:
-        with open(USERS_CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(users, f, ensure_ascii=False, indent=2)
-        print(f"💾 Сохранено {len(users)} пользователей в кэш")
-    except Exception as e:
-        print(f"Ошибка: {e}")
-
-chat_users = load_users_cache()
-
-
-def save_user(user, source=""):
-    if not user or user.id == bot.get_me().id:
-        return False
-    user_id = str(user.id)
-    was_new = user_id not in chat_users
-    chat_users[user_id] = {
-        "id": user.id,
-        "username": user.username,
-        "first_name": user.first_name,
-        "last_name": user.last_name or "",
-        "last_seen": time.time()
-    }
-    if was_new:
-        print(f"📝 НОВЫЙ: {user.first_name} (@{user.username}) - {source}")
-        save_users_cache(chat_users)
-    return was_new
-
-
-# === ТОЛЬКО НОВЫЕ УЧАСТНИКИ (НЕ КОНФЛИКТУЕТ) ===
-@bot.message_handler(content_types=['new_chat_members'])
-def handle_new_member(message):
-    for new_member in message.new_chat_members:
-        if new_member.id == bot.get_me().id:
-            continue
-        save_user(new_member, "вступил в чат")
-
-
-@bot.message_handler(commands=['adduser'])
-def add_user_to_cache(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Только для админа")
-        return
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "ℹ️ /adduser @username")
-        return
-    target = args[1].lstrip("@")
-    try:
-        user_info = bot.get_chat(target)
-        save_user(user_info, "добавлен админом")
-        bot.reply_to(message, f"✅ *{user_info.first_name}* (@{user_info.username}) добавлен!\n🆔 `{user_info.id}`", parse_mode="Markdown")
-    except:
-        bot.reply_to(message, f"❌ Пользователь @{target} не найден")
-
-
-@bot.message_handler(commands=['users'])
-def show_users(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Только для админа")
-        return
-    if not chat_users:
-        bot.reply_to(message, "📭 Кэш пуст")
-        return
-    result = f"👥 *Пользователей:* {len(chat_users)}\n\n"
-    users_list = []
-    for uid, data in list(chat_users.items())[:30]:
-        username = data.get('username', 'нет')
-        name = data.get('first_name', 'Неизвестный')
-        users_list.append(f"• {name} (@{username}) - ID: `{uid}`")
-    result += "\n".join(users_list)
-    if len(chat_users) > 30:
-        result += f"\n\n... и еще {len(chat_users) - 30}"
-    bot.reply_to(message, result, parse_mode="Markdown")
-
+# Импортируем модуль кэша пользователей
+import user_cache
 
 # === ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
 def delete_after_delay(chat_id, message_id, delay=10):
@@ -181,16 +97,6 @@ user_histories = {}
 MAX_HISTORY = 10
 CACHE_TTL = 3600
 
-def set_reaction(chat_id, message_id):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
-    data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
-    try:
-        response = requests.post(url, json=data, timeout=5)
-        if response.json().get("ok"):
-            print(f"🔥 Реакция на {message_id}")
-    except Exception as e:
-        print(f"Ошибка: {e}")
-
 def ask_groq(user_id, prompt):
     if not GROQ_API_KEY:
         return "❌ Groq API не настроен."
@@ -223,6 +129,17 @@ def ask_groq(user_id, prompt):
         return f"❌ Ошибка: {str(e)[:100]}"
 
 
+def set_reaction(chat_id, message_id):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
+    data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
+    try:
+        response = requests.post(url, json=data, timeout=5)
+        if response.json().get("ok"):
+            print(f"🔥 Реакция на {message_id}")
+    except Exception as e:
+        print(f"Ошибка: {e}")
+
+
 # ========== КОМАНДЫ ==========
 
 @bot.message_handler(commands=['start', 'help'])
@@ -232,7 +149,7 @@ def start_command(message):
         "⏰ Напоминания (МСК):\n/remind 15:30 текст\n/reminds\n/delremind ID\n\n"
         "💾 Бекап (в ЛС):\n/backup\n/restore\n\n"
         "📨 Скрытые сообщения:\n@бот username текст\n\n"
-        "👥 Пользователи:\n/adduser @username")
+        "👥 Пользователи:\n/users\n/adduser @username")
 
 
 @bot.message_handler(commands=['ai'])
@@ -424,7 +341,7 @@ def backup_command(message):
             "version": "2.0",
             "date": str(datetime.now()),
             "reminders": backup_reminders,
-            "chat_users": chat_users
+            "chat_users": user_cache.chat_users  # ← ИСПОЛЬЗУЕМ КЭШ ИЗ user_cache
         }
         
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -435,7 +352,7 @@ def backup_command(message):
             bot.send_document(
                 message.chat.id, 
                 f, 
-                caption=f"✅ *Бекап создан!*\n\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n📊 Напоминаний: {len(backup_reminders)}\n👥 Пользователей: {len(chat_users)}",
+                caption=f"✅ *Бекап создан!*\n\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n📊 Напоминаний: {len(backup_reminders)}\n👥 Пользователей: {len(user_cache.chat_users)}",
                 parse_mode="Markdown"
             )
         
@@ -461,7 +378,7 @@ def restore_command(message):
 
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
-    global chat_users, reminder_counter
+    global reminders, reminder_counter
     
     if message.chat.type != 'private':
         return
@@ -489,7 +406,6 @@ def handle_restore_file(message):
                     pass
         
         restored_reminders = 0
-        restored_users = 0
         
         if "reminders" in backup_data:
             reminders.clear()
@@ -513,13 +429,13 @@ def handle_restore_file(message):
             start_all_reminders()
             restored_reminders = len(backup_data)
         
+        # Восстанавливаем пользователей в отдельном модуле
         if "chat_users" in backup_data:
-            chat_users = backup_data["chat_users"]
-            save_users_cache(chat_users)
-            restored_users = len(backup_data["chat_users"])
+            user_cache.chat_users = backup_data["chat_users"]
+            user_cache.save_users_cache(user_cache.chat_users)
         
         bot.edit_message_text(
-            f"✅ *Восстановление завершено!*\n\n📊 Напоминаний: {restored_reminders}\n👥 Пользователей: {restored_users}",
+            f"✅ *Восстановление завершено!*\n\n📊 Напоминаний: {restored_reminders}\n👥 Пользователей: {len(backup_data.get('chat_users', {}))}",
             message.chat.id, status_msg.message_id, parse_mode="Markdown"
         )
         
@@ -543,7 +459,7 @@ def inline_query(query):
         target_id = None
         target_name = target_raw
         
-        for uid, user_data in chat_users.items():
+        for uid, user_data in user_cache.chat_users.items():
             username = user_data.get('username')
             if username and username.lower() == target_raw.lower():
                 target_id = int(uid)
