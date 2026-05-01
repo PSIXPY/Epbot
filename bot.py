@@ -30,6 +30,9 @@ print("🤖 ОСНОВНОЙ БОТ ЗАПУЩЕН")
 # Импортируем модуль кэша пользователей
 import user_cache
 
+print("ПРОВЕРКА: user_cache импортирован")
+print("Содержит:", dir(user_cache))
+
 # === ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
