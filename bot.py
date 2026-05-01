@@ -12,6 +12,7 @@ from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pytz
 
+
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 RENDER_URL = os.environ.get("RENDER_URL", "")
