@@ -55,37 +55,35 @@ def save_user(user, source=""):
 # === СБОР ИЗ СООБЩЕНИЙ (С ДИАГНОСТИКОЙ) ===
 @bot.message_handler(content_types=['text'])
 def collect_from_messages(message):
-    print(f"🔴🔴🔴 ХЕНДЛЕР СРАБОТАЛ: {message.text[:50] if message.text else 'Нет текста'}")
+    # ДИАГНОСТИКА - ВСЕГДА ВЫВОДИМ
+    print(f"🔥🔥🔥 user_cache: получил сообщение '{message.text[:50] if message.text else 'Нет текста'}'")
     print(f"    Чат: {message.chat.id}, Тип: {message.chat.type}")
     
     # Только группы
     if message.chat.type not in ['group', 'supergroup']:
-        print(f"⚠️ Пропускаем: чат не группа (тип: {message.chat.type})")
+        print(f"    → Пропускаем: не группа")
         return
     
     # Пропускаем команды
     if message.text and message.text.startswith('/'):
-        print(f"⚠️ Пропускаем: это команда {message.text}")
+        print(f"    → Пропускаем: команда")
         return
-    
-    print(f"✅ Сохраняем автора сообщения...")
     
     # Сохраняем автора
     if message.from_user:
+        print(f"    → Сохраняем автора: {message.from_user.first_name}")
         save_user(message.from_user, "написал сообщение")
-    else:
-        print("⚠️ message.from_user отсутствует")
     
     # Сохраняем того, кому ответили
     if message.reply_to_message and message.reply_to_message.from_user:
-        print(f"✅ Сохраняем того, кому ответили...")
+        print(f"    → Сохраняем адресата ответа: {message.reply_to_message.from_user.first_name}")
         save_user(message.reply_to_message.from_user, "ответили на сообщение")
 
 
 # === НОВЫЕ УЧАСТНИКИ ===
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
-    print(f"🔵 НОВЫЙ УЧАСТНИК: {message.new_chat_members}")
+    print(f"👥 user_cache: новые участники")
     for new_member in message.new_chat_members:
         if new_member.id == bot.get_me().id:
             continue
@@ -95,7 +93,7 @@ def handle_new_member(message):
 # === КОМАНДА /users ===
 @bot.message_handler(commands=['users'])
 def show_users(message):
-    print(f"🟢 КОМАНДА /users от {message.from_user.id}")
+    print(f"📊 user_cache: команда /users от {message.from_user.id}")
     
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Только для админа")
@@ -118,7 +116,7 @@ def show_users(message):
 # === КОМАНДА /adduser ===
 @bot.message_handler(commands=['adduser'])
 def add_user_to_cache(message):
-    print(f"🟢 КОМАНДА /adduser от {message.from_user.id}")
+    print(f"➕ user_cache: команда /adduser от {message.from_user.id}")
     
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Только для админа")
@@ -136,4 +134,4 @@ def add_user_to_cache(message):
         bot.reply_to(message, f"❌ Пользователь @{target} не найден")
 
 
-print("🔄 Модуль кэша пользователей загружен")
+print("🔄 Модуль кэша пользователей ЗАГРУЖЕН")
