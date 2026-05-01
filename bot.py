@@ -66,25 +66,31 @@ def save_user(user, source=""):
     return was_new
 
 
-# === БЕЗОПАСНЫЙ СБОР ПОЛЬЗОВАТЕЛЕЙ ===
-@bot.message_handler(content_types=['text'])
-def collect_from_message(message):
-    if message.chat.type == 'private':
-        return
-    if message.text and message.text.startswith('/'):
-        return
-    if message.from_user:
-        save_user(message.from_user, "написал в чат")
-    if message.reply_to_message and message.reply_to_message.from_user:
-        save_user(message.reply_to_message.from_user, "ответили на сообщение")
-
-
+# === ТОЛЬКО НОВЫЕ УЧАСТНИКИ (НЕ КОНФЛИКТУЕТ) ===
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
     for new_member in message.new_chat_members:
         if new_member.id == bot.get_me().id:
             continue
         save_user(new_member, "вступил в чат")
+
+
+@bot.message_handler(commands=['adduser'])
+def add_user_to_cache(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Только для админа")
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "ℹ️ /adduser @username")
+        return
+    target = args[1].lstrip("@")
+    try:
+        user_info = bot.get_chat(target)
+        save_user(user_info, "добавлен админом")
+        bot.reply_to(message, f"✅ *{user_info.first_name}* (@{user_info.username}) добавлен!\n🆔 `{user_info.id}`", parse_mode="Markdown")
+    except:
+        bot.reply_to(message, f"❌ Пользователь @{target} не найден")
 
 
 @bot.message_handler(commands=['users'])
@@ -107,30 +113,12 @@ def show_users(message):
     bot.reply_to(message, result, parse_mode="Markdown")
 
 
-@bot.message_handler(commands=['adduser'])
-def add_user_to_cache(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Только для админа")
-        return
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "ℹ️ /adduser @username")
-        return
-    target = args[1].lstrip("@")
-    try:
-        user_info = bot.get_chat(target)
-        save_user(user_info, "добавлен админом")
-        bot.reply_to(message, f"✅ *{user_info.first_name}* (@{user_info.username}) добавлен!\n🆔 `{user_info.id}`", parse_mode="Markdown")
-    except:
-        bot.reply_to(message, f"❌ Пользователь @{target} не найден")
-
-
 # === ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
 
-# === НАПОМИНАНИЯ (С МОСКОВСКИМ ВРЕМЕНЕМ) ===
+# === НАПОМИНАНИЯ ===
 REMINDERS_FILE = "reminders.json"
 
 def load_reminders():
