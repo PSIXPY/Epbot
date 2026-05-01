@@ -52,38 +52,51 @@ def save_user(user, source=""):
     return was_new
 
 
-# === БЕЗОПАСНЫЙ СБОР ИЗ СООБЩЕНИЙ (НЕ КОНФЛИКТУЕТ С КОМАНДАМИ) ===
+# === СБОР ИЗ СООБЩЕНИЙ (С ДИАГНОСТИКОЙ) ===
 @bot.message_handler(content_types=['text'])
 def collect_from_messages(message):
+    print(f"🔴🔴🔴 ХЕНДЛЕР СРАБОТАЛ: {message.text[:50] if message.text else 'Нет текста'}")
+    print(f"    Чат: {message.chat.id}, Тип: {message.chat.type}")
+    
     # Только группы
     if message.chat.type not in ['group', 'supergroup']:
+        print(f"⚠️ Пропускаем: чат не группа (тип: {message.chat.type})")
         return
     
     # Пропускаем команды
     if message.text and message.text.startswith('/'):
+        print(f"⚠️ Пропускаем: это команда {message.text}")
         return
+    
+    print(f"✅ Сохраняем автора сообщения...")
     
     # Сохраняем автора
     if message.from_user:
         save_user(message.from_user, "написал сообщение")
+    else:
+        print("⚠️ message.from_user отсутствует")
     
     # Сохраняем того, кому ответили
     if message.reply_to_message and message.reply_to_message.from_user:
+        print(f"✅ Сохраняем того, кому ответили...")
         save_user(message.reply_to_message.from_user, "ответили на сообщение")
 
 
 # === НОВЫЕ УЧАСТНИКИ ===
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
+    print(f"🔵 НОВЫЙ УЧАСТНИК: {message.new_chat_members}")
     for new_member in message.new_chat_members:
         if new_member.id == bot.get_me().id:
             continue
         save_user(new_member, "вступил в чат")
 
 
-# === КОМАНДЫ ДЛЯ АДМИНА ===
+# === КОМАНДА /users ===
 @bot.message_handler(commands=['users'])
 def show_users(message):
+    print(f"🟢 КОМАНДА /users от {message.from_user.id}")
+    
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Только для админа")
         return
@@ -102,8 +115,11 @@ def show_users(message):
     bot.reply_to(message, result, parse_mode="Markdown")
 
 
+# === КОМАНДА /adduser ===
 @bot.message_handler(commands=['adduser'])
 def add_user_to_cache(message):
+    print(f"🟢 КОМАНДА /adduser от {message.from_user.id}")
+    
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Только для админа")
         return
