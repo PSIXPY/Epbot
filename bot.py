@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from flask import Flask, request
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import pytz
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 RENDER_URL = os.environ.get("RENDER_URL", "")
@@ -19,6 +20,8 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", 483977434))
 app = Flask(__name__)
 bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
+
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 print("🤖 БОТ ЗАПУЩЕН")
 
@@ -63,13 +66,45 @@ def save_user(user, source=""):
     return was_new
 
 
-# === ТОЛЬКО НОВЫЕ УЧАСТНИКИ (НЕ КОНФЛИКТУЕТ) ===
+# === БЕЗОПАСНЫЙ СБОР ПОЛЬЗОВАТЕЛЕЙ ===
+@bot.message_handler(content_types=['text'])
+def collect_from_message(message):
+    if message.chat.type == 'private':
+        return
+    if message.text and message.text.startswith('/'):
+        return
+    if message.from_user:
+        save_user(message.from_user, "написал в чат")
+    if message.reply_to_message and message.reply_to_message.from_user:
+        save_user(message.reply_to_message.from_user, "ответили на сообщение")
+
+
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
     for new_member in message.new_chat_members:
         if new_member.id == bot.get_me().id:
             continue
         save_user(new_member, "вступил в чат")
+
+
+@bot.message_handler(commands=['users'])
+def show_users(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Только для админа")
+        return
+    if not chat_users:
+        bot.reply_to(message, "📭 Кэш пуст")
+        return
+    result = f"👥 *Пользователей:* {len(chat_users)}\n\n"
+    users_list = []
+    for uid, data in list(chat_users.items())[:30]:
+        username = data.get('username', 'нет')
+        name = data.get('first_name', 'Неизвестный')
+        users_list.append(f"• {name} (@{username}) - ID: `{uid}`")
+    result += "\n".join(users_list)
+    if len(chat_users) > 30:
+        result += f"\n\n... и еще {len(chat_users) - 30}"
+    bot.reply_to(message, result, parse_mode="Markdown")
 
 
 @bot.message_handler(commands=['adduser'])
@@ -90,14 +125,73 @@ def add_user_to_cache(message):
         bot.reply_to(message, f"❌ Пользователь @{target} не найден")
 
 
+# === ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
+def delete_after_delay(chat_id, message_id, delay=10):
+    threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
+
+
+# === НАПОМИНАНИЯ (С МОСКОВСКИМ ВРЕМЕНЕМ) ===
+REMINDERS_FILE = "reminders.json"
+
+def load_reminders():
+    if os.path.exists(REMINDERS_FILE):
+        try:
+            with open(REMINDERS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+def save_reminders(reminders):
+    to_save = []
+    for r in reminders:
+        copy = {}
+        for k, v in r.items():
+            if k not in ["timer", "_timer"]:
+                copy[k] = v
+        to_save.append(copy)
+    try:
+        with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(to_save, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Ошибка: {e}")
+
+reminders = load_reminders()
+reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
+
+def send_reminder(reminder):
+    try:
+        bot.send_message(reminder["chat_id"], f"⏰ НАПОМИНАНИЕ!\n\n{reminder['text']}", message_thread_id=reminder.get("thread_id"))
+    except Exception as e:
+        print(f"Ошибка отправки: {e}")
+
+def schedule_reminder(reminder):
+    now_moscow = datetime.now(MOSCOW_TZ)
+    target = now_moscow.replace(hour=reminder["hours"], minute=reminder["minutes"], second=0, microsecond=0)
+    if target <= now_moscow:
+        target += timedelta(days=1)
+    delay = (target - now_moscow).total_seconds()
+    timer = threading.Timer(delay, lambda: execute_reminder(reminder))
+    timer.daemon = True
+    timer.start()
+    reminder["_timer"] = timer
+    print(f"⏰ Напоминание {reminder['id']} на {target.strftime('%Y-%m-%d %H:%M:%S')} МСК")
+
+def execute_reminder(reminder):
+    send_reminder(reminder)
+    if reminder.get("daily"):
+        schedule_reminder(reminder)
+
+def start_all_reminders():
+    for r in reminders:
+        schedule_reminder(r)
+
+
 # === ИИ ===
 ai_cache = {}
 user_histories = {}
 MAX_HISTORY = 10
 CACHE_TTL = 3600
-
-def delete_after_delay(chat_id, message_id, delay=10):
-    threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
 def set_reaction(chat_id, message_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
@@ -141,73 +235,16 @@ def ask_groq(user_id, prompt):
         return f"❌ Ошибка: {str(e)[:100]}"
 
 
-# === НАПОМИНАНИЯ ===
-REMINDERS_FILE = "reminders.json"
-
-def load_reminders():
-    if os.path.exists(REMINDERS_FILE):
-        try:
-            with open(REMINDERS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return []
-    return []
-
-def save_reminders(reminders):
-    to_save = []
-    for r in reminders:
-        copy = {}
-        for k, v in r.items():
-            if k not in ["timer", "_timer"]:
-                copy[k] = v
-        to_save.append(copy)
-    try:
-        with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(to_save, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Ошибка: {e}")
-
-reminders = load_reminders()
-reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
-
-def send_reminder(reminder):
-    try:
-        bot.send_message(reminder["chat_id"], f"⏰ НАПОМИНАНИЕ!\n\n{reminder['text']}", message_thread_id=reminder.get("thread_id"))
-    except Exception as e:
-        print(f"Ошибка: {e}")
-
-def schedule_reminder(reminder):
-    now = datetime.now()
-    target = now.replace(hour=reminder["hours"], minute=reminder["minutes"], second=0, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
-    delay = (target - now).total_seconds()
-    timer = threading.Timer(delay, lambda: execute_reminder(reminder))
-    timer.daemon = True
-    timer.start()
-    reminder["_timer"] = timer
-    print(f"⏰ Напоминание {reminder['id']} на {target.strftime('%H:%M')}")
-
-def execute_reminder(reminder):
-    send_reminder(reminder)
-    if reminder.get("daily"):
-        schedule_reminder(reminder)
-
-def start_all_reminders():
-    for r in reminders:
-        schedule_reminder(r)
-
-
 # ========== КОМАНДЫ ==========
 
 @bot.message_handler(commands=['start', 'help'])
 def start_command(message):
     bot.send_message(message.chat.id, "✅ Бот работает!\n\n"
         "🤖 ИИ: /ai вопрос\n\n"
-        "⏰ Напоминания:\n/remind 15:30 текст\n/reminds\n/delremind ID\n\n"
+        "⏰ Напоминания (МСК):\n/remind 15:30 текст\n/reminds\n/delremind ID\n\n"
         "💾 Бекап (в ЛС):\n/backup\n/restore\n\n"
         "📨 Скрытые сообщения:\n@бот username текст\n\n"
-        "👥 Пользователи:\n/adduser @username - добавить вручную")
+        "👥 Пользователи:\n/adduser @username")
 
 
 @bot.message_handler(commands=['ai'])
@@ -235,7 +272,7 @@ def add_reminder(message):
     
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        msg = bot.send_message(chat_id, "ℹ️ /remind 15:30 текст", message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, "ℹ️ /remind 15:30 текст\n\nПример: /remind 16:00 Позвонить маме", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
         return
     
@@ -251,7 +288,7 @@ def add_reminder(message):
         if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
             raise ValueError
     except:
-        msg = bot.send_message(chat_id, "❌ Неверный формат. Используйте ЧЧ:ММ", message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, "❌ Неверный формат времени. Используйте ЧЧ:ММ (МСК)", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
         return
     
@@ -260,17 +297,37 @@ def add_reminder(message):
         reminder_text = reminder_text[len("ежедневно"):].lstrip()
     
     reminder_counter += 1
+    
+    now_moscow = datetime.now(MOSCOW_TZ)
+    target_today = now_moscow.replace(hour=hours, minute=minutes)
+    period = "сегодня" if target_today > now_moscow else "завтра"
+    
+    if daily:
+        period = "каждый день"
+    
     reminder = {
-        "id": reminder_counter, "chat_id": chat_id, "user_id": message.from_user.id,
-        "thread_id": thread_id, "text": reminder_text, "hours": hours, "minutes": minutes, "daily": daily
+        "id": reminder_counter,
+        "chat_id": chat_id,
+        "user_id": message.from_user.id,
+        "thread_id": thread_id,
+        "text": reminder_text,
+        "hours": hours,
+        "minutes": minutes,
+        "daily": daily
     }
     
     reminders.append(reminder)
     save_reminders(reminders)
     schedule_reminder(reminder)
     
-    period = "каждый день" if daily else "однократное"
-    msg = bot.send_message(chat_id, f"✅ Напоминание {reminder_counter}\n⏰ {hours:02d}:{minutes:02d}\n📅 {period}\n📝 {reminder_text}", message_thread_id=thread_id)
+    msg = bot.send_message(chat_id, 
+        f"✅ *Напоминание создано!*\n\n"
+        f"🆔 ID: {reminder_counter}\n"
+        f"⏰ Время: {hours:02d}:{minutes:02d} МСК\n"
+        f"📅 Период: {period}\n"
+        f"📝 Текст: {reminder_text}",
+        parse_mode="Markdown",
+        message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 10)
 
 
@@ -289,17 +346,20 @@ def list_reminders(message):
         user_reminders = [r for r in user_reminders if r.get("thread_id") == thread_id]
     
     if not user_reminders:
-        msg = bot.send_message(chat_id, "📭 Нет напоминаний", message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, "📭 Нет активных напоминаний", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 15)
         return
     
-    response = "📋 НАПОМИНАНИЯ:\n\n"
+    response = "📋 *Активные напоминания:*\n\n"
     for r in user_reminders:
-        period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}" if r.get("daily") else f"{r['hours']:02d}:{r['minutes']:02d}"
-        response += f"🆔 {r['id']} - {period}\n📝 {r['text'][:40]}\n\n"
+        if r.get("daily"):
+            period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}"
+        else:
+            period = f"{r['hours']:02d}:{r['minutes']:02d}"
+        response += f"🆔 `{r['id']}` - {period}\n   📝 {r['text'][:40]}\n\n"
     
-    response += f"\n💡 /delremind ID"
-    msg = bot.send_message(chat_id, response, message_thread_id=thread_id)
+    response += f"\n💡 *Удалить:* `/delremind ID`"
+    msg = bot.send_message(chat_id, response, parse_mode="Markdown", message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 30)
 
 
@@ -324,6 +384,14 @@ def delete_reminder(message):
         rid = int(parts[1])
         for i, r in enumerate(reminders):
             if r["id"] == rid:
+                if r.get("chat_id") != chat_id:
+                    msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не найдено", message_thread_id=thread_id)
+                    delete_after_delay(chat_id, msg.message_id, 10)
+                    return
+                if thread_id and r.get("thread_id") != thread_id:
+                    msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не в этом топике", message_thread_id=thread_id)
+                    delete_after_delay(chat_id, msg.message_id, 10)
+                    return
                 if "_timer" in r:
                     try:
                         r["_timer"].cancel()
@@ -331,13 +399,13 @@ def delete_reminder(message):
                         pass
                 reminders.pop(i)
                 save_reminders(reminders)
-                msg = bot.send_message(chat_id, f"✅ Напоминание {rid} удалено", message_thread_id=thread_id)
+                msg = bot.send_message(chat_id, f"✅ *Напоминание {rid} удалено*", parse_mode="Markdown", message_thread_id=thread_id)
                 delete_after_delay(chat_id, msg.message_id, 10)
                 return
         msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не найдено", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
     except:
-        msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
+        msg = bot.send_message(chat_id, "❌ *Неверный ID*\n\nИспользуйте числа: `/delremind 1`", parse_mode="Markdown", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
 
