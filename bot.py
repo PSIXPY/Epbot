@@ -12,7 +12,6 @@ from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pytz
 
-
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 RENDER_URL = os.environ.get("RENDER_URL", "")
@@ -30,12 +29,76 @@ print("🤖 ОСНОВНОЙ БОТ ЗАПУЩЕН")
 # Импортируем модуль кэша пользователей
 import user_cache
 
-print("ПРОВЕРКА: user_cache импортирован")
-print("Содержит:", dir(user_cache))
+print("✅ user_cache импортирован")
 
 # === ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
+
+
+# === СБОР ПОЛЬЗОВАТЕЛЕЙ (НЕ КОНФЛИКТУЕТ С КОМАНДАМИ) ===
+@bot.message_handler(content_types=['text'])
+def collect_users(message):
+    # Только группы
+    if message.chat.type not in ['group', 'supergroup']:
+        return
+    
+    # Пропускаем команды
+    if message.text and message.text.startswith('/'):
+        return
+    
+    # Сохраняем автора
+    if message.from_user:
+        user_cache.save_user(message.from_user, "написал сообщение")
+    
+    # Сохраняем того, кому ответили
+    if message.reply_to_message and message.reply_to_message.from_user:
+        user_cache.save_user(message.reply_to_message.from_user, "ответили на сообщение")
+
+
+@bot.message_handler(content_types=['new_chat_members'])
+def save_new_member(message):
+    for new_member in message.new_chat_members:
+        if new_member.id != bot.get_me().id:
+            user_cache.save_user(new_member, "вступил в чат")
+
+
+@bot.message_handler(commands=['users'])
+def show_users(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Только для админа")
+        return
+    if not user_cache.chat_users:
+        bot.reply_to(message, "📭 Кэш пуст")
+        return
+    result = f"👥 *Пользователей в кэше:* {len(user_cache.chat_users)}\n\n"
+    users_list = []
+    for uid, data in list(user_cache.chat_users.items())[:30]:
+        username = data.get('username', 'нет')
+        name = data.get('first_name', 'Неизвестный')
+        users_list.append(f"• {name} (@{username}) - ID: `{uid}`")
+    result += "\n".join(users_list)
+    if len(user_cache.chat_users) > 30:
+        result += f"\n\n... и еще {len(user_cache.chat_users) - 30}"
+    bot.reply_to(message, result, parse_mode="Markdown")
+
+
+@bot.message_handler(commands=['adduser'])
+def add_user(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Только для админа")
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "ℹ️ /adduser @username")
+        return
+    target = args[1].lstrip("@")
+    try:
+        user_info = bot.get_chat(target)
+        user_cache.save_user(user_info, "добавлен админом")
+        bot.reply_to(message, f"✅ *{user_info.first_name}* (@{user_info.username}) добавлен!\n🆔 `{user_info.id}`", parse_mode="Markdown")
+    except:
+        bot.reply_to(message, f"❌ Пользователь @{target} не найден")
 
 
 # === НАПОМИНАНИЯ ===
@@ -345,7 +408,7 @@ def backup_command(message):
             "version": "2.0",
             "date": str(datetime.now()),
             "reminders": backup_reminders,
-            "chat_users": user_cache.chat_users  # ← ИСПОЛЬЗУЕМ КЭШ ИЗ user_cache
+            "chat_users": user_cache.chat_users
         }
         
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -433,7 +496,6 @@ def handle_restore_file(message):
             start_all_reminders()
             restored_reminders = len(backup_data)
         
-        # Восстанавливаем пользователей в отдельном модуле
         if "chat_users" in backup_data:
             user_cache.chat_users = backup_data["chat_users"]
             user_cache.save_users_cache(user_cache.chat_users)
