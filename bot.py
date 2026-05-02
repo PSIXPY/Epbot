@@ -564,7 +564,7 @@ def handle_restore_file(message):
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
 
-# ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
+# ========== СКРЫТЫЕ СООБЩЕНИЯ (ИСПРАВЛЕНЫ) ==========
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -578,12 +578,26 @@ def inline_query(query):
         target_id = None
         target_name = target_raw
         
-        for uid, user_data in chat_users.items():
+        # ЧИТАЕМ ИЗ ФАЙЛА, А НЕ ИЗ ПЕРЕМЕННОЙ В ПАМЯТИ
+        if os.path.exists(USERS_CACHE_FILE):
+            try:
+                with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
+                    users_from_file = json.load(f)
+            except:
+                users_from_file = chat_users
+        else:
+            users_from_file = chat_users
+        
+        for uid, user_data in users_from_file.items():
             username = user_data.get('username')
             if username and username.lower() == target_raw.lower():
                 target_id = uid
                 target_name = user_data.get('first_name') or target_raw
                 break
+        
+        if not target_id and target_raw.isdigit():
+            target_id = target_raw
+            target_name = f"Пользователь {target_raw}"
         
         if not target_id:
             markup = InlineKeyboardMarkup()
@@ -592,7 +606,7 @@ def inline_query(query):
                 id="error",
                 title="❌ Пользователь не найден",
                 description=f"@{target_raw} - проверьте",
-                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден"),
+                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден в кэше бота"),
                 reply_markup=markup
             )
             bot.answer_inline_query(query.id, [result], cache_time=0)
@@ -632,21 +646,27 @@ def handle_secret_read(call):
     msg_id = call.data.replace("secret_read_", "")
     
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено или истекло", show_alert=True)
         return
     
     data = secret_messages[msg_id]
     
-    if call.from_user.id != data["target_id"]:
-        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
+    # Проверяем, тот ли пользователь читает
+    if str(call.from_user.id) != str(data["target_id"]):
+        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
         return
     
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Истекло 1 час", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение истекло (1 час)", show_alert=True)
         del secret_messages[msg_id]
         return
     
-    bot.answer_callback_query(call.id, f"📩 От {data['sender_name']}:\n\n{data['content']}", show_alert=True)
+    # Показываем сообщение
+    bot.answer_callback_query(
+        call.id, 
+        f"📩 От {data['sender_name']}:\n\n{data['content']}", 
+        show_alert=True
+    )
 
 def clean_old_secrets():
     while True:
