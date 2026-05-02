@@ -301,21 +301,16 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
-# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (РАБОТАЮЩАЯ ВЕРСИЯ) ===
-
-# Хранилище для пагинации
-user_pages_data = {}
+# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (ПРОСТАЯ И НАДЁЖНАЯ ВЕРСИЯ) ===
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
-    global user_pages_data
-    
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
+        bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
     
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Только в ЛС!")
+        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
         return
     
     if not os.path.exists(USERS_CACHE_FILE):
@@ -326,188 +321,50 @@ def show_users(message):
         with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
             users = json.load(f)
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка чтения: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка чтения файла: {e}")
         return
     
     if not users:
         bot.send_message(message.chat.id, "📭 Кэш пользователей пуст")
         return
     
-    # Преобразуем в список
-    users_list = []
+    total = len(users)
+    bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
+    
+    # Формируем список всех пользователей
+    users_list = ""
+    message_count = 0
+    
     for uid, user in users.items():
         username = user.get('username', 'None')
         name = user.get('first_name', 'Без имени')
-        users_list.append({
-            "uid": uid,
-            "username": username,
-            "name": name
-        })
+        
+        # Урезаем слишком длинные имена
+        if len(name) > 30:
+            name = name[:27] + "..."
+        
+        user_line = f"• `{uid}` | @{username} | {name}\n"
+        
+        # Если сообщение станет слишком длинным - отправляем
+        if len(users_list + user_line) > 3500:
+            if message_count == 0:
+                bot.send_message(message.chat.id, f"📋 *Список пользователей:*\n\n{users_list}", parse_mode="Markdown")
+            else:
+                bot.send_message(message.chat.id, f"📋 *Продолжение списка:*\n\n{users_list}", parse_mode="Markdown")
+            users_list = ""
+            message_count += 1
+            time.sleep(0.3)
+        
+        users_list += user_line
     
-    total = len(users_list)
-    page_size = 10
-    total_pages = (total + page_size - 1) // page_size
+    # Отправляем остаток
+    if users_list:
+        if message_count == 0:
+            bot.send_message(message.chat.id, f"📋 *Список пользователей:*\n\n{users_list}", parse_mode="Markdown")
+        else:
+            bot.send_message(message.chat.id, f"📋 *Продолжение списка:*\n\n{users_list}", parse_mode="Markdown")
     
-    # Сохраняем данные
-    user_pages_data[message.from_user.id] = {
-        "users": users_list,
-        "total_pages": total_pages,
-        "page_size": page_size,
-        "total": total,
-        "current_page": 0
-    }
-    
-    # Отправляем первую страницу
-    send_users_page(message.chat.id, message.from_user.id, 0)
-
-def send_users_page(chat_id, user_id, page):
-    global user_pages_data
-    
-    data = user_pages_data.get(user_id)
-    if not data:
-        bot.send_message(chat_id, "❌ Данные устарели, нажмите /users заново")
-        return
-    
-    users_list = data["users"]
-    total_pages = data["total_pages"]
-    page_size = data["page_size"]
-    total = data["total"]
-    
-    start = page * page_size
-    end = min(start + page_size, total)
-    
-    text = f"📋 *Пользователи бота* (страница {page + 1}/{total_pages})\n"
-    text += f"👥 Всего: {total}\n\n"
-    
-    for i in range(start, end):
-        user = users_list[i]
-        username_display = user['username'] if user['username'] else 'None'
-        text += f"• `{user['uid']}` | @{username_display} | {user['name']}\n"
-    
-    # Создаём кнопки с уникальными callback_data
-    markup = InlineKeyboardMarkup(row_width=2)
-    buttons = []
-    
-    if page > 0:
-        buttons.append(InlineKeyboardButton("◀ Назад", callback_data=f"user_page_{user_id}_{page - 1}"))
-    if page < total_pages - 1:
-        buttons.append(InlineKeyboardButton("Вперед ▶", callback_data=f"user_page_{user_id}_{page + 1}"))
-    
-    if buttons:
-        markup.add(*buttons)
-    markup.add(InlineKeyboardButton("🔄 Обновить", callback_data=f"user_refresh_{user_id}"))
-    
-    # Отправляем новое сообщение
-    bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("user_page_"))
-def handle_user_page(call):
-    # Парсим: user_page_{user_id}_{page}
-    parts = call.data.split("_")
-    if len(parts) != 4:
-        bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
-        return
-    
-    try:
-        user_id = int(parts[2])
-        page = int(parts[3])
-    except:
-        bot.answer_callback_query(call.id, "❌ Ошибка данных", show_alert=True)
-        return
-    
-    if call.from_user.id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
-        return
-    
-    if call.from_user.id != user_id:
-        bot.answer_callback_query(call.id, "❌ Сессия устарела, нажмите /users", show_alert=True)
-        return
-    
-    data = user_pages_data.get(user_id)
-    if not data:
-        bot.answer_callback_query(call.id, "❌ Данные устарели, нажмите /users", show_alert=True)
-        return
-    
-    # Обновляем страницу
-    data["current_page"] = page
-    
-    bot.answer_callback_query(call.id, f"📖 Страница {page + 1}")
-    
-    # Удаляем старое сообщение
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
-    
-    # Отправляем новую страницу
-    send_users_page(call.message.chat.id, user_id, page)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("user_refresh_"))
-def handle_user_refresh(call):
-    parts = call.data.split("_")
-    if len(parts) != 3:
-        bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
-        return
-    
-    try:
-        user_id = int(parts[2])
-    except:
-        bot.answer_callback_query(call.id, "❌ Ошибка данных", show_alert=True)
-        return
-    
-    if call.from_user.id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
-        return
-    
-    if call.from_user.id != user_id:
-        bot.answer_callback_query(call.id, "❌ Сессия устарела", show_alert=True)
-        return
-    
-    # Перезагружаем данные из файла
-    if not os.path.exists(USERS_CACHE_FILE):
-        bot.answer_callback_query(call.id, "❌ Файл не найден", show_alert=True)
-        return
-    
-    try:
-        with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
-            users = json.load(f)
-    except Exception as e:
-        bot.answer_callback_query(call.id, f"❌ Ошибка: {e}", show_alert=True)
-        return
-    
-    # Обновляем список
-    users_list = []
-    for uid, user in users.items():
-        username = user.get('username', 'None')
-        name = user.get('first_name', 'Без имени')
-        users_list.append({
-            "uid": uid,
-            "username": username,
-            "name": name
-        })
-    
-    total = len(users_list)
-    page_size = 10
-    total_pages = (total + page_size - 1) // page_size
-    
-    user_pages_data[user_id] = {
-        "users": users_list,
-        "total_pages": total_pages,
-        "page_size": page_size,
-        "total": total,
-        "current_page": 0
-    }
-    
-    bot.answer_callback_query(call.id, "🔄 Список обновлён!")
-    
-    # Удаляем старое сообщение
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
-    
-    # Отправляем первую страницу
-    send_users_page(call.message.chat.id, user_id, 0)
+    bot.send_message(message.chat.id, f"✅ *Отправлено {total} пользователей*", parse_mode="Markdown")
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
@@ -792,7 +649,9 @@ def auto_collect_users(message):
     save_users_cache(chat_users)
     
     if is_new:
-        print(f"🆕 НОВЫЙ: @{username} ({user.first_name})")
+        print(f"🆕 НОВЫЙ: @{username} ({user.first_name}) [ID: {user_id}]")
+    else:
+        print(f"🔄 Обновлён: @{username} ({user.first_name})")
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
