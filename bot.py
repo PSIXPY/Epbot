@@ -336,8 +336,7 @@ def delete_reminder(message):
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
-    global chat_users
-    
+    """Показывает список пользователей - читает напрямую из файла"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -346,29 +345,38 @@ def show_users(message):
         bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
         return
     
-    # Перезагружаем пользователей из файла перед показом
-    chat_users = load_users_cache()
+    # Прямо читаем из файла, игнорируя переменную в памяти
+    if not os.path.exists(USERS_CACHE_FILE):
+        bot.send_message(message.chat.id, "📭 Файл с пользователями не найден.")
+        return
     
-    if not chat_users:
+    try:
+        with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
+            users_from_file = json.load(f)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка чтения файла: {e}")
+        return
+    
+    if not users_from_file:
         bot.send_message(message.chat.id, "📭 Кэш пользователей пуст.")
         return
     
     # Формируем список
     users_list = "📋 *Сохранённые пользователи:*\n\n"
-    for uid, user in chat_users.items():
+    for uid, user in users_from_file.items():
         username = user.get('username', 'нет')
         name = user.get('full_name', user.get('first_name', 'Без имени'))
         last_seen = user.get('last_seen', 'неизвестно')[:16]
         users_list += f"• `{uid}` | @{username} | {name}\n  └ последнее: {last_seen}\n\n"
         
-        if len(users_list) > 3800:
+        if len(users_list) > 3500:
             bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
             users_list = ""
     
     if users_list:
         bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
     
-    stats = f"📊 *Статистика:*\n👥 Всего: {len(chat_users)} пользователей"
+    stats = f"📊 *Статистика:*\n👥 Всего: {len(users_from_file)} пользователей"
     bot.send_message(message.chat.id, stats, parse_mode="Markdown")
 
 @bot.message_handler(commands=['adduser'])
@@ -534,17 +542,22 @@ def handle_restore_file(message):
             restored_reminders = len(backup_data["reminders"])
             print(f"⏰ Восстановлено {restored_reminders} напоминаний")
         
-        # Восстанавливаем пользователей и обновляем переменную в памяти
+        # Восстанавливаем пользователей - сохраняем в файл и обновляем память
         if "chat_users" in backup_data:
+            # Сохраняем в файл
+            with open(USERS_CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(backup_data["chat_users"], f, ensure_ascii=False, indent=2)
+            # Обновляем переменную в памяти
             chat_users = backup_data["chat_users"]
-            save_users_cache(chat_users)
             restored_users = len(backup_data["chat_users"])
-            print(f"👥 Восстановлено {restored_users} пользователей в память и файл")
+            print(f"👥 Восстановлено {restored_users} пользователей")
+            print(f"📂 Файл chat_users.json обновлён")
         
         bot.edit_message_text(
             f"✅ *Восстановление завершено!*\n\n"
             f"📊 Напоминаний: {restored_reminders}\n"
-            f"👥 Пользователей: {restored_users}",
+            f"👥 Пользователей: {restored_users}\n\n"
+            f"💡 Теперь введите /users для просмотра списка",
             message.chat.id, status_msg.message_id,
             parse_mode="Markdown"
         )
