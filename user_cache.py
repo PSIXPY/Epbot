@@ -11,9 +11,13 @@ def load_users():
     if os.path.exists(USERS_CACHE_FILE):
         try:
             with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
+                users = json.load(f)
+                print(f"📂 Загружено {len(users)} пользователей из файла")
+                return users
+        except Exception as e:
+            print(f"❌ Ошибка загрузки: {e}")
             return {}
+    print("📂 Файл chat_users.json не найден, создаю новый")
     return {}
 
 def save_users(users):
@@ -21,14 +25,17 @@ def save_users(users):
     try:
         with open(USERS_CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(users, f, ensure_ascii=False, indent=2)
-        print(f"💾 Сохранено {len(users)} пользователей в кэш")
+        print(f"💾 Сохранено {len(users)} пользователей в файл")
+        return True
     except Exception as e:
-        print(f"Ошибка сохранения: {e}")
+        print(f"❌ Ошибка сохранения: {e}")
+        return False
 
 def save_user_from_message(message, chat_users):
-    """Сохраняет пользователя из сообщения и выводит в лог"""
+    """Сохраняет пользователя из сообщения"""
     user = message.from_user
     if not user:
+        print("⚠️ Нет информации о пользователе")
         return chat_users
     
     user_id = str(user.id)
@@ -36,9 +43,10 @@ def save_user_from_message(message, chat_users):
     first_name = user.first_name or ""
     last_name = user.last_name or ""
     
-    # Проверяем, новый это пользователь или обновление
+    # Проверяем, новый ли пользователь
     is_new = user_id not in chat_users
     
+    # Сохраняем данные
     chat_users[user_id] = {
         "id": user.id,
         "username": username,
@@ -48,13 +56,78 @@ def save_user_from_message(message, chat_users):
         "last_seen": datetime.now(MOSCOW_TZ).isoformat()
     }
     
+    # Сохраняем в файл
     save_users(chat_users)
     
-    # Выводим в лог с меткой времени
+    # Логируем
     time_now = datetime.now(MOSCOW_TZ).strftime('%H:%M:%S')
     if is_new:
-        print(f"👤 [{time_now}] НОВЫЙ пользователь: @{username} ({first_name}) [ID: {user_id}]")
+        print(f"🆕 [{time_now}] НОВЫЙ пользователь: @{username} ({first_name}) [ID: {user_id}]")
     else:
-        print(f"👤 [{time_now}] Обновлён: @{username} ({first_name}) [ID: {user_id}]")
+        print(f"🔄 [{time_now}] Обновлён: @{username} ({first_name}) [ID: {user_id}]")
     
     return chat_users
+
+def add_user_manual(chat_users, username, user_id=None):
+    """Ручное добавление пользователя в кэш"""
+    import time
+    
+    if user_id is None:
+        user_id = f"temp_{int(time.time())}"
+    
+    user_id_str = str(user_id)
+    
+    # Проверяем, существует ли уже
+    if user_id_str in chat_users:
+        return False, "Пользователь уже существует"
+    
+    # Добавляем
+    chat_users[user_id_str] = {
+        "id": user_id_str,
+        "username": username,
+        "first_name": username,
+        "last_name": "",
+        "full_name": username,
+        "last_seen": datetime.now(MOSCOW_TZ).isoformat()
+    }
+    
+    save_users(chat_users)
+    return True, f"Пользователь @{username} добавлен"
+
+def delete_user(chat_users, identifier):
+    """Удаляет пользователя из кэша"""
+    found_id = None
+    
+    for uid, user in chat_users.items():
+        if user.get('username') == identifier:
+            found_id = uid
+            break
+        if str(user.get('id')) == identifier:
+            found_id = uid
+            break
+        if uid == identifier:
+            found_id = uid
+            break
+    
+    if found_id:
+        deleted_user = chat_users.pop(found_id)
+        save_users(chat_users)
+        return True, deleted_user
+    
+    return False, None
+
+def get_all_users(chat_users):
+    """Возвращает всех пользователей в виде списка"""
+    users_list = []
+    for uid, user in chat_users.items():
+        users_list.append({
+            "id": uid,
+            "username": user.get('username', 'нет'),
+            "name": user.get('full_name', user.get('first_name', 'Без имени')),
+            "last_seen": user.get('last_seen', 'неизвестно')
+        })
+    return users_list
+
+def get_user_count(chat_users):
+    """Возвращает количество пользователей"""
+    return len(chat_users)
