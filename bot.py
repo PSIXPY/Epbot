@@ -6,7 +6,6 @@ import requests
 import hashlib
 import re
 import random
-import io
 from datetime import datetime, timedelta
 from flask import Flask, request
 from telebot import TeleBot, types
@@ -27,9 +26,6 @@ secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 print("🤖 БОТ ЗАПУЩЕН")
-print(f"🔑 BOT_TOKEN: {BOT_TOKEN[:10]}...")
-print(f"🌐 RENDER_URL: {RENDER_URL}")
-print(f"👑 ADMIN_ID: {ADMIN_ID}")
 
 # === ЗАГРУЗКА КЭША ПОЛЬЗОВАТЕЛЕЙ ===
 chat_users = user_cache.load_users()
@@ -142,30 +138,11 @@ def set_reaction(chat_id, message_id):
     except Exception as e:
         print(f"Ошибка: {e}")
 
-# ========== ОСНОВНОЙ ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ ==========
-@bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    """Обрабатывает ВСЕ сообщения и сохраняет пользователей"""
-    print(f"🔥 Получено сообщение от {message.from_user.id}")
-    
-    if message.chat.type in ['group', 'supergroup']:
-        print(f"✅ Сохраняю пользователя из группы...")
-        global chat_users
-        old_count = len(chat_users)
-        chat_users = user_cache.save_user_from_message(message, chat_users)
-        new_count = len(chat_users)
-        
-        if new_count > old_count:
-            print(f"✨ НОВЫЙ ПОЛЬЗОВАТЕЛЬ ДОБАВЛЕН!")
-    else:
-        print(f"⏩ Пропускаю сохранение (не группа)")
-
 # ========== КОМАНДЫ ==========
 
 @bot.message_handler(commands=['start', 'help'])
 def start_command(message):
-    print(f"📢 Команда /start от {message.from_user.id}")
-    bot.reply_to(message, "✅ Бот работает!\n\n"
+    bot.send_message(message.chat.id, "✅ Бот работает!\n\n"
         "🤖 ИИ: /ai вопрос\n\n"
         "⏰ Напоминания (МСК):\n/remind 15:30 текст\n/reminds\n/delremind ID\n\n"
         "💾 Бекап (в ЛС):\n/backup\n/restore\n\n"
@@ -174,7 +151,6 @@ def start_command(message):
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
-    print(f"🤖 Команда /ai от {message.from_user.id}")
     thread_id = message.message_thread_id
     prompt = message.text[3:].strip()
     if not prompt:
@@ -186,7 +162,6 @@ def ai_command(message):
 
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
-    print(f"⏰ Команда /remind от {message.from_user.id}")
     global reminder_counter
     chat_id = message.chat.id
     thread_id = message.message_thread_id
@@ -258,7 +233,6 @@ def add_reminder(message):
 
 @bot.message_handler(commands=['reminds'])
 def list_reminders(message):
-    print(f"📋 Команда /reminds от {message.from_user.id}")
     chat_id = message.chat.id
     thread_id = message.message_thread_id
     
@@ -290,7 +264,6 @@ def list_reminders(message):
 
 @bot.message_handler(commands=['delremind'])
 def delete_reminder(message):
-    print(f"🗑️ Команда /delremind от {message.from_user.id}")
     global reminders
     chat_id = message.chat.id
     thread_id = message.message_thread_id
@@ -338,9 +311,6 @@ def delete_reminder(message):
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
-    """Показать всех пользователей - отправляет файлом"""
-    print(f"👥 Команда /users от {message.from_user.id}")
-    
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -354,37 +324,38 @@ def show_users(message):
         return
     
     # Отправляем статистику
-    bot.send_message(message.chat.id, f"📊 *Всего пользователей в кэше:* {len(chat_users)}", parse_mode="Markdown")
+    bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {len(chat_users)}", parse_mode="Markdown")
     
-    # Формируем файл со списком пользователей
-    output = io.StringIO()
-    output.write("ID | Username | Имя | Последнее сообщение\n")
-    output.write("-" * 80 + "\n")
+    # Формируем список пользователей частями по 10 штук
+    users_list = []
+    current_batch = "📋 *Сохранённые пользователи:*\n\n"
+    count = 0
     
     for uid, user in chat_users.items():
         username = user.get('username', 'нет')
         name = user.get('full_name', user.get('first_name', 'Без имени'))
-        last_seen = user.get('last_seen', 'неизвестно')
-        output.write(f"{uid} | @{username} | {name} | {last_seen}\n")
+        last_seen = user.get('last_seen', 'неизвестно')[:16]
+        
+        user_line = f"• `{uid}` | @{username} | {name}\n  └ последнее: {last_seen}\n\n"
+        
+        if len(current_batch + user_line) > 3500:
+            users_list.append(current_batch)
+            current_batch = "📋 *Сохранённые пользователи (продолжение):*\n\n"
+            time.sleep(0.3)
+        
+        current_batch += user_line
+        count += 1
     
-    output.seek(0)
+    if current_batch:
+        users_list.append(current_batch)
     
-    # Отправляем файлом
-    try:
-        bot.send_document(
-            message.chat.id,
-            types.InputFile(io.BytesIO(output.getvalue().encode('utf-8')), filename=f'users_{len(chat_users)}.txt'),
-            caption=f"📋 Список всех {len(chat_users)} пользователей"
-        )
-        print(f"✅ Отправлен файл с {len(chat_users)} пользователями")
-    except Exception as e:
-        print(f"❌ Ошибка отправки файла: {e}")
-        bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)[:100]}")
+    # Отправляем все части
+    for batch in users_list:
+        bot.send_message(message.chat.id, batch, parse_mode="Markdown")
+        time.sleep(0.3)
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
-    print(f"➕ Команда /adduser от {message.from_user.id}")
-    
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -409,8 +380,7 @@ def add_user_manually(message):
     for uid, user in chat_users.items():
         if user.get('username') == input_data:
             bot.reply_to(message, 
-                f"⚠️ Пользователь @{input_data} уже есть в кэше!\n"
-                f"ID: `{uid}`\nИмя: {user.get('full_name', 'неизвестно')}",
+                f"⚠️ Пользователь @{input_data} уже есть в кэше!",
                 parse_mode="Markdown")
             return
     
@@ -429,17 +399,10 @@ def add_user_manually(message):
     
     user_cache.save_users(chat_users)
     
-    bot.reply_to(message, 
-        f"✅ *Пользователь добавлен в кэш!*\n\n"
-        f"👤 Имя: {input_data}\n"
-        f"🔖 Username: @{username if username else 'не указан'}\n"
-        f"🆔 ID: `{user_id_str}`",
-        parse_mode="Markdown")
+    bot.reply_to(message, f"✅ *Пользователь @{input_data} добавлен в кэш!*", parse_mode="Markdown")
 
 @bot.message_handler(commands=['deluser'])
 def delete_user(message):
-    print(f"❌ Команда /deluser от {message.from_user.id}")
-    
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -450,46 +413,34 @@ def delete_user(message):
     
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        bot.reply_to(message, 
-            "ℹ️ `/deluser @username` или `/deluser ID`\n\n"
-            "Пример: `/deluser @ivan1988`",
-            parse_mode="Markdown")
+        bot.reply_to(message, "ℹ️ `/deluser @username` или `/deluser ID`", parse_mode="Markdown")
         return
     
     target = parts[1].strip().lstrip("@")
     
     found_id = None
-    found_user = None
     
     for uid, user in chat_users.items():
         if user.get('username') == target:
             found_id = uid
-            found_user = user
             break
         if str(user.get('id')) == target:
             found_id = uid
-            found_user = user
             break
         if uid == target:
             found_id = uid
-            found_user = user
             break
     
     if found_id:
         del chat_users[found_id]
         user_cache.save_users(chat_users)
-        bot.reply_to(message, 
-            f"✅ Пользователь удалён из кэша!\n\n"
-            f"@{found_user.get('username', 'без username')} ({found_user.get('full_name', '')})",
-            parse_mode="Markdown")
+        bot.reply_to(message, f"✅ *Пользователь @{target} удалён из кэша!*", parse_mode="Markdown")
     else:
         bot.reply_to(message, f"❌ Пользователь @{target} не найден")
 
 # === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
-    print(f"💾 Команда /backup от {message.from_user.id}")
-    
     if message.chat.type != 'private':
         bot.reply_to(message, "❌ Только в ЛС!")
         return
@@ -520,31 +471,22 @@ def backup_command(message):
             json.dump(data, f, ensure_ascii=False, indent=2)
         
         with open(filename, 'rb') as f:
-            bot.send_document(
-                message.chat.id, 
-                f, 
-                caption=f"✅ *Бекап создан!*\n\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n📊 Напоминаний: {len(backup_reminders)}\n👥 Пользователей: {len(chat_users)}",
-                parse_mode="Markdown"
-            )
+            bot.send_document(message.chat.id, f, caption=f"✅ *Бекап создан!*\n📊 Напоминаний: {len(backup_reminders)}\n👥 Пользователей: {len(chat_users)}", parse_mode="Markdown")
         
         os.remove(filename)
         bot.delete_message(message.chat.id, status_msg.message_id)
-        
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
 
 @bot.message_handler(commands=['restore'])
 def restore_command(message):
-    print(f"📥 Команда /restore от {message.from_user.id}")
     if message.chat.type != 'private':
         bot.reply_to(message, "❌ Команда /restore только в ЛС!")
         return
-    
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
-    
-    bot.send_message(message.chat.id, "📥 Отправьте JSON файл бекапа (backup_*.json или full_backup_*.json)")
+    bot.send_message(message.chat.id, "📥 Отправьте JSON файл бекапа")
 
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
@@ -552,13 +494,8 @@ def handle_restore_file(message):
     
     if message.chat.type != 'private':
         return
-    
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
-        return
-    
-    if not (message.document.file_name.startswith("backup_") or message.document.file_name.startswith("full_backup_")):
-        bot.reply_to(message, "❌ Это не файл бекапа!\n\nФайл должен начинаться с `backup_` или `full_backup_`", parse_mode="Markdown")
         return
     
     status_msg = bot.reply_to(message, "🔄 Восстанавливаю...")
@@ -575,8 +512,6 @@ def handle_restore_file(message):
                 except:
                     pass
         
-        restored_reminders = 0
-        
         if "reminders" in backup_data:
             reminders.clear()
             reminder_counter = 0
@@ -586,30 +521,12 @@ def handle_restore_file(message):
                     reminder_counter = r.get("id", 0)
             save_reminders(reminders)
             start_all_reminders()
-            restored_reminders = len(backup_data["reminders"])
-        
-        elif isinstance(backup_data, list):
-            reminders.clear()
-            reminder_counter = 0
-            for r in backup_data:
-                reminders.append(r)
-                if r.get("id", 0) > reminder_counter:
-                    reminder_counter = r.get("id", 0)
-            save_reminders(reminders)
-            start_all_reminders()
-            restored_reminders = len(backup_data)
         
         if "chat_users" in backup_data:
             chat_users = backup_data["chat_users"]
             user_cache.save_users(chat_users)
         
-        bot.edit_message_text(
-            f"✅ *Восстановление завершено!*\n\n📊 Напоминаний: {restored_reminders}\n👥 Пользователей: {len(backup_data.get('chat_users', {}))}",
-            message.chat.id, status_msg.message_id, parse_mode="Markdown"
-        )
-        
-    except json.JSONDecodeError:
-        bot.edit_message_text("❌ Неверный JSON формат", message.chat.id, status_msg.message_id)
+        bot.edit_message_text(f"✅ *Восстановление завершено!*\n👥 Пользователей: {len(chat_users)}", message.chat.id, status_msg.message_id, parse_mode="Markdown")
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
 
@@ -654,8 +571,11 @@ def inline_query(query):
         msg_id = f"sec_{int(time.time())}_{query.from_user.id}_{random.randint(1000, 9999)}"
         
         secret_messages[msg_id] = {
-            "target_id": target_id, "target_name": target_name, "content": content,
-            "sender_name": query.from_user.first_name, "sender_id": query.from_user.id,
+            "target_id": target_id,
+            "target_name": target_name,
+            "content": content,
+            "sender_name": query.from_user.first_name,
+            "sender_id": query.from_user.id,
             "expires": time.time() + 3600
         }
         
@@ -674,7 +594,6 @@ def inline_query(query):
         )
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
-        
     except Exception as e:
         print(f"Инлайн ошибка: {e}")
 
@@ -709,18 +628,25 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
+@bot.message_handler(func=lambda message: True)
+def auto_collect_users(message):
+    if message.chat.type not in ['group', 'supergroup']:
+        return
+    
+    global chat_users
+    chat_users = user_cache.save_user_from_message(message, chat_users)
+
 # ========== ВЕБХУК ==========
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
     try:
-        print("📨 Вебхук получил запрос")
         json_str = request.get_data().decode('UTF-8')
         update = types.Update.de_json(json_str)
-        print(f"📨 Update ID: {update.update_id}")
         bot.process_new_updates([update])
         return 'OK', 200
     except Exception as e:
-        print(f"❌ Ошибка вебхука: {e}")
+        print(f"❌ Ошибка: {e}")
         return 'OK', 200
 
 @app.route('/', methods=['GET'])
@@ -730,16 +656,13 @@ def health():
 # ========== ЗАПУСК ==========
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
+    webhook_url = f'{RENDER_URL}/{BOT_TOKEN}'
     
-    print("🔄 Настройка вебхука...")
+    print("🔄 Установка вебхука...")
     bot.remove_webhook()
     time.sleep(1)
-    
-    webhook_url = f'{RENDER_URL}/{BOT_TOKEN}'
     bot.set_webhook(url=webhook_url)
-    
     print(f"🚀 Вебхук установлен: {webhook_url}")
-    print(f"👥 Всего пользователей в кэше: {len(chat_users)}")
     
     start_all_reminders()
     app.run(host='0.0.0.0', port=port)
