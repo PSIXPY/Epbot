@@ -313,7 +313,6 @@ def show_users(message):
         bot.reply_to(message, "❌ Только в ЛС!")
         return
     
-    # Читаем из файла
     if not os.path.exists(USERS_CACHE_FILE):
         bot.send_message(message.chat.id, "📭 Файл не найден")
         return
@@ -332,27 +331,23 @@ def show_users(message):
     total = len(users)
     bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
     
-    # Отправляем ВСЕХ пользователей порциями по 15 штук
     users_list = "📋 *Список пользователей:*\n\n"
     count = 0
     
     for uid, user in users.items():
         username = user.get('username', 'None')
         name = user.get('first_name', 'Без имени')
-        # Ограничиваем длину имени
         if len(name) > 30:
             name = name[:27] + "..."
         
         users_list += f"• `{uid}` | @{username} | {name}\n"
         count += 1
         
-        # Каждые 15 пользователей отправляем
         if count % 15 == 0:
             bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
             users_list = "📋 *Продолжение списка:*\n\n"
             time.sleep(0.5)
     
-    # Отправляем остаток
     if users_list and users_list != "📋 *Продолжение списка:*\n\n":
         bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
     
@@ -412,7 +407,7 @@ def delete_user(message):
     else:
         bot.reply_to(message, f"❌ @{target} не найден")
 
-# === БЕКАП ===
+# === БЕКАП (ИСПРАВЛЕННЫЙ) ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
     if message.chat.type != 'private':
@@ -425,10 +420,19 @@ def backup_command(message):
     status = bot.reply_to(message, "🔄 Создаю бекап...")
     
     try:
+        # Убираем _timer из напоминаний перед сохранением
+        clean_reminders = []
+        for r in reminders:
+            r_copy = {}
+            for k, v in r.items():
+                if k not in ["timer", "_timer"]:
+                    r_copy[k] = v
+            clean_reminders.append(r_copy)
+        
         data = {
             "version": "2.0",
             "date": str(datetime.now()),
-            "reminders": reminders,
+            "reminders": clean_reminders,
             "chat_users": chat_users
         }
         
@@ -437,7 +441,7 @@ def backup_command(message):
             json.dump(data, f, ensure_ascii=False, indent=2)
         
         with open(filename, 'rb') as f:
-            bot.send_document(message.chat.id, f, caption=f"✅ Бекап!\n👥 {len(chat_users)} пользователей\n⏰ {len(reminders)} напоминаний")
+            bot.send_document(message.chat.id, f, caption=f"✅ Бекап создан!\n\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n👥 Пользователей: {len(chat_users)}\n⏰ Напоминаний: {len(clean_reminders)}")
         
         os.remove(filename)
         bot.delete_message(message.chat.id, status.message_id)
@@ -471,7 +475,6 @@ def handle_restore_file(message):
         content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         data = json.loads(content.decode('utf-8'))
         
-        # Останавливаем старые напоминания
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -479,7 +482,6 @@ def handle_restore_file(message):
                 except:
                     pass
         
-        # Восстанавливаем напоминания
         if "reminders" in data:
             reminders.clear()
             reminder_counter = 0
@@ -490,7 +492,6 @@ def handle_restore_file(message):
             save_reminders(reminders)
             start_all_reminders()
         
-        # Восстанавливаем пользователей
         if "chat_users" in data:
             chat_users = data["chat_users"]
             save_users_cache(chat_users)
@@ -516,7 +517,6 @@ def inline_query(query):
         target_id = None
         target_name = target_raw
         
-        # Читаем из файла
         if os.path.exists(USERS_CACHE_FILE):
             with open(USERS_CACHE_FILE, 'r') as f:
                 users = json.load(f)
