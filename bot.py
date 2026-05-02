@@ -340,6 +340,7 @@ def show_users(message):
         if len(name) > 30:
             name = name[:27] + "..."
         
+        # Показываем username как есть, с подчёркиваниями
         users_list += f"• `{uid}` | @{username} | {name}\n"
         count += 1
         
@@ -407,7 +408,7 @@ def delete_user(message):
     else:
         bot.reply_to(message, f"❌ @{target} не найден")
 
-# === БЕКАП (ИСПРАВЛЕННЫЙ) ===
+# === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
     if message.chat.type != 'private':
@@ -420,7 +421,6 @@ def backup_command(message):
     status = bot.reply_to(message, "🔄 Создаю бекап...")
     
     try:
-        # Убираем _timer из напоминаний перед сохранением
         clean_reminders = []
         for r in reminders:
             r_copy = {}
@@ -503,7 +503,7 @@ def handle_restore_file(message):
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, status.message_id)
 
-# ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
+# ========== СКРЫТЫЕ СООБЩЕНИЯ (С ПОДДЕРЖКОЙ ПОДЧЁРКИВАНИЙ) ==========
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -517,14 +517,27 @@ def inline_query(query):
         target_id = None
         target_name = target_raw
         
+        # Читаем из файла и ищем username (с учётом подчёркиваний)
         if os.path.exists(USERS_CACHE_FILE):
-            with open(USERS_CACHE_FILE, 'r') as f:
+            with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
                 users = json.load(f)
                 for uid, user in users.items():
-                    if user.get('username') == target_raw:
-                        target_id = uid
-                        target_name = user.get('first_name', target_raw)
-                        break
+                    username = user.get('username')
+                    if username:
+                        # Сравниваем как есть (с подчёркиваниями)
+                        if username == target_raw:
+                            target_id = uid
+                            target_name = user.get('first_name', target_raw)
+                            break
+                        # Для удобства также без учёта регистра
+                        if username.lower() == target_raw.lower():
+                            target_id = uid
+                            target_name = user.get('first_name', target_raw)
+                            break
+        
+        if not target_id and target_raw.isdigit():
+            target_id = target_raw
+            target_name = f"Пользователь {target_raw}"
         
         if not target_id:
             markup = InlineKeyboardMarkup()
@@ -533,7 +546,7 @@ def inline_query(query):
                 id="error",
                 title="❌ Пользователь не найден",
                 description=f"@{target_raw}",
-                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден"),
+                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден в кэше бота\n\n💡 Пользователь должен написать хотя бы одно сообщение в чат, чтобы бот его запомнил"),
                 reply_markup=markup
             )
             bot.answer_inline_query(query.id, [result], cache_time=0)
@@ -558,7 +571,7 @@ def inline_query(query):
             title=f"📨 Для {target_name}",
             description=content[:50],
             input_message_content=types.InputTextMessageContent(
-                f"🔐 *Скрытое сообщение*\nОт: {query.from_user.first_name}\nКому: {target_name}",
+                f"🔐 *Скрытое сообщение*\nОт: {query.from_user.first_name}\nКому: {target_name}\n\n💡 Нажмите кнопку ниже, чтобы прочитать",
                 parse_mode="Markdown"
             ),
             reply_markup=markup
@@ -566,24 +579,24 @@ def inline_query(query):
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"Инлайн ошибка: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("secret_read_"))
 def handle_secret_read(call):
     msg_id = call.data.replace("secret_read_", "")
     
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено или истекло", show_alert=True)
         return
     
     data = secret_messages[msg_id]
     
     if str(call.from_user.id) != str(data["target_id"]):
-        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
         return
     
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Истекло", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение истекло (действует 1 час)", show_alert=True)
         del secret_messages[msg_id]
         return
     
@@ -599,7 +612,7 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (СОХРАНЯЕМ USERNAME КАК ЕСТЬ) ==========
 @bot.message_handler(func=lambda message: True)
 def auto_collect_users(message):
     if message.chat.type not in ['group', 'supergroup']:
@@ -612,11 +625,14 @@ def auto_collect_users(message):
     global chat_users
     user_id = str(user.id)
     
+    # Сохраняем username как есть, НЕ УДАЛЯЕМ подчёркивания
+    username = user.username  # Telegram сам передаёт оригинальный username
+    
     is_new = user_id not in chat_users
     
     chat_users[user_id] = {
         "id": user.id,
-        "username": user.username,
+        "username": username,  # ← сохраняем оригинал с _
         "first_name": user.first_name or "",
         "last_name": user.last_name or "",
         "full_name": f"{user.first_name or ''} {user.last_name or ''}".strip(),
@@ -626,7 +642,9 @@ def auto_collect_users(message):
     save_users_cache(chat_users)
     
     if is_new:
-        print(f"🆕 НОВЫЙ: @{user.username} ({user.first_name})")
+        print(f"🆕 НОВЫЙ: @{username} ({user.first_name}) [ID: {user_id}]")
+    else:
+        print(f"🔄 Обновлён: @{username} ({user.first_name})")
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
