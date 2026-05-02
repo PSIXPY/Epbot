@@ -150,25 +150,12 @@ def ask_groq(user_id, prompt):
         return f"❌ Ошибка: {str(e)[:100]}"
 
 def set_reaction(chat_id, message_id):
-    """Ставит реакцию 🔥 на сообщение в канале"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
-    data = {
-        "chat_id": chat_id,
-        "message_id": message_id,
-        "reaction": [{"type": "emoji", "emoji": "🔥"}]
-    }
+    data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
     try:
-        response = requests.post(url, json=data, timeout=5)
-        if response.status_code == 200:
-            result = response.json()
-            if result.get("ok"):
-                print(f"🔥 Реакция поставлена на сообщение {message_id} в канале {chat_id}")
-            else:
-                print(f"❌ Ошибка реакции: {result}")
-        else:
-            print(f"❌ HTTP ошибка: {response.status_code}")
-    except Exception as e:
-        print(f"❌ Ошибка при установке реакции: {e}")
+        requests.post(url, json=data, timeout=5)
+    except:
+        pass
 
 # ========== КОМАНДЫ ==========
 
@@ -344,7 +331,7 @@ def show_users(message):
     total = len(users)
     bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
     
-    # Отправляем по 8 пользователей на сообщение
+    # Отправляем список пользователей по 8 человек
     users_list = list(users.items())
     chunk_size = 8
     total_chunks = (total + chunk_size - 1) // chunk_size
@@ -353,10 +340,7 @@ def show_users(message):
         start = chunk_num * chunk_size
         end = min(start + chunk_size, total)
         
-        if total_chunks == 1:
-            text = "📋 *Список пользователей:*\n\n"
-        else:
-            text = f"📋 *Список пользователей (часть {chunk_num + 1}/{total_chunks}):*\n\n"
+        text = f"📋 *Список пользователей (часть {chunk_num + 1}/{total_chunks}):*\n\n"
         
         for i in range(start, end):
             uid, user = users_list[i]
@@ -657,26 +641,22 @@ def auto_collect_users(message):
     if is_new:
         print(f"🆕 НОВЫЙ: @{username} ({user.first_name})")
 
-# ========== ВЕБХУК С РЕАКЦИЯМИ ==========
+# ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
         if update:
-            # Обрабатываем канальные посты (реакции)
             if "channel_post" in update:
                 post = update["channel_post"]
                 chat_id = post["chat"]["id"]
                 message_id = post["message_id"]
-                # IDs каналов для реакции
                 if chat_id in [-1002185590715, -1001317416582]:
                     set_reaction(chat_id, message_id)
-            
-            # Обрабатываем обычные обновления
             bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
-        print(f"Ошибка вебхука: {e}")
+        print(f"Ошибка: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
