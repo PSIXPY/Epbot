@@ -425,7 +425,6 @@ def handle_users_page(call):
     
     if call.from_user.id in user_pages:
         user_pages[call.from_user.id]["page"] = page
-        bot.edit_message_text("🔄 Загрузка...", call.message.chat.id, call.message.message_id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
         send_users_page(call.message.chat.id, call.from_user.id)
     
@@ -608,6 +607,7 @@ def restore_command(message):
         return
     bot.send_message(message.chat.id, "📥 Отправьте JSON файл бекапа")
 
+# ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ ВОССТАНОВЛЕНИЯ ==========
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
     global chat_users, reminder_counter, reminders
@@ -649,12 +649,16 @@ def handle_restore_file(message):
             restored_reminders = len(backup_data["reminders"])
             print(f"⏰ Восстановлено {restored_reminders} напоминаний")
         
-        # Восстанавливаем пользователей
+        # Восстанавливаем пользователей (ИСПРАВЛЕНО!)
         if "chat_users" in backup_data:
-            chat_users = backup_data["chat_users"]
+            chat_users = backup_data["chat_users"]  # ← обновляем глобальную переменную
             save_users_cache(chat_users)
             restored_users = len(backup_data["chat_users"])
-            print(f"👥 Восстановлено {restored_users} пользователей")
+            print(f"👥 Восстановлено {restored_users} пользователей в память")
+        
+        # Очищаем кэш пагинации, чтобы при следующем /users данные обновились
+        global user_pages
+        user_pages.clear()
         
         bot.edit_message_text(
             f"✅ *Восстановление завершено!*\n\n"
