@@ -53,9 +53,6 @@ def save_users_cache(users):
 
 chat_users = load_users_cache()
 
-# Хранилище для пагинации пользователей
-user_pages_data = {}
-
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
@@ -304,7 +301,10 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
-# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (С ПОСТРАНИЧНЫМ ВЫВОДОМ) ===
+# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (С ИСПРАВЛЕННЫМИ КНОПКАМИ) ===
+
+# Хранилище для пагинации
+user_pages_data = {}
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -349,7 +349,7 @@ def show_users(message):
     total_pages = (total + page_size - 1) // page_size
     
     # Сохраняем данные для пагинации
-    user_pages_data[message.from_user.id] = {
+    user_pages_data[str(message.from_user.id)] = {
         "users": users_list,
         "total_pages": total_pages,
         "page_size": page_size,
@@ -357,12 +357,12 @@ def show_users(message):
     }
     
     # Отправляем первую страницу
-    send_users_page(message.chat.id, message.from_user.id, 0)
+    send_users_page(message.chat.id, str(message.from_user.id), 0)
 
-def send_users_page(chat_id, user_id, page):
+def send_users_page(chat_id, user_id_str, page):
     global user_pages_data
     
-    data = user_pages_data.get(user_id)
+    data = user_pages_data.get(user_id_str)
     if not data:
         return
     
@@ -395,6 +395,7 @@ def send_users_page(chat_id, user_id, page):
     
     markup.row(InlineKeyboardButton("🔄 Обновить", callback_data="users_refresh"))
     
+    # Отправляем новое сообщение
     bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("users_page_"))
@@ -404,9 +405,18 @@ def handle_users_page(call):
         return
     
     page = int(call.data.replace("users_page_", ""))
-    bot.delete_message(call.message.chat.id, call.message.message_id)
-    send_users_page(call.message.chat.id, call.from_user.id, page)
+    
+    # Отвечаем на callback
     bot.answer_callback_query(call.id)
+    
+    # Удаляем старое сообщение
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
+    
+    # Отправляем новую страницу
+    send_users_page(call.message.chat.id, str(call.from_user.id), page)
 
 @bot.callback_query_handler(func=lambda call: call.data == "users_refresh")
 def handle_users_refresh(call):
@@ -442,16 +452,23 @@ def handle_users_refresh(call):
     page_size = 10
     total_pages = (total + page_size - 1) // page_size
     
-    user_pages_data[call.from_user.id] = {
+    user_pages_data[str(call.from_user.id)] = {
         "users": users_list,
         "total_pages": total_pages,
         "page_size": page_size,
         "total": total
     }
     
-    bot.delete_message(call.message.chat.id, call.message.message_id)
-    send_users_page(call.message.chat.id, call.from_user.id, 0)
     bot.answer_callback_query(call.id, "🔄 Обновлено!")
+    
+    # Удаляем старое сообщение
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
+    
+    # Отправляем первую страницу
+    send_users_page(call.message.chat.id, str(call.from_user.id), 0)
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
