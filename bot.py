@@ -6,8 +6,9 @@ import requests
 import hashlib
 import re
 import random
+import io
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify
+from flask import Flask, request
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pytz
@@ -26,6 +27,9 @@ secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 print("🤖 БОТ ЗАПУЩЕН")
+print(f"🔑 BOT_TOKEN: {BOT_TOKEN[:10]}...")
+print(f"🌐 RENDER_URL: {RENDER_URL}")
+print(f"👑 ADMIN_ID: {ADMIN_ID}")
 
 # === ЗАГРУЗКА КЭША ПОЛЬЗОВАТЕЛЕЙ ===
 chat_users = user_cache.load_users()
@@ -137,6 +141,24 @@ def set_reaction(chat_id, message_id):
             print(f"🔥 Реакция на {message_id}")
     except Exception as e:
         print(f"Ошибка: {e}")
+
+# ========== ОСНОВНОЙ ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ ==========
+@bot.message_handler(func=lambda message: True)
+def handle_all_messages(message):
+    """Обрабатывает ВСЕ сообщения и сохраняет пользователей"""
+    print(f"🔥 Получено сообщение от {message.from_user.id}")
+    
+    if message.chat.type in ['group', 'supergroup']:
+        print(f"✅ Сохраняю пользователя из группы...")
+        global chat_users
+        old_count = len(chat_users)
+        chat_users = user_cache.save_user_from_message(message, chat_users)
+        new_count = len(chat_users)
+        
+        if new_count > old_count:
+            print(f"✨ НОВЫЙ ПОЛЬЗОВАТЕЛЬ ДОБАВЛЕН!")
+    else:
+        print(f"⏩ Пропускаю сохранение (не группа)")
 
 # ========== КОМАНДЫ ==========
 
@@ -316,40 +338,48 @@ def delete_reminder(message):
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
+    """Показать всех пользователей - отправляет файлом"""
     print(f"👥 Команда /users от {message.from_user.id}")
     
-    # Проверяем админа
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
     
-    # В ЛС или в группе?
-    if message.chat.type == 'private':
-        if not chat_users:
-            bot.send_message(message.chat.id, "📭 Кэш пользователей пуст.")
-            return
-        
-        users_list = "📋 *Сохранённые пользователи:*\n\n"
-        for uid, user in chat_users.items():
-            username = user.get('username', 'нет username')
-            name = user.get('full_name', user.get('first_name', 'Без имени'))
-            last_seen = user.get('last_seen', 'неизвестно')[:16]
-            users_list += f"• `{uid}` | @{username} | {name}\n"
-            users_list += f"  └ последнее: {last_seen}\n\n"
-            
-            if len(users_list) > 3800:
-                bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
-                users_list = ""
-        
-        if users_list:
-            bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
-        
-        stats = f"📊 *Статистика:*\n👥 Всего: {len(chat_users)} пользователей"
-        bot.send_message(message.chat.id, stats, parse_mode="Markdown")
-    else:
-        # В группе - отправляем в ЛС
-        bot.reply_to(message, "📬 Отправляю список пользователей в личные сообщения...")
-        show_users(message)  # Рекурсивно вызовем для ЛС (но нужно изменить chat)
+    if message.chat.type != 'private':
+        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
+        return
+    
+    if not chat_users:
+        bot.send_message(message.chat.id, "📭 Кэш пользователей пуст.")
+        return
+    
+    # Отправляем статистику
+    bot.send_message(message.chat.id, f"📊 *Всего пользователей в кэше:* {len(chat_users)}", parse_mode="Markdown")
+    
+    # Формируем файл со списком пользователей
+    output = io.StringIO()
+    output.write("ID | Username | Имя | Последнее сообщение\n")
+    output.write("-" * 80 + "\n")
+    
+    for uid, user in chat_users.items():
+        username = user.get('username', 'нет')
+        name = user.get('full_name', user.get('first_name', 'Без имени'))
+        last_seen = user.get('last_seen', 'неизвестно')
+        output.write(f"{uid} | @{username} | {name} | {last_seen}\n")
+    
+    output.seek(0)
+    
+    # Отправляем файлом
+    try:
+        bot.send_document(
+            message.chat.id,
+            types.InputFile(io.BytesIO(output.getvalue().encode('utf-8')), filename=f'users_{len(chat_users)}.txt'),
+            caption=f"📋 Список всех {len(chat_users)} пользователей"
+        )
+        print(f"✅ Отправлен файл с {len(chat_users)} пользователями")
+    except Exception as e:
+        print(f"❌ Ошибка отправки файла: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)[:100]}")
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
@@ -357,6 +387,10 @@ def add_user_manually(message):
     
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
+    
+    if message.chat.type != 'private':
+        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -408,6 +442,10 @@ def delete_user(message):
     
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
+    
+    if message.chat.type != 'private':
+        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -671,28 +709,14 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
-@bot.message_handler(func=lambda message: True)
-def auto_collect_users(message):
-    print(f"📨 Auto-collect: {message.from_user.id} в {message.chat.type}")
-    
-    if message.chat.type not in ['group', 'supergroup']:
-        return
-    
-    global chat_users
-    old_count = len(chat_users)
-    chat_users = user_cache.save_user_from_message(message, chat_users)
-    new_count = len(chat_users)
-    
-    if new_count > old_count:
-        print(f"✨ Добавлен новый пользователь! Всего: {new_count}")
-
-# ========== ГЛАВНЫЙ ВЕБХУК ==========
+# ========== ВЕБХУК ==========
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
     try:
+        print("📨 Вебхук получил запрос")
         json_str = request.get_data().decode('UTF-8')
         update = types.Update.de_json(json_str)
+        print(f"📨 Update ID: {update.update_id}")
         bot.process_new_updates([update])
         return 'OK', 200
     except Exception as e:
@@ -707,19 +731,15 @@ def health():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     
-    # Удаляем старый вебхук
+    print("🔄 Настройка вебхука...")
     bot.remove_webhook()
     time.sleep(1)
     
-    # Устанавливаем новый
     webhook_url = f'{RENDER_URL}/{BOT_TOKEN}'
     bot.set_webhook(url=webhook_url)
     
     print(f"🚀 Вебхук установлен: {webhook_url}")
-    print(f"👥 Загружено пользователей: {len(chat_users)}")
+    print(f"👥 Всего пользователей в кэше: {len(chat_users)}")
     
-    # Запускаем напоминания
     start_all_reminders()
-    
-    # Запускаем Flask
     app.run(host='0.0.0.0', port=port)
