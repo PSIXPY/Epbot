@@ -6,6 +6,7 @@ import requests
 import hashlib
 import re
 import random
+import io
 from datetime import datetime, timedelta
 from flask import Flask, request
 from telebot import TeleBot, types
@@ -33,7 +34,9 @@ def load_users_cache():
     if os.path.exists(USERS_CACHE_FILE):
         try:
             with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                users = json.load(f)
+                print(f"📂 Загружено {len(users)} пользователей")
+                return users
         except:
             return {}
     return {}
@@ -42,12 +45,11 @@ def save_users_cache(users):
     try:
         with open(USERS_CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(users, f, ensure_ascii=False, indent=2)
-        print(f"💾 Сохранено {len(users)} пользователей в кэш")
+        print(f"💾 Сохранено {len(users)} пользователей")
     except Exception as e:
         print(f"Ошибка: {e}")
 
 chat_users = load_users_cache()
-print(f"👥 Загружено {len(chat_users)} пользователей")
 
 # === ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ===
 def delete_after_delay(chat_id, message_id, delay=10):
@@ -60,7 +62,9 @@ def load_reminders():
     if os.path.exists(REMINDERS_FILE):
         try:
             with open(REMINDERS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                reminders = json.load(f)
+                print(f"⏰ Загружено {len(reminders)} напоминаний")
+                return reminders
         except:
             return []
     return []
@@ -76,6 +80,7 @@ def save_reminders(reminders):
     try:
         with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(to_save, f, ensure_ascii=False, indent=2)
+        print(f"💾 Сохранено {len(reminders)} напоминаний")
     except Exception as e:
         print(f"Ошибка: {e}")
 
@@ -325,7 +330,10 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ *Неверный ID*\n\nИспользуйте числа: `/delremind 1`", parse_mode="Markdown", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
-# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ===
+# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ С ПАГИНАЦИЕЙ ===
+
+# Хранилище для пагинации
+user_pages = {}
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -341,23 +349,142 @@ def show_users(message):
         bot.send_message(message.chat.id, "📭 Кэш пользователей пуст.")
         return
     
-    # Отправляем статистику
-    bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {len(chat_users)}", parse_mode="Markdown")
-    
-    # Формируем и отправляем список
-    users_list = "📋 *Сохранённые пользователи:*\n\n"
+    # Преобразуем словарь в список для пагинации
+    users_list = []
     for uid, user in chat_users.items():
         username = user.get('username', 'нет')
         name = user.get('full_name', user.get('first_name', 'Без имени'))
         last_seen = user.get('last_seen', 'неизвестно')[:16]
-        users_list += f"• `{uid}` | @{username} | {name}\n  └ последнее: {last_seen}\n\n"
-        
-        if len(users_list) > 3800:
-            bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
-            users_list = ""
+        users_list.append({
+            "id": uid,
+            "username": username,
+            "name": name,
+            "last_seen": last_seen
+        })
     
-    if users_list:
-        bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
+    # Сохраняем список для текущего пользователя
+    user_pages[message.from_user.id] = {
+        "users": users_list,
+        "page": 0,
+        "per_page": 5
+    }
+    
+    # Отправляем первую страницу
+    send_users_page(message.chat.id, message.from_user.id)
+
+def send_users_page(chat_id, user_id):
+    data = user_pages.get(user_id)
+    if not data:
+        return
+    
+    users_list = data["users"]
+    page = data["page"]
+    per_page = data["per_page"]
+    
+    total_users = len(users_list)
+    total_pages = (total_users + per_page - 1) // per_page
+    
+    start = page * per_page
+    end = min(start + per_page, total_users)
+    
+    # Формируем сообщение
+    text = f"📋 *Пользователи бота* (страница {page + 1}/{total_pages})\n"
+    text += f"👥 Всего: {total_users}\n\n"
+    
+    for i in range(start, end):
+        user = users_list[i]
+        text += f"• `{user['id']}`\n"
+        text += f"  ├ @{user['username']}\n"
+        text += f"  ├ {user['name']}\n"
+        text += f"  └ последнее: {user['last_seen']}\n\n"
+    
+    # Кнопки навигации
+    markup = InlineKeyboardMarkup()
+    row = []
+    
+    if page > 0:
+        row.append(InlineKeyboardButton("◀ Назад", callback_data=f"users_page_{page - 1}"))
+    if page < total_pages - 1:
+        row.append(InlineKeyboardButton("Вперед ▶", callback_data=f"users_page_{page + 1}"))
+    
+    if row:
+        markup.row(*row)
+    
+    markup.row(InlineKeyboardButton("🔄 Обновить", callback_data="users_refresh"))
+    markup.row(InlineKeyboardButton("📊 Скачать файл", callback_data="users_download"))
+    
+    bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("users_page_"))
+def handle_users_page(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+        return
+    
+    page = int(call.data.replace("users_page_", ""))
+    
+    if call.from_user.id in user_pages:
+        user_pages[call.from_user.id]["page"] = page
+        bot.edit_message_text("🔄 Загрузка...", call.message.chat.id, call.message.message_id)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        send_users_page(call.message.chat.id, call.from_user.id)
+    
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "users_refresh")
+def handle_users_refresh(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+        return
+    
+    # Обновляем данные из кэша
+    users_list = []
+    for uid, user in chat_users.items():
+        username = user.get('username', 'нет')
+        name = user.get('full_name', user.get('first_name', 'Без имени'))
+        last_seen = user.get('last_seen', 'неизвестно')[:16]
+        users_list.append({
+            "id": uid,
+            "username": username,
+            "name": name,
+            "last_seen": last_seen
+        })
+    
+    user_pages[call.from_user.id] = {
+        "users": users_list,
+        "page": 0,
+        "per_page": 5
+    }
+    
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    send_users_page(call.message.chat.id, call.from_user.id)
+    bot.answer_callback_query(call.id, "🔄 Обновлено!")
+
+@bot.callback_query_handler(func=lambda call: call.data == "users_download")
+def handle_users_download(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+        return
+    
+    # Формируем файл со всеми пользователями
+    output = io.StringIO()
+    output.write("ID | Username | Имя | Последнее сообщение\n")
+    output.write("-" * 80 + "\n")
+    
+    for uid, user in chat_users.items():
+        username = user.get('username', 'нет')
+        name = user.get('full_name', user.get('first_name', 'Без имени'))
+        last_seen = user.get('last_seen', 'неизвестно')
+        output.write(f"{uid} | @{username} | {name} | {last_seen}\n")
+    
+    output.seek(0)
+    
+    bot.send_document(
+        call.message.chat.id,
+        types.InputFile(io.BytesIO(output.getvalue().encode('utf-8')), filename=f'users_{len(chat_users)}.txt'),
+        caption=f"📋 Список всех {len(chat_users)} пользователей"
+    )
+    bot.answer_callback_query(call.id, "📁 Файл отправлен!")
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
@@ -371,7 +498,7 @@ def add_user_manually(message):
     
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ /adduser @username - добавить пользователя", parse_mode="Markdown")
+        bot.reply_to(message, "ℹ️ /adduser @username - добавить пользователя")
         return
     
     input_data = parts[1].strip().lstrip("@")
@@ -483,7 +610,7 @@ def restore_command(message):
 
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
-    global chat_users, reminder_counter
+    global chat_users, reminder_counter, reminders
     
     if message.chat.type != 'private':
         return
@@ -498,6 +625,7 @@ def handle_restore_file(message):
         file_content = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}").content
         backup_data = json.loads(file_content.decode('utf-8'))
         
+        # Останавливаем старые напоминания
         for r in reminders:
             if "_timer" in r:
                 try:
@@ -505,6 +633,10 @@ def handle_restore_file(message):
                 except:
                     pass
         
+        restored_reminders = 0
+        restored_users = 0
+        
+        # Восстанавливаем напоминания
         if "reminders" in backup_data:
             reminders.clear()
             reminder_counter = 0
@@ -514,12 +646,23 @@ def handle_restore_file(message):
                     reminder_counter = r.get("id", 0)
             save_reminders(reminders)
             start_all_reminders()
+            restored_reminders = len(backup_data["reminders"])
+            print(f"⏰ Восстановлено {restored_reminders} напоминаний")
         
+        # Восстанавливаем пользователей
         if "chat_users" in backup_data:
             chat_users = backup_data["chat_users"]
             save_users_cache(chat_users)
+            restored_users = len(backup_data["chat_users"])
+            print(f"👥 Восстановлено {restored_users} пользователей")
         
-        bot.edit_message_text(f"✅ Восстановление завершено!\n👥 Пользователей: {len(chat_users)}", message.chat.id, status_msg.message_id)
+        bot.edit_message_text(
+            f"✅ *Восстановление завершено!*\n\n"
+            f"📊 Напоминаний: {restored_reminders}\n"
+            f"👥 Пользователей: {restored_users}",
+            message.chat.id, status_msg.message_id,
+            parse_mode="Markdown"
+        )
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:200]}", message.chat.id, status_msg.message_id)
 
