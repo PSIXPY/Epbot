@@ -6,7 +6,6 @@ import requests
 import hashlib
 import re
 import random
-import io
 from datetime import datetime, timedelta
 from flask import Flask, request
 from telebot import TeleBot, types
@@ -411,7 +410,6 @@ def send_users_page(chat_id, user_id):
         markup.row(*row)
     
     markup.row(InlineKeyboardButton("🔄 Обновить", callback_data="users_refresh"))
-    markup.row(InlineKeyboardButton("📊 Скачать файл", callback_data="users_download"))
     
     bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
 
@@ -425,6 +423,7 @@ def handle_users_page(call):
     
     if call.from_user.id in user_pages:
         user_pages[call.from_user.id]["page"] = page
+        bot.edit_message_text("🔄 Загрузка...", call.message.chat.id, call.message.message_id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
         send_users_page(call.message.chat.id, call.from_user.id)
     
@@ -459,32 +458,6 @@ def handle_users_refresh(call):
     send_users_page(call.message.chat.id, call.from_user.id)
     bot.answer_callback_query(call.id, "🔄 Обновлено!")
 
-@bot.callback_query_handler(func=lambda call: call.data == "users_download")
-def handle_users_download(call):
-    if call.from_user.id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
-        return
-    
-    # Формируем файл со всеми пользователями
-    output = io.StringIO()
-    output.write("ID | Username | Имя | Последнее сообщение\n")
-    output.write("-" * 80 + "\n")
-    
-    for uid, user in chat_users.items():
-        username = user.get('username', 'нет')
-        name = user.get('full_name', user.get('first_name', 'Без имени'))
-        last_seen = user.get('last_seen', 'неизвестно')
-        output.write(f"{uid} | @{username} | {name} | {last_seen}\n")
-    
-    output.seek(0)
-    
-    bot.send_document(
-        call.message.chat.id,
-        types.InputFile(io.BytesIO(output.getvalue().encode('utf-8')), filename=f'users_{len(chat_users)}.txt'),
-        caption=f"📋 Список всех {len(chat_users)} пользователей"
-    )
-    bot.answer_callback_query(call.id, "📁 Файл отправлен!")
-
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
     if message.from_user.id != ADMIN_ID:
@@ -509,12 +482,11 @@ def add_user_manually(message):
             return
     
     # Добавляем пользователя
-    user_id_str = input_data if input_data.isdigit() else f"temp_{int(time.time())}"
-    username = input_data if not input_data.isdigit() else None
+    user_id_str = f"user_{int(time.time())}"
     
     chat_users[user_id_str] = {
         "id": user_id_str,
-        "username": username,
+        "username": input_data,
         "first_name": input_data,
         "last_name": "",
         "full_name": input_data,
@@ -544,9 +516,6 @@ def delete_user(message):
     found_id = None
     for uid, user in chat_users.items():
         if user.get('username') == target:
-            found_id = uid
-            break
-        if uid == target:
             found_id = uid
             break
     
@@ -607,10 +576,9 @@ def restore_command(message):
         return
     bot.send_message(message.chat.id, "📥 Отправьте JSON файл бекапа")
 
-# ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ ВОССТАНОВЛЕНИЯ ==========
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
-    global chat_users, reminder_counter, reminders
+    global chat_users, reminder_counter, reminders, user_pages
     
     if message.chat.type != 'private':
         return
@@ -649,15 +617,14 @@ def handle_restore_file(message):
             restored_reminders = len(backup_data["reminders"])
             print(f"⏰ Восстановлено {restored_reminders} напоминаний")
         
-        # Восстанавливаем пользователей (ИСПРАВЛЕНО!)
+        # Восстанавливаем пользователей
         if "chat_users" in backup_data:
-            chat_users = backup_data["chat_users"]  # ← обновляем глобальную переменную
+            chat_users = backup_data["chat_users"]
             save_users_cache(chat_users)
             restored_users = len(backup_data["chat_users"])
-            print(f"👥 Восстановлено {restored_users} пользователей в память")
+            print(f"👥 Восстановлено {restored_users} пользователей")
         
-        # Очищаем кэш пагинации, чтобы при следующем /users данные обновились
-        global user_pages
+        # Очищаем кэш пагинации
         user_pages.clear()
         
         bot.edit_message_text(
@@ -687,13 +654,9 @@ def inline_query(query):
         for uid, user_data in chat_users.items():
             username = user_data.get('username')
             if username and username.lower() == target_raw.lower():
-                target_id = int(uid) if str(uid).isdigit() else None
+                target_id = uid
                 target_name = user_data.get('first_name') or target_raw
                 break
-        
-        if not target_id and target_raw.isdigit():
-            target_id = int(target_raw)
-            target_name = f"Пользователь {target_raw}"
         
         if not target_id:
             markup = InlineKeyboardMarkup()
@@ -782,6 +745,7 @@ def auto_collect_users(message):
     user_id = str(user.id)
     username = user.username if user.username else None
     first_name = user.first_name or ""
+    last_name = user.last_name or ""
     
     # Проверяем, новый ли пользователь
     is_new = user_id not in chat_users
@@ -791,19 +755,23 @@ def auto_collect_users(message):
         "id": user.id,
         "username": username,
         "first_name": first_name,
-        "last_name": user.last_name or "",
-        "full_name": f"{first_name} {user.last_name or ''}".strip(),
+        "last_name": last_name,
+        "full_name": f"{first_name} {last_name}".strip(),
         "last_seen": datetime.now(MOSCOW_TZ).isoformat()
     }
     
     save_users_cache(chat_users)
     
-    # Логируем!
-    time_now = datetime.now(MOSCOW_TZ).strftime('%H:%M:%S')
+    # Логируем в консоль Render!
+    time_now = datetime.now(MOSCOW_TZ).strftime('%Y-%m-%d %H:%M:%S')
     if is_new:
-        print(f"🆕 [{time_now}] НОВЫЙ пользователь: @{username} ({first_name}) [ID: {user_id}]")
+        print(f"🆕 [{time_now}] НОВЫЙ пользователь добавлен в кэш!")
+        print(f"   ├─ ID: {user_id}")
+        print(f"   ├─ Username: @{username if username else 'нет'}")
+        print(f"   ├─ Имя: {first_name}")
+        print(f"   └─ Чат: {message.chat.id}")
     else:
-        print(f"🔄 [{time_now}] Обновлён: @{username} ({first_name}) [ID: {user_id}]")
+        print(f"🔄 [{time_now}] Обновлён пользователь: @{username if username else 'нет'} ({first_name})")
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
