@@ -349,27 +349,32 @@ def show_users(message):
     total_pages = (total + page_size - 1) // page_size
     
     # Сохраняем данные для пагинации
-    user_pages_data[str(message.from_user.id)] = {
+    user_pages_data[message.from_user.id] = {
         "users": users_list,
         "total_pages": total_pages,
         "page_size": page_size,
-        "total": total
+        "total": total,
+        "current_page": 0
     }
     
     # Отправляем первую страницу
-    send_users_page(message.chat.id, str(message.from_user.id), 0)
+    send_users_page(message.chat.id, message.from_user.id, 0)
 
-def send_users_page(chat_id, user_id_str, page):
+def send_users_page(chat_id, user_id, page):
     global user_pages_data
     
-    data = user_pages_data.get(user_id_str)
+    data = user_pages_data.get(user_id)
     if not data:
+        bot.send_message(chat_id, "❌ Данные устарели, нажмите /users заново")
         return
     
     users_list = data["users"]
     total_pages = data["total_pages"]
     page_size = data["page_size"]
     total = data["total"]
+    
+    # Обновляем текущую страницу в данных
+    user_pages_data[user_id]["current_page"] = page
     
     start = page * page_size
     end = min(start + page_size, total)
@@ -382,7 +387,7 @@ def send_users_page(chat_id, user_id_str, page):
         text += f"• `{user['uid']}` | @{user['username']} | {user['name']}\n"
     
     # Кнопки навигации
-    markup = InlineKeyboardMarkup()
+    markup = InlineKeyboardMarkup(row_width=2)
     buttons = []
     
     if page > 0:
@@ -391,9 +396,8 @@ def send_users_page(chat_id, user_id_str, page):
         buttons.append(InlineKeyboardButton("Вперед ▶", callback_data=f"users_page_{page + 1}"))
     
     if buttons:
-        markup.row(*buttons)
-    
-    markup.row(InlineKeyboardButton("🔄 Обновить", callback_data="users_refresh"))
+        markup.add(*buttons)
+    markup.add(InlineKeyboardButton("🔄 Обновить", callback_data="users_refresh"))
     
     # Отправляем новое сообщение
     bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
@@ -404,10 +408,16 @@ def handle_users_page(call):
         bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
         return
     
-    page = int(call.data.replace("users_page_", ""))
+    # Получаем номер страницы из callback_data
+    page = int(call.data.split("_")[-1])
+    
+    # Проверяем, есть ли данные для этого пользователя
+    if call.from_user.id not in user_pages_data:
+        bot.answer_callback_query(call.id, "❌ Данные устарели, нажмите /users заново", show_alert=True)
+        return
     
     # Отвечаем на callback
-    bot.answer_callback_query(call.id)
+    bot.answer_callback_query(call.id, f"📖 Страница {page + 1}")
     
     # Удаляем старое сообщение
     try:
@@ -416,7 +426,7 @@ def handle_users_page(call):
         pass
     
     # Отправляем новую страницу
-    send_users_page(call.message.chat.id, str(call.from_user.id), page)
+    send_users_page(call.message.chat.id, call.from_user.id, page)
 
 @bot.callback_query_handler(func=lambda call: call.data == "users_refresh")
 def handle_users_refresh(call):
@@ -452,14 +462,15 @@ def handle_users_refresh(call):
     page_size = 10
     total_pages = (total + page_size - 1) // page_size
     
-    user_pages_data[str(call.from_user.id)] = {
+    user_pages_data[call.from_user.id] = {
         "users": users_list,
         "total_pages": total_pages,
         "page_size": page_size,
-        "total": total
+        "total": total,
+        "current_page": 0
     }
     
-    bot.answer_callback_query(call.id, "🔄 Обновлено!")
+    bot.answer_callback_query(call.id, "🔄 Список обновлён!")
     
     # Удаляем старое сообщение
     try:
@@ -468,7 +479,7 @@ def handle_users_refresh(call):
         pass
     
     # Отправляем первую страницу
-    send_users_page(call.message.chat.id, str(call.from_user.id), 0)
+    send_users_page(call.message.chat.id, call.from_user.id, 0)
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
