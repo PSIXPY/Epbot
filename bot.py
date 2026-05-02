@@ -301,7 +301,7 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
-# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (С РАБОТАЮЩИМИ КНОПКАМИ) ===
+# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (РАБОТАЮЩАЯ ВЕРСИЯ) ===
 
 # Хранилище для пагинации
 user_pages_data = {}
@@ -333,7 +333,7 @@ def show_users(message):
         bot.send_message(message.chat.id, "📭 Кэш пользователей пуст")
         return
     
-    # Преобразуем в список для пагинации
+    # Преобразуем в список
     users_list = []
     for uid, user in users.items():
         username = user.get('username', 'None')
@@ -354,30 +354,24 @@ def show_users(message):
         "total_pages": total_pages,
         "page_size": page_size,
         "total": total,
-        "current_page": 0,
-        "message_id": None,
-        "chat_id": message.chat.id
+        "current_page": 0
     }
     
-    # Отправляем и сохраняем ID сообщения
-    msg = send_users_page(message.chat.id, message.from_user.id, 0)
-    if msg:
-        user_pages_data[message.from_user.id]["message_id"] = msg.message_id
+    # Отправляем первую страницу
+    send_users_page(message.chat.id, message.from_user.id, 0)
 
 def send_users_page(chat_id, user_id, page):
     global user_pages_data
     
     data = user_pages_data.get(user_id)
     if not data:
-        return None
+        bot.send_message(chat_id, "❌ Данные устарели, нажмите /users заново")
+        return
     
     users_list = data["users"]
     total_pages = data["total_pages"]
     page_size = data["page_size"]
     total = data["total"]
-    
-    # Обновляем текущую страницу
-    user_pages_data[user_id]["current_page"] = page
     
     start = page * page_size
     end = min(start + page_size, total)
@@ -390,63 +384,86 @@ def send_users_page(chat_id, user_id, page):
         username_display = user['username'] if user['username'] else 'None'
         text += f"• `{user['uid']}` | @{username_display} | {user['name']}\n"
     
-    # Кнопки навигации
+    # Создаём кнопки с уникальными callback_data
     markup = InlineKeyboardMarkup(row_width=2)
     buttons = []
     
     if page > 0:
-        buttons.append(InlineKeyboardButton("◀ Назад", callback_data=f"users_page_{page - 1}"))
+        buttons.append(InlineKeyboardButton("◀ Назад", callback_data=f"user_page_{user_id}_{page - 1}"))
     if page < total_pages - 1:
-        buttons.append(InlineKeyboardButton("Вперед ▶", callback_data=f"users_page_{page + 1}"))
+        buttons.append(InlineKeyboardButton("Вперед ▶", callback_data=f"user_page_{user_id}_{page + 1}"))
     
     if buttons:
         markup.add(*buttons)
-    markup.add(InlineKeyboardButton("🔄 Обновить", callback_data="users_refresh"))
+    markup.add(InlineKeyboardButton("🔄 Обновить", callback_data=f"user_refresh_{user_id}"))
     
     # Отправляем новое сообщение
-    return bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("users_page_"))
-def handle_users_page(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith("user_page_"))
+def handle_user_page(call):
+    # Парсим: user_page_{user_id}_{page}
+    parts = call.data.split("_")
+    if len(parts) != 4:
+        bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
+        return
+    
+    try:
+        user_id = int(parts[2])
+        page = int(parts[3])
+    except:
+        bot.answer_callback_query(call.id, "❌ Ошибка данных", show_alert=True)
+        return
+    
     if call.from_user.id != ADMIN_ID:
         bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
         return
     
-    page = int(call.data.split("_")[-1])
-    
-    if call.from_user.id not in user_pages_data:
-        bot.answer_callback_query(call.id, "❌ Данные устарели, нажмите /users заново", show_alert=True)
+    if call.from_user.id != user_id:
+        bot.answer_callback_query(call.id, "❌ Сессия устарела, нажмите /users", show_alert=True)
         return
     
-    data = user_pages_data[call.from_user.id]
-    old_message_id = data.get("message_id")
-    chat_id = call.message.chat.id
+    data = user_pages_data.get(user_id)
+    if not data:
+        bot.answer_callback_query(call.id, "❌ Данные устарели, нажмите /users", show_alert=True)
+        return
     
-    # Отвечаем на callback
-    bot.answer_callback_query(call.id, f"📖 Загрузка страницы {page + 1}")
+    # Обновляем страницу
+    data["current_page"] = page
+    
+    bot.answer_callback_query(call.id, f"📖 Страница {page + 1}")
+    
+    # Удаляем старое сообщение
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
     
     # Отправляем новую страницу
-    new_msg = send_users_page(chat_id, call.from_user.id, page)
-    
-    if new_msg:
-        # Сохраняем ID нового сообщения
-        user_pages_data[call.from_user.id]["message_id"] = new_msg.message_id
-        
-        # Удаляем старое сообщение
-        if old_message_id:
-            try:
-                bot.delete_message(chat_id, old_message_id)
-            except:
-                pass
+    send_users_page(call.message.chat.id, user_id, page)
 
-@bot.callback_query_handler(func=lambda call: call.data == "users_refresh")
-def handle_users_refresh(call):
-    global user_pages_data
+@bot.callback_query_handler(func=lambda call: call.data.startswith("user_refresh_"))
+def handle_user_refresh(call):
+    parts = call.data.split("_")
+    if len(parts) != 3:
+        bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
+        return
+    
+    try:
+        user_id = int(parts[2])
+    except:
+        bot.answer_callback_query(call.id, "❌ Ошибка данных", show_alert=True)
+        return
     
     if call.from_user.id != ADMIN_ID:
         bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
         return
     
+    if call.from_user.id != user_id:
+        bot.answer_callback_query(call.id, "❌ Сессия устарела", show_alert=True)
+        return
+    
+    # Перезагружаем данные из файла
     if not os.path.exists(USERS_CACHE_FILE):
         bot.answer_callback_query(call.id, "❌ Файл не найден", show_alert=True)
         return
@@ -458,7 +475,7 @@ def handle_users_refresh(call):
         bot.answer_callback_query(call.id, f"❌ Ошибка: {e}", show_alert=True)
         return
     
-    # Обновляем данные
+    # Обновляем список
     users_list = []
     for uid, user in users.items():
         username = user.get('username', 'None')
@@ -473,31 +490,24 @@ def handle_users_refresh(call):
     page_size = 10
     total_pages = (total + page_size - 1) // page_size
     
-    old_message_id = user_pages_data.get(call.from_user.id, {}).get("message_id")
-    chat_id = call.message.chat.id
-    
-    user_pages_data[call.from_user.id] = {
+    user_pages_data[user_id] = {
         "users": users_list,
         "total_pages": total_pages,
         "page_size": page_size,
         "total": total,
-        "current_page": 0,
-        "message_id": old_message_id,
-        "chat_id": chat_id
+        "current_page": 0
     }
     
     bot.answer_callback_query(call.id, "🔄 Список обновлён!")
     
-    # Отправляем новую первую страницу
-    new_msg = send_users_page(chat_id, call.from_user.id, 0)
+    # Удаляем старое сообщение
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
     
-    if new_msg:
-        user_pages_data[call.from_user.id]["message_id"] = new_msg.message_id
-        if old_message_id:
-            try:
-                bot.delete_message(chat_id, old_message_id)
-            except:
-                pass
+    # Отправляем первую страницу
+    send_users_page(call.message.chat.id, user_id, 0)
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
