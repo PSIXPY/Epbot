@@ -313,7 +313,7 @@ def show_users(message):
         bot.reply_to(message, "❌ Только в ЛС!")
         return
     
-    # Читаем напрямую из файла
+    # Читаем из файла
     if not os.path.exists(USERS_CACHE_FILE):
         bot.send_message(message.chat.id, "📭 Файл не найден")
         return
@@ -329,24 +329,34 @@ def show_users(message):
         bot.send_message(message.chat.id, "📭 Нет пользователей")
         return
     
-    bot.send_message(message.chat.id, f"📊 *Всего: {len(users)} пользователей*", parse_mode="Markdown")
+    total = len(users)
+    bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
     
-    # Отправляем по 10 пользователей
-    users_list = "📋 *Список:*\n\n"
+    # Отправляем ВСЕХ пользователей порциями по 15 штук
+    users_list = "📋 *Список пользователей:*\n\n"
     count = 0
+    
     for uid, user in users.items():
-        username = user.get('username', 'нет')
+        username = user.get('username', 'None')
         name = user.get('first_name', 'Без имени')
+        # Ограничиваем длину имени
+        if len(name) > 30:
+            name = name[:27] + "..."
+        
         users_list += f"• `{uid}` | @{username} | {name}\n"
         count += 1
         
-        if count % 10 == 0:
+        # Каждые 15 пользователей отправляем
+        if count % 15 == 0:
             bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
-            users_list = ""
-            time.sleep(0.3)
+            users_list = "📋 *Продолжение списка:*\n\n"
+            time.sleep(0.5)
     
-    if users_list:
+    # Отправляем остаток
+    if users_list and users_list != "📋 *Продолжение списка:*\n\n":
         bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
+    
+    bot.send_message(message.chat.id, f"✅ *Отправлено {total} пользователей*", parse_mode="Markdown")
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
@@ -484,11 +494,6 @@ def handle_restore_file(message):
         if "chat_users" in data:
             chat_users = data["chat_users"]
             save_users_cache(chat_users)
-            
-            # Проверяем, что сохранилось
-            with open(USERS_CACHE_FILE, 'r') as f:
-                saved = json.load(f)
-                print(f"✅ Проверка: в файле {len(saved)} пользователей")
         
         bot.edit_message_text(
             f"✅ Восстановлено!\n👥 Пользователей: {len(chat_users)}\n⏰ Напоминаний: {len(reminders)}\n\n/users - показать список",
