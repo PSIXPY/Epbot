@@ -301,7 +301,7 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
-# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ===
+# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (ОПТИМИЗИРОВАНО ДЛЯ 100+ ПОЛЬЗОВАТЕЛЕЙ) ===
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -314,45 +314,53 @@ def show_users(message):
         return
     
     if not os.path.exists(USERS_CACHE_FILE):
-        bot.send_message(message.chat.id, "📭 Файл не найден")
+        bot.send_message(message.chat.id, "📭 Файл chat_users.json не найден")
         return
     
     try:
         with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
             users = json.load(f)
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка чтения файла: {e}")
         return
     
     if not users:
-        bot.send_message(message.chat.id, "📭 Нет пользователей")
+        bot.send_message(message.chat.id, "📭 Кэш пользователей пуст")
         return
     
     total = len(users)
-    bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
+    bot.send_message(message.chat.id, f"📊 *Всего пользователей в кэше:* {total}", parse_mode="Markdown")
     
-    users_list = "📋 *Список пользователей:*\n\n"
-    count = 0
+    # Отправляем по 8 пользователей на сообщение (безопасно для Telegram)
+    users_list = list(users.items())
+    chunk_size = 8
+    total_chunks = (total + chunk_size - 1) // chunk_size
     
-    for uid, user in users.items():
-        username = user.get('username', 'None')
-        name = user.get('first_name', 'Без имени')
-        if len(name) > 30:
-            name = name[:27] + "..."
+    if total_chunks > 10:
+        bot.send_message(message.chat.id, f"⏳ Отправляю {total_chunks} сообщений. Пожалуйста, подождите...")
+    
+    for chunk_num in range(total_chunks):
+        start = chunk_num * chunk_size
+        end = min(start + chunk_size, total)
         
-        # Показываем username как есть, с подчёркиваниями
-        users_list += f"• `{uid}` | @{username} | {name}\n"
-        count += 1
+        if total_chunks == 1:
+            text = "📋 *Список пользователей:*\n\n"
+        else:
+            text = f"📋 *Список пользователей (часть {chunk_num + 1}/{total_chunks}):*\n\n"
         
-        if count % 15 == 0:
-            bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
-            users_list = "📋 *Продолжение списка:*\n\n"
-            time.sleep(0.5)
+        for i in range(start, end):
+            uid, user = users_list[i]
+            username = user.get('username', 'None')
+            name = user.get('first_name', 'Без имени')
+            if len(name) > 25:
+                name = name[:22] + "..."
+            
+            text += f"• `{uid}` | @{username} | {name}\n"
+        
+        bot.send_message(message.chat.id, text, parse_mode="Markdown")
+        time.sleep(0.3)  # Небольшая пауза между сообщениями
     
-    if users_list and users_list != "📋 *Продолжение списка:*\n\n":
-        bot.send_message(message.chat.id, users_list, parse_mode="Markdown")
-    
-    bot.send_message(message.chat.id, f"✅ *Отправлено {total} пользователей*", parse_mode="Markdown")
+    bot.send_message(message.chat.id, f"✅ *Отправлено {total} пользователей ({total_chunks} сообщений)*", parse_mode="Markdown")
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
@@ -503,7 +511,7 @@ def handle_restore_file(message):
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, status.message_id)
 
-# ========== СКРЫТЫЕ СООБЩЕНИЯ (С ПОДДЕРЖКОЙ ПОДЧЁРКИВАНИЙ) ==========
+# ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -517,19 +525,16 @@ def inline_query(query):
         target_id = None
         target_name = target_raw
         
-        # Читаем из файла и ищем username (с учётом подчёркиваний)
         if os.path.exists(USERS_CACHE_FILE):
             with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
                 users = json.load(f)
                 for uid, user in users.items():
                     username = user.get('username')
                     if username:
-                        # Сравниваем как есть (с подчёркиваниями)
                         if username == target_raw:
                             target_id = uid
                             target_name = user.get('first_name', target_raw)
                             break
-                        # Для удобства также без учёта регистра
                         if username.lower() == target_raw.lower():
                             target_id = uid
                             target_name = user.get('first_name', target_raw)
@@ -546,7 +551,7 @@ def inline_query(query):
                 id="error",
                 title="❌ Пользователь не найден",
                 description=f"@{target_raw}",
-                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден в кэше бота\n\n💡 Пользователь должен написать хотя бы одно сообщение в чат, чтобы бот его запомнил"),
+                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден\n\n💡 Пользователь должен написать сообщение в чат"),
                 reply_markup=markup
             )
             bot.answer_inline_query(query.id, [result], cache_time=0)
@@ -571,7 +576,7 @@ def inline_query(query):
             title=f"📨 Для {target_name}",
             description=content[:50],
             input_message_content=types.InputTextMessageContent(
-                f"🔐 *Скрытое сообщение*\nОт: {query.from_user.first_name}\nКому: {target_name}\n\n💡 Нажмите кнопку ниже, чтобы прочитать",
+                f"🔐 *Скрытое сообщение*\nОт: {query.from_user.first_name}\nКому: {target_name}",
                 parse_mode="Markdown"
             ),
             reply_markup=markup
@@ -586,17 +591,17 @@ def handle_secret_read(call):
     msg_id = call.data.replace("secret_read_", "")
     
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено или истекло", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
         return
     
     data = secret_messages[msg_id]
     
     if str(call.from_user.id) != str(data["target_id"]):
-        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
         return
     
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Сообщение истекло (действует 1 час)", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Истекло (1 час)", show_alert=True)
         del secret_messages[msg_id]
         return
     
@@ -612,7 +617,7 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (СОХРАНЯЕМ USERNAME КАК ЕСТЬ) ==========
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
 @bot.message_handler(func=lambda message: True)
 def auto_collect_users(message):
     if message.chat.type not in ['group', 'supergroup']:
@@ -624,15 +629,13 @@ def auto_collect_users(message):
     
     global chat_users
     user_id = str(user.id)
-    
-    # Сохраняем username как есть, НЕ УДАЛЯЕМ подчёркивания
-    username = user.username  # Telegram сам передаёт оригинальный username
+    username = user.username
     
     is_new = user_id not in chat_users
     
     chat_users[user_id] = {
         "id": user.id,
-        "username": username,  # ← сохраняем оригинал с _
+        "username": username,
         "first_name": user.first_name or "",
         "last_name": user.last_name or "",
         "full_name": f"{user.first_name or ''} {user.last_name or ''}".strip(),
