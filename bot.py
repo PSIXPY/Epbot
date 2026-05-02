@@ -150,12 +150,25 @@ def ask_groq(user_id, prompt):
         return f"❌ Ошибка: {str(e)[:100]}"
 
 def set_reaction(chat_id, message_id):
+    """Ставит реакцию 🔥 на сообщение в канале"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
-    data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "reaction": [{"type": "emoji", "emoji": "🔥"}]
+    }
     try:
-        requests.post(url, json=data, timeout=5)
-    except:
-        pass
+        response = requests.post(url, json=data, timeout=5)
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("ok"):
+                print(f"🔥 Реакция поставлена на сообщение {message_id} в канале {chat_id}")
+            else:
+                print(f"❌ Ошибка реакции: {result}")
+        else:
+            print(f"❌ HTTP ошибка: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Ошибка при установке реакции: {e}")
 
 # ========== КОМАНДЫ ==========
 
@@ -301,7 +314,7 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
-# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (ОПТИМИЗИРОВАНО ДЛЯ 100+ ПОЛЬЗОВАТЕЛЕЙ) ===
+# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ===
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -321,7 +334,7 @@ def show_users(message):
         with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
             users = json.load(f)
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка чтения файла: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка чтения: {e}")
         return
     
     if not users:
@@ -329,15 +342,12 @@ def show_users(message):
         return
     
     total = len(users)
-    bot.send_message(message.chat.id, f"📊 *Всего пользователей в кэше:* {total}", parse_mode="Markdown")
+    bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
     
-    # Отправляем по 8 пользователей на сообщение (безопасно для Telegram)
+    # Отправляем по 8 пользователей на сообщение
     users_list = list(users.items())
     chunk_size = 8
     total_chunks = (total + chunk_size - 1) // chunk_size
-    
-    if total_chunks > 10:
-        bot.send_message(message.chat.id, f"⏳ Отправляю {total_chunks} сообщений. Пожалуйста, подождите...")
     
     for chunk_num in range(total_chunks):
         start = chunk_num * chunk_size
@@ -358,9 +368,9 @@ def show_users(message):
             text += f"• `{uid}` | @{username} | {name}\n"
         
         bot.send_message(message.chat.id, text, parse_mode="Markdown")
-        time.sleep(0.3)  # Небольшая пауза между сообщениями
+        time.sleep(0.3)
     
-    bot.send_message(message.chat.id, f"✅ *Отправлено {total} пользователей ({total_chunks} сообщений)*", parse_mode="Markdown")
+    bot.send_message(message.chat.id, f"✅ *Отправлено {total} пользователей*", parse_mode="Markdown")
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
@@ -505,7 +515,7 @@ def handle_restore_file(message):
             save_users_cache(chat_users)
         
         bot.edit_message_text(
-            f"✅ Восстановлено!\n👥 Пользователей: {len(chat_users)}\n⏰ Напоминаний: {len(reminders)}\n\n/users - показать список",
+            f"✅ Восстановлено!\n👥 Пользователей: {len(chat_users)}\n⏰ Напоминаний: {len(reminders)}",
             message.chat.id, status.message_id
         )
     except Exception as e:
@@ -551,7 +561,7 @@ def inline_query(query):
                 id="error",
                 title="❌ Пользователь не найден",
                 description=f"@{target_raw}",
-                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден\n\n💡 Пользователь должен написать сообщение в чат"),
+                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден"),
                 reply_markup=markup
             )
             bot.answer_inline_query(query.id, [result], cache_time=0)
@@ -645,20 +655,28 @@ def auto_collect_users(message):
     save_users_cache(chat_users)
     
     if is_new:
-        print(f"🆕 НОВЫЙ: @{username} ({user.first_name}) [ID: {user_id}]")
-    else:
-        print(f"🔄 Обновлён: @{username} ({user.first_name})")
+        print(f"🆕 НОВЫЙ: @{username} ({user.first_name})")
 
-# ========== ВЕБХУК ==========
+# ========== ВЕБХУК С РЕАКЦИЯМИ ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
         if update:
+            # Обрабатываем канальные посты (реакции)
+            if "channel_post" in update:
+                post = update["channel_post"]
+                chat_id = post["chat"]["id"]
+                message_id = post["message_id"]
+                # IDs каналов для реакции
+                if chat_id in [-1002185590715, -1001317416582]:
+                    set_reaction(chat_id, message_id)
+            
+            # Обрабатываем обычные обновления
             bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"Ошибка вебхука: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
