@@ -26,6 +26,8 @@ secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 print("🤖 БОТ ЗАПУЩЕН")
+print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
+print(f"👑 ADMIN: {ADMIN_ID}")
 
 # === КЭШ ПОЛЬЗОВАТЕЛЕЙ ===
 USERS_CACHE_FILE = "chat_users.json"
@@ -161,10 +163,19 @@ def set_reaction(chat_id, message_id):
     except:
         pass
 
-# ========== КОМАНДЫ ==========
+# ========== ТЕСТОВЫЙ ОБРАБОТЧИК (ДОЛЖЕН СРАБОТАТЬ НА ЛЮБОЕ СООБЩЕНИЕ) ==========
+@bot.message_handler(func=lambda message: True)
+def test_all_messages(message):
+    print(f"🔥🔥🔥 ТЕСТ: Сообщение от {message.from_user.id} 🔥🔥🔥")
+    print(f"   Username: {message.from_user.username}")
+    print(f"   Текст: {message.text}")
+    print(f"   Чат: {message.chat.type}")
+
+# ========== ОСНОВНЫЕ КОМАНДЫ ==========
 
 @bot.message_handler(commands=['start', 'help'])
 def start_command(message):
+    print(f"📢 Команда /start от {message.from_user.id}")
     if message.from_user.id == ADMIN_ID:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
@@ -194,6 +205,7 @@ def start_command(message):
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
+    print(f"🤖 Команда /ai от {message.from_user.id}")
     prompt = message.text[3:].strip()
     if not prompt:
         bot.reply_to(message, "ℹ️ /ai вопрос")
@@ -258,6 +270,7 @@ def add_reminder(message):
 
 @bot.message_handler(commands=['reminds'])
 def list_reminders(message):
+    print(f"📋 Команда /reminds от {message.from_user.id}")
     chat_id = message.chat.id
     thread_id = message.message_thread_id
     
@@ -331,12 +344,14 @@ def delete_reminder(message):
 def show_users(message):
     global user_pages_data
     
+    print(f"👥 Команда /users от {message.from_user.id}")
+    
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        bot.reply_to(message, "❌ Нет прав!")
         return
     
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
+        bot.reply_to(message, "❌ Только в ЛС!")
         return
     
     if not os.path.exists(USERS_CACHE_FILE):
@@ -347,14 +362,13 @@ def show_users(message):
         with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
             users = json.load(f)
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка чтения: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
         return
     
     if not users:
         bot.send_message(message.chat.id, "📭 Нет пользователей")
         return
     
-    # Сохраняем данные пользователя для пагинации
     user_pages_data[message.from_user.id] = {
         "users": list(users.items()),
         "total": len(users),
@@ -398,7 +412,6 @@ def send_users_page(chat_id, user_id):
         
         text += f"• `{uid}` | @{username_display} | {name}\n"
     
-    # Кнопки навигации
     markup = InlineKeyboardMarkup(row_width=2)
     buttons = []
     
@@ -423,13 +436,12 @@ def handle_users_page(call):
     page = int(call.data.split("_")[-1])
     
     if call.from_user.id not in user_pages_data:
-        bot.answer_callback_query(call.id, "❌ Данные устарели, нажмите /users", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Данные устарели", show_alert=True)
         return
     
     user_pages_data[call.from_user.id]["page"] = page
     bot.answer_callback_query(call.id, f"📖 Страница {page + 1}")
     
-    # Удаляем старое сообщение
     try:
         bot.delete_message(call.message.chat.id, call.message.message_id)
     except:
@@ -453,7 +465,7 @@ def handle_users_refresh(call):
         with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
             users = json.load(f)
     except:
-        bot.answer_callback_query(call.id, "❌ Ошибка чтения", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
         return
     
     user_pages_data[call.from_user.id] = {
@@ -486,10 +498,9 @@ def handle_users_download(call):
         with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
             users = json.load(f)
     except:
-        bot.answer_callback_query(call.id, "❌ Ошибка чтения", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
         return
     
-    # Формируем файл
     output = io.StringIO()
     output.write("ID | Username | Имя | Последнее сообщение\n")
     output.write("-" * 80 + "\n")
@@ -517,17 +528,16 @@ def add_user_manually(message):
         return
     
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
+        bot.reply_to(message, "❌ Только в ЛС!")
         return
     
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ /adduser @username\n\nПример: `/adduser EternalParadisebot`", parse_mode="Markdown")
+        bot.reply_to(message, "ℹ️ /adduser @username")
         return
     
     username = parts[1].strip().lstrip("@")
     
-    # Проверяем, есть ли уже такой пользователь
     existing_id = None
     for uid, user in chat_users.items():
         if user.get('username') == username:
@@ -535,10 +545,9 @@ def add_user_manually(message):
             break
     
     if existing_id:
-        bot.reply_to(message, f"⚠️ Пользователь @{username} уже есть в кэше!\nID: `{existing_id}`", parse_mode="Markdown")
+        bot.reply_to(message, f"⚠️ @{username} уже есть в кэше!")
         return
     
-    # Создаём нового пользователя
     user_id = f"manual_{int(time.time())}"
     
     chat_users[user_id] = {
@@ -551,7 +560,7 @@ def add_user_manually(message):
     }
     
     save_users_cache(chat_users)
-    bot.reply_to(message, f"✅ Пользователь @{username} добавлен в кэш!\n\n💡 Теперь он может получать скрытые сообщения", parse_mode="Markdown")
+    bot.reply_to(message, f"✅ @{username} добавлен!")
 
 @bot.message_handler(commands=['deluser'])
 def delete_user(message):
@@ -561,7 +570,7 @@ def delete_user(message):
         return
     
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
+        bot.reply_to(message, "❌ Только в ЛС!")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -784,66 +793,20 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (С ОТЛАДКОЙ USERNAME) ==========
-@bot.message_handler(func=lambda message: True)
-def auto_collect_users(message):
-    # Только группы
-    if message.chat.type not in ['group', 'supergroup']:
-        return
-    
-    user = message.from_user
-    if not user:
-        return
-    
-    global chat_users
-    user_id = str(user.id)
-    
-    # ОТЛАДКА: печатаем что пришло от Telegram
-    print(f"🐛 [ОТЛАДКА] Получен username от Telegram: '{user.username}'")
-    print(f"   Длина: {len(user.username) if user.username else 0}")
-    print(f"   Символы: {list(user.username) if user.username else []}")
-    
-    # Сохраняем username строго как пришло от Telegram
-    username = user.username if user.username else None
-    first_name = user.first_name or ""
-    last_name = user.last_name or ""
-    
-    # Проверяем, есть ли пользователь уже в кэше
-    if user_id in chat_users:
-        old_username = chat_users[user_id].get("username")
-        if old_username != username:
-            print(f"🔄 Обновляю username: '{old_username}' → '{username}' для {first_name}")
-    
-    # Сохраняем
-    chat_users[user_id] = {
-        "id": user.id,
-        "username": username,  # Сохраняем как есть, без изменений
-        "first_name": first_name,
-        "last_name": last_name,
-        "full_name": f"{first_name} {last_name}".strip(),
-        "last_seen": datetime.now(MOSCOW_TZ).isoformat()
-    }
-    
-    save_users_cache(chat_users)
-    
-    print(f"📝 Сохранён: @{username} ({first_name}) [ID: {user_id}]")
-
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
+        print("📨 ВЕБХУК ПОЛУЧИЛ ЗАПРОС")
         update = request.get_json()
         if update:
-            if "channel_post" in update:
-                post = update["channel_post"]
-                chat_id = post["chat"]["id"]
-                message_id = post["message_id"]
-                if chat_id in [-1002185590715, -1001317416582]:
-                    set_reaction(chat_id, message_id)
+            print(f"📨 Update: {update.get('update_id', 'нет ID')}")
+            if "message" in update:
+                print(f"📨 Сообщение от пользователя: {update['message'].get('from', {}).get('id', 'неизвестно')}")
             bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"❌ Ошибка вебхука: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
