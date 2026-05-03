@@ -144,7 +144,7 @@ def set_reaction(chat_id, message_id):
     except:
         pass
 
-# ========== ФУНКЦИИ ДЛЯ ЦИТАТ (КАК @QuotLyBot) ==========
+# ========== ФУНКЦИИ ДЛЯ ЦИТАТ ==========
 
 def load_daily_quotes():
     """Загружает сообщения текущего дня при перезапуске"""
@@ -188,7 +188,8 @@ def add_message_to_quotes(message):
         return
     if message.text.startswith('/'):
         return
-    if len(message.text) < 10:  # Минимальная длина сообщения
+    # Минимальная длина сообщения - 3 символа (исправлено)
+    if len(message.text) < 3:
         print(f"⏩ Сообщение слишком короткое ({len(message.text)} символов): {message.text[:30]}")
         return
     if len(message.text) > 500:
@@ -279,7 +280,6 @@ def schedule_daily_quotes():
 def start_command(message):
     print(f"📢 /start от {message.from_user.id}")
     if message.from_user.id == ADMIN_ID:
-        # Админ видит всё
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:*\n`/remind 15:30 текст` - создать\n`/reminds` - список\n`/delremind ID` - удалить\n\n"
@@ -293,7 +293,6 @@ def start_command(message):
             "`/restore` - восстановить",
             parse_mode="Markdown")
     else:
-        # Обычный пользователь видит только основные команды
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:*\n`/remind 15:30 текст` - создать\n`/reminds` - список\n`/delremind ID` - удалить\n\n"
