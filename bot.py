@@ -11,7 +11,8 @@ from flask import Flask, request
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pytz
-import user_cache  # используем наш файл
+import user_cache
+import user_logger
 
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -143,24 +144,24 @@ def set_reaction(chat_id, message_id):
 
 @bot.message_handler(commands=['start', 'help'])
 def start_command(message):
-    print(f"📢 КОМАНДА /start от {message.from_user.id}")
+    print(f"📢 /start от {message.from_user.id}")
     if message.from_user.id == ADMIN_ID:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
-            "⏰ *Напоминания:*\n`/remind 15:30 текст` - создать\n`/reminds` - список\n`/delremind ID` - удалить\n\n"
+            "⏰ *Напоминания:*\n`/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "👑 *Админ-команды (в ЛС):*\n`/users` - список\n`/adduser` - добавить\n`/deluser` - удалить\n`/backup` - бекап\n`/restore` - восстановить",
+            "👑 *Админ-команды:*\n`/users` `/adduser` `/deluser` `/backup` `/restore`",
             parse_mode="Markdown")
     else:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
-            "⏰ *Напоминания:*\n`/remind 15:30 текст` - создать\n`/reminds` - список\n`/delremind ID` - удалить\n\n"
+            "⏰ *Напоминания:*\n`/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`",
             parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
-    print(f"🤖 КОМАНДА /ai от {message.from_user.id}")
+    print(f"🤖 /ai от {message.from_user.id}")
     prompt = message.text[3:].strip()
     if not prompt:
         bot.reply_to(message, "ℹ️ /ai вопрос")
@@ -225,7 +226,7 @@ def add_reminder(message):
 
 @bot.message_handler(commands=['reminds'])
 def list_reminders(message):
-    print(f"📋 КОМАНДА /reminds от {message.from_user.id}")
+    print(f"📋 /reminds от {message.from_user.id}")
     chat_id = message.chat.id
     thread_id = message.message_thread_id
     
@@ -297,7 +298,7 @@ def delete_reminder(message):
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
-    print(f"👥 КОМАНДА /users от {message.from_user.id}")
+    print(f"👥 /users от {message.from_user.id}")
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
@@ -329,7 +330,7 @@ def show_users(message):
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
     global chat_users
-    print(f"➕ КОМАНДА /adduser от {message.from_user.id}")
+    print(f"➕ /adduser от {message.from_user.id}")
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
@@ -361,7 +362,7 @@ def add_user_manually(message):
 @bot.message_handler(commands=['deluser'])
 def delete_user(message):
     global chat_users
-    print(f"❌ КОМАНДА /deluser от {message.from_user.id}")
+    print(f"❌ /deluser от {message.from_user.id}")
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
@@ -393,7 +394,7 @@ def delete_user(message):
 # === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
-    print(f"💾 КОМАНДА /backup от {message.from_user.id}")
+    print(f"💾 /backup от {message.from_user.id}")
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
@@ -434,7 +435,7 @@ def backup_command(message):
 
 @bot.message_handler(commands=['restore'])
 def restore_command(message):
-    print(f"📥 КОМАНДА /restore от {message.from_user.id}")
+    print(f"📥 /restore от {message.from_user.id}")
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
@@ -448,7 +449,7 @@ def restore_command(message):
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
     global chat_users, reminder_counter, reminders
-    print(f"📄 ФАЙЛ для восстановления от {message.from_user.id}")
+    print(f"📄 Файл от {message.from_user.id}")
     
     if message.from_user.id != ADMIN_ID:
         return
@@ -588,7 +589,7 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (С ВЫЗОВОМ ЛОГГЕРА) ==========
 @bot.message_handler(func=lambda message: True)
 def auto_collect_users(message):
     # Пропускаем команды
@@ -597,28 +598,32 @@ def auto_collect_users(message):
     
     # Только группы
     if message.chat.type not in ['group', 'supergroup']:
+        print(f"⏩ Не группа: {message.chat.type}")
         return
     
+    # ЛОГГИРУЕМ и проверяем _
+    user_logger.log_and_check_underscore(message)
+    
+    # Сохраняем в кэш
     global chat_users
-    print(f"📨 [AUTO] Получено сообщение от {message.from_user.id} в чате {message.chat.id}")
     old_count = len(chat_users)
     chat_users = user_cache.save_user_from_message(message, chat_users)
     new_count = len(chat_users)
     
     if new_count > old_count:
-        print(f"✨ [AUTO] Добавлен новый пользователь! Всего: {new_count}")
+        print(f"✨ Добавлен новый пользователь! Всего: {new_count}")
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
-        print("📨 [WEBHOOK] Получен POST запрос")
+        print("📨 [WEBHOOK] Получен запрос")
         update = request.get_json()
         if update:
             bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
-        print(f"❌ [WEBHOOK] Ошибка: {e}")
+        print(f"❌ Ошибка: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
