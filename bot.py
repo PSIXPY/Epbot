@@ -188,7 +188,8 @@ def add_message_to_quotes(message):
         return
     if message.text.startswith('/'):
         return
-    if len(message.text) < 10:
+    if len(message.text) < 10:  # Минимальная длина сообщения
+        print(f"⏩ Сообщение слишком короткое ({len(message.text)} символов): {message.text[:30]}")
         return
     if len(message.text) > 500:
         return
@@ -196,6 +197,9 @@ def add_message_to_quotes(message):
     user = message.from_user
     if not user:
         return
+    
+    # Логируем добавление
+    print(f"📝 ДОБАВЛЕНО сообщение в кэш: {message.text[:50]} от {user.first_name}")
     
     daily_messages.append({
         'text': message.text.strip(),
@@ -275,17 +279,24 @@ def schedule_daily_quotes():
 def start_command(message):
     print(f"📢 /start от {message.from_user.id}")
     if message.from_user.id == ADMIN_ID:
+        # Админ видит всё
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
-            "⏰ *Напоминания:*\n`/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
-            "📜 *Цитаты:*\n`/quote` - случайная цитата из чата\n"
+            "⏰ *Напоминания:*\n`/remind 15:30 текст` - создать\n`/reminds` - список\n`/delremind ID` - удалить\n\n"
+            "📜 *Цитаты:*\n`/quote` - случайная цитата из чата\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "👑 *Админ-команды (в ЛС):*\n`/users` - список\n`/adduser` - добавить\n`/deluser` - удалить\n`/backup` - бекап\n`/restore` - восстановить",
+            "👑 *Админ-команды (в ЛС):*\n"
+            "`/users` - список пользователей\n"
+            "`/adduser @username` - добавить\n"
+            "`/deluser @username` - удалить\n"
+            "`/backup` - создать бекап\n"
+            "`/restore` - восстановить",
             parse_mode="Markdown")
     else:
+        # Обычный пользователь видит только основные команды
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
-            "⏰ *Напоминания:*\n`/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
+            "⏰ *Напоминания:*\n`/remind 15:30 текст` - создать\n`/reminds` - список\n`/delremind ID` - удалить\n\n"
             "📜 *Цитаты:*\n`/quote` - случайная цитата из чата\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`",
             parse_mode="Markdown")
@@ -429,7 +440,34 @@ def delete_reminder(message):
 def quote_command(message):
     """Отправляет случайную цитату из чата за сегодня"""
     print(f"📜 /quote от {message.from_user.id} в чате {message.chat.id}")
-    send_random_quote_to_chat(message.chat.id)
+    
+    # Отладочная информация
+    print(f"📊 Всего сообщений в кэше: {len(daily_messages)}")
+    
+    # Фильтруем сообщения только из этого чата
+    chat_messages = [m for m in daily_messages if m.get('chat_id') == message.chat.id]
+    print(f"📊 Сообщений в этом чате: {len(chat_messages)}")
+    
+    # Показываем первые 3 сообщения для отладки
+    for i, msg in enumerate(chat_messages[:3]):
+        print(f"   Сообщение {i+1}: {msg['text'][:50]} от {msg['author_name']}")
+    
+    if len(chat_messages) < 3:
+        bot.reply_to(message, f"📭 Пока недостаточно сообщений для цитаты.\nВ этом чате: {len(chat_messages)} сообщений (нужно минимум 3)\n\n✍️ Напишите ещё что-нибудь!")
+        return
+    
+    # Выбираем случайную цитату
+    quote = random.choice(chat_messages)
+    
+    # Формируем красивое сообщение
+    text = f"📜 *Цитата дня*\n\n"
+    text += f"« {quote['text']} »\n\n"
+    text += f"— *{quote['author_name']}*"
+    if quote.get('time'):
+        text += f"  •  {quote['time']}"
+    
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+    print(f"✅ Цитата отправлена в чат {message.chat.id}")
 
 # === АДМИН-КОМАНДЫ ===
 
