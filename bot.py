@@ -161,12 +161,32 @@ def set_reaction(chat_id, message_id):
 
 @bot.message_handler(commands=['start', 'help'])
 def start_command(message):
-    bot.send_message(message.chat.id, "✅ Бот работает!\n\n"
-        "🤖 ИИ: /ai вопрос\n\n"
-        "⏰ Напоминания:\n/remind 15:30 текст\n/reminds\n/delremind ID\n\n"
-        "💾 Бекап (в ЛС):\n/backup\n/restore\n\n"
-        "📨 Скрытые сообщения:\n@бот username текст\n\n"
-        "👥 Пользователи (админ, ЛС):\n/users\n/adduser @username\n/deluser @username")
+    if message.from_user.id == ADMIN_ID:
+        bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
+            "🤖 *ИИ:* `/ai вопрос`\n\n"
+            "⏰ *Напоминания (МСК):*\n"
+            "`/remind 15:30 текст` - создать\n"
+            "`/reminds` - список\n"
+            "`/delremind ID` - удалить\n\n"
+            "📨 *Скрытые сообщения:*\n"
+            "`@бот username текст`\n\n"
+            "👑 *Админ-команды (в ЛС):*\n"
+            "`/users` - список пользователей\n"
+            "`/adduser @username` - добавить\n"
+            "`/deluser @username` - удалить\n"
+            "`/backup` - создать бекап\n"
+            "`/restore` - восстановить",
+            parse_mode="Markdown")
+    else:
+        bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
+            "🤖 *ИИ:* `/ai вопрос`\n\n"
+            "⏰ *Напоминания (МСК):*\n"
+            "`/remind 15:30 текст` - создать\n"
+            "`/reminds` - список\n"
+            "`/delremind ID` - удалить\n\n"
+            "📨 *Скрытые сообщения:*\n"
+            "`@бот username текст`",
+            parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
@@ -301,7 +321,7 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
-# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (ПРОСТАЯ И НАДЁЖНАЯ ВЕРСИЯ) ===
+# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (ТОЛЬКО ДЛЯ АДМИНА) ===
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -331,21 +351,23 @@ def show_users(message):
     total = len(users)
     bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
     
-    # Формируем список всех пользователей
     users_list = ""
     message_count = 0
     
     for uid, user in users.items():
-        username = user.get('username', 'None')
+        username = user.get('username')
         name = user.get('first_name', 'Без имени')
         
-        # Урезаем слишком длинные имена
+        if username:
+            username_display = username
+        else:
+            username_display = "нет"
+        
         if len(name) > 30:
             name = name[:27] + "..."
         
-        user_line = f"• `{uid}` | @{username} | {name}\n"
+        user_line = f"• `{uid}` | @{username_display} | {name}\n"
         
-        # Если сообщение станет слишком длинным - отправляем
         if len(users_list + user_line) > 3500:
             if message_count == 0:
                 bot.send_message(message.chat.id, f"📋 *Список пользователей:*\n\n{users_list}", parse_mode="Markdown")
@@ -357,7 +379,6 @@ def show_users(message):
         
         users_list += user_line
     
-    # Отправляем остаток
     if users_list:
         if message_count == 0:
             bot.send_message(message.chat.id, f"📋 *Список пользователей:*\n\n{users_list}", parse_mode="Markdown")
@@ -370,7 +391,11 @@ def show_users(message):
 def add_user_manually(message):
     global chat_users
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
+        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
+    
+    if message.chat.type != 'private':
+        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -397,7 +422,11 @@ def add_user_manually(message):
 def delete_user(message):
     global chat_users
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
+        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
+    
+    if message.chat.type != 'private':
+        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -420,14 +449,15 @@ def delete_user(message):
     else:
         bot.reply_to(message, f"❌ @{target} не найден")
 
-# === БЕКАП ===
+# === БЕКАП (ТОЛЬКО ДЛЯ АДМИНА) ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
+    
     if message.chat.type != 'private':
         bot.reply_to(message, "❌ Только в ЛС!")
-        return
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
         return
     
     status = bot.reply_to(message, "🔄 Создаю бекап...")
@@ -462,22 +492,25 @@ def backup_command(message):
 
 @bot.message_handler(commands=['restore'])
 def restore_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
+    
     if message.chat.type != 'private':
         bot.reply_to(message, "❌ Только в ЛС!")
         return
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
-        return
+    
     bot.send_message(message.chat.id, "📥 Отправьте JSON файл бекапа")
 
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
     global chat_users, reminder_counter, reminders
     
-    if message.chat.type != 'private':
-        return
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
+        return
+    
+    if message.chat.type != 'private':
         return
     
     status = bot.reply_to(message, "🔄 Восстанавливаю...")
@@ -621,9 +654,10 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (С АВТООБНОВЛЕНИЕМ) ==========
 @bot.message_handler(func=lambda message: True)
 def auto_collect_users(message):
+    # Только группы
     if message.chat.type not in ['group', 'supergroup']:
         return
     
@@ -633,25 +667,40 @@ def auto_collect_users(message):
     
     global chat_users
     user_id = str(user.id)
-    username = user.username
+    
+    # Telegram сам отдаёт правильный username (с _ если есть)
+    username = user.username if user.username else None
+    first_name = user.first_name or ""
+    last_name = user.last_name or ""
     
     is_new = user_id not in chat_users
+    old_username = chat_users.get(user_id, {}).get("username") if not is_new else None
     
+    # Сохраняем данные
     chat_users[user_id] = {
         "id": user.id,
         "username": username,
-        "first_name": user.first_name or "",
-        "last_name": user.last_name or "",
-        "full_name": f"{user.first_name or ''} {user.last_name or ''}".strip(),
+        "first_name": first_name,
+        "last_name": last_name,
+        "full_name": f"{first_name} {last_name}".strip(),
         "last_seen": datetime.now(MOSCOW_TZ).isoformat()
     }
     
     save_users_cache(chat_users)
     
+    # Логируем
     if is_new:
-        print(f"🆕 НОВЫЙ: @{username} ({user.first_name}) [ID: {user_id}]")
+        if username:
+            print(f"🆕 НОВЫЙ: @{username} ({first_name}) [ID: {user_id}]")
+        else:
+            print(f"🆕 НОВЫЙ: {first_name} (без username) [ID: {user_id}]")
     else:
-        print(f"🔄 Обновлён: @{username} ({user.first_name})")
+        if old_username != username:
+            print(f"🔄 ОБНОВЛЁН username: @{old_username} → @{username} ({first_name})")
+        elif username:
+            print(f"🔄 Обновлён: @{username} ({first_name})")
+        else:
+            print(f"🔄 Обновлён: {first_name} (без username)")
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
