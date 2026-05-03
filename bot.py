@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН")
+print("🤖 БОТ ЗАПУЩЕН - ВЕРСИЯ С ПОДДЕРЖКОЙ ТОПИКОВ")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -144,7 +144,7 @@ def set_reaction(chat_id, message_id):
     except:
         pass
 
-# ========== ФУНКЦИИ ДЛЯ ЦИТАТ ==========
+# ========== ФУНКЦИИ ДЛЯ ЦИТАТ (С ПОДДЕРЖКОЙ ТОПИКОВ) ==========
 
 def load_daily_quotes():
     global daily_messages
@@ -178,6 +178,7 @@ def clear_daily_quotes():
     print("🔄 Кэш цитат очищен")
 
 def add_message_to_quotes(message):
+    """Добавляет сообщение в кэш для цитат (с учётом топика)"""
     global daily_messages
     
     if not message.text:
@@ -193,7 +194,10 @@ def add_message_to_quotes(message):
     if not user:
         return
     
-    print(f"📝 ДОБАВЛЕНО в чат {message.chat.id}: {message.text[:40]}")
+    thread_id = message.message_thread_id if message.message_thread_id else 0
+    unique_id = f"{message.chat.id}_{thread_id}"
+    
+    print(f"📝 ДОБАВЛЕНО в чат {message.chat.id}, топик {thread_id}: {message.text[:40]}")
     
     daily_messages.append({
         'text': message.text.strip(),
@@ -201,7 +205,9 @@ def add_message_to_quotes(message):
         'author_name': user.first_name or user.username or "Участник",
         'author_username': user.username,
         'time': datetime.now(MOSCOW_TZ).strftime('%H:%M:%S'),
-        'chat_id': message.chat.id
+        'chat_id': message.chat.id,
+        'thread_id': thread_id,
+        'unique_id': unique_id
     })
     
     if len(daily_messages) > 1000:
@@ -210,34 +216,45 @@ def add_message_to_quotes(message):
     save_daily_quotes()
 
 def add_chat_to_active(message):
-    chat_id = message.chat.id
-    if chat_id not in active_chats:
-        active_chats.add(chat_id)
-        print(f"📍 НОВЫЙ чат добавлен: {chat_id}")
+    """Добавляет чат/топик в список активных"""
+    thread_id = message.message_thread_id if message.message_thread_id else 0
+    unique_id = f"{message.chat.id}_{thread_id}"
+    
+    if unique_id not in active_chats:
+        active_chats.add(unique_id)
+        print(f"📍 НОВЫЙ: чат {message.chat.id}, топик {thread_id}")
     else:
-        print(f"📍 Чат {chat_id} уже в списке")
+        print(f"📍 Уже есть: чат {message.chat.id}, топик {thread_id}")
 
-def send_random_quote_to_chat(chat_id):
+def send_random_quote_to_chat(chat_id, thread_id=0):
+    """Отправляет случайную цитату в конкретный чат/топик"""
     global daily_messages
     
-    chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
+    unique_id = f"{chat_id}_{thread_id}"
+    chat_messages = [m for m in daily_messages if m.get('unique_id') == unique_id]
     
     if len(chat_messages) < 2:
-        return
+        return False
     
     quote = random.choice(chat_messages)
     text = f"📜 *Цитата дня*\n\n« {quote['text']} »"
     
     try:
-        bot.send_message(chat_id, text, parse_mode="Markdown")
-        print(f"📜 Отправлена цитата в чат {chat_id}")
+        bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
+        print(f"📜 Отправлена в чат {chat_id}, топик {thread_id}")
+        return True
     except Exception as e:
         print(f"❌ Ошибка: {e}")
+        return False
 
 def send_random_quote_to_all_chats():
-    print(f"📜 Отправляю цитаты в {len(active_chats)} чатов: {list(active_chats)}")
-    for chat_id in list(active_chats):
-        send_random_quote_to_chat(chat_id)
+    """Отправляет цитаты во все активные чаты/топики"""
+    print(f"📜 Отправляю в {len(active_chats)} чатов/топиков")
+    for unique_id in list(active_chats):
+        parts = unique_id.split("_")
+        chat_id = int(parts[0])
+        thread_id = int(parts[1]) if len(parts) > 1 else 0
+        send_random_quote_to_chat(chat_id, thread_id)
 
 def schedule_daily_quotes():
     now_moscow = datetime.now(MOSCOW_TZ)
@@ -257,7 +274,7 @@ def schedule_daily_quotes():
     midnight_timer = threading.Timer(midnight_delay, clear_daily_quotes)
     midnight_timer.daemon = True
     midnight_timer.start()
-    print(f"🔄 Очистка кэша в 00:00")
+    print(f"🔄 Очистка в 00:00")
 
 # ========== КОМАНДЫ ==========
 
@@ -399,6 +416,8 @@ def delete_reminder(message):
             if r["id"] == rid:
                 if r.get("chat_id") != chat_id:
                     return
+                if r.get("thread_id") != thread_id:
+                    return
                 if "_timer" in r:
                     try:
                         r["_timer"].cancel()
@@ -417,21 +436,24 @@ def delete_reminder(message):
 
 @bot.message_handler(commands=['quote'])
 def quote_command(message):
-    """Отправляет случайную цитату из чата"""
-    print(f"📜 /quote в чате {message.chat.id}")
+    """Отправляет случайную цитату из чата/топика"""
+    thread_id = message.message_thread_id if message.message_thread_id else 0
+    unique_id = f"{message.chat.id}_{thread_id}"
     
-    chat_messages = [m for m in daily_messages if m.get('chat_id') == message.chat.id]
-    print(f"📊 Сообщений в этом чате: {len(chat_messages)}")
+    print(f"📜 /quote в чате {message.chat.id}, топик {thread_id}")
+    
+    chat_messages = [m for m in daily_messages if m.get('unique_id') == unique_id]
+    print(f"📊 Сообщений: {len(chat_messages)}")
     
     if len(chat_messages) < 2:
-        bot.reply_to(message, f"📭 В этом чате пока нет сообщений для цитаты. Напишите что-нибудь в чат! (нужно минимум 2 сообщения)")
+        bot.reply_to(message, f"📭 В этом чате/топике пока нет сообщений. Напишите что-нибудь! (нужно минимум 2 сообщения)")
         return
     
     quote = random.choice(chat_messages)
     text = f"📜 *Цитата дня*\n\n« {quote['text']} »"
     
     bot.reply_to(message, text, parse_mode="Markdown")
-    print(f"✅ Цитата отправлена в чат {message.chat.id}")
+    print(f"✅ Цитата отправлена")
 
 # === АДМИН-КОМАНДЫ ===
 
@@ -731,14 +753,14 @@ threading.Thread(target=clean_old_secrets, daemon=True).start()
 # ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
 @bot.message_handler(func=lambda message: True)
 def auto_collect_users(message):
-    # Пропускаем команды для сохранения в цитаты
+    # Пропускаем команды
     if message.text and message.text.startswith('/'):
-        print(f"🔍 [CMD] Команда \"{message.text}\" в чате {message.chat.id} ({message.chat.type})")
+        print(f"🔍 [CMD] {message.text} в чате {message.chat.id}")
         return
     
     # Только группы
     if message.chat.type not in ['group', 'supergroup']:
-        print(f"⏩ Не группа: {message.chat.type} (чат {message.chat.id})")
+        print(f"⏩ Не группа: {message.chat.type}")
         return
     
     global chat_users
@@ -747,12 +769,10 @@ def auto_collect_users(message):
     new_count = len(chat_users)
     
     if new_count > old_count:
-        print(f"✨ Новый пользователь добавлен! Всего: {new_count}")
+        print(f"✨ Новый пользователь! Всего: {new_count}")
     
-    # Добавляем чат в активные
+    # Добавляем чат/топик и сообщение
     add_chat_to_active(message)
-    
-    # Добавляем сообщение в кэш для цитат
     add_message_to_quotes(message)
 
 # ========== ВЕБХУК ==========
