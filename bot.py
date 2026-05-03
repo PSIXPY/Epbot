@@ -321,39 +321,37 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
-# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (ТОЛЬКО ДЛЯ АДМИНА) ===
+# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ===
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        bot.reply_to(message, "❌ Нет прав!")
         return
     
     if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
+        bot.reply_to(message, "❌ Только в ЛС!")
         return
     
     if not os.path.exists(USERS_CACHE_FILE):
-        bot.send_message(message.chat.id, "📭 Файл chat_users.json не найден")
+        bot.send_message(message.chat.id, "📭 Файл не найден")
         return
     
     try:
         with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
             users = json.load(f)
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка чтения файла: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
         return
     
     if not users:
-        bot.send_message(message.chat.id, "📭 Кэш пользователей пуст")
+        bot.send_message(message.chat.id, "📭 Нет пользователей")
         return
     
     total = len(users)
     bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
     
     users_list = ""
-    message_count = 0
-    
     for uid, user in users.items():
         username = user.get('username')
         name = user.get('first_name', 'Без имени')
@@ -363,27 +361,30 @@ def show_users(message):
         else:
             username_display = "нет"
         
-        if len(name) > 30:
-            name = name[:27] + "..."
-        
-        user_line = f"• `{uid}` | @{username_display} | {name}\n"
-        
-        if len(users_list + user_line) > 3500:
-            if message_count == 0:
-                bot.send_message(message.chat.id, f"📋 *Список пользователей:*\n\n{users_list}", parse_mode="Markdown")
-            else:
-                bot.send_message(message.chat.id, f"📋 *Продолжение списка:*\n\n{users_list}", parse_mode="Markdown")
-            users_list = ""
-            message_count += 1
-            time.sleep(0.3)
-        
-        users_list += user_line
+        users_list += f"• `{uid}` | @{username_display} | {name}\n"
     
-    if users_list:
-        if message_count == 0:
-            bot.send_message(message.chat.id, f"📋 *Список пользователей:*\n\n{users_list}", parse_mode="Markdown")
-        else:
-            bot.send_message(message.chat.id, f"📋 *Продолжение списка:*\n\n{users_list}", parse_mode="Markdown")
+    # Отправляем список (если длинный - разделится автоматически)
+    if len(users_list) > 4000:
+        # Разбиваем на части
+        parts_list = []
+        current_part = ""
+        for line in users_list.split('\n'):
+            if len(current_part + line + '\n') > 3500:
+                parts_list.append(current_part)
+                current_part = line + '\n'
+            else:
+                current_part += line + '\n'
+        if current_part:
+            parts_list.append(current_part)
+        
+        for i, part in enumerate(parts_list):
+            if i == 0:
+                bot.send_message(message.chat.id, f"📋 *Список пользователей:*\n\n{part}", parse_mode="Markdown")
+            else:
+                bot.send_message(message.chat.id, f"📋 *Продолжение:*\n\n{part}", parse_mode="Markdown")
+            time.sleep(0.3)
+    else:
+        bot.send_message(message.chat.id, f"📋 *Список пользователей:*\n\n{users_list}", parse_mode="Markdown")
     
     bot.send_message(message.chat.id, f"✅ *Отправлено {total} пользователей*", parse_mode="Markdown")
 
@@ -391,11 +392,7 @@ def show_users(message):
 def add_user_manually(message):
     global chat_users
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав! Только администратор.")
-        return
-    
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
+        bot.reply_to(message, "❌ Нет прав!")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -422,11 +419,7 @@ def add_user_manually(message):
 def delete_user(message):
     global chat_users
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав! Только администратор.")
-        return
-    
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
+        bot.reply_to(message, "❌ Нет прав!")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -449,11 +442,11 @@ def delete_user(message):
     else:
         bot.reply_to(message, f"❌ @{target} не найден")
 
-# === БЕКАП (ТОЛЬКО ДЛЯ АДМИНА) ===
+# === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        bot.reply_to(message, "❌ Нет прав!")
         return
     
     if message.chat.type != 'private':
@@ -483,7 +476,7 @@ def backup_command(message):
             json.dump(data, f, ensure_ascii=False, indent=2)
         
         with open(filename, 'rb') as f:
-            bot.send_document(message.chat.id, f, caption=f"✅ Бекап создан!\n\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n👥 Пользователей: {len(chat_users)}\n⏰ Напоминаний: {len(clean_reminders)}")
+            bot.send_document(message.chat.id, f, caption=f"✅ Бекап создан!\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n👥 {len(chat_users)} пользователей\n⏰ {len(clean_reminders)} напоминаний")
         
         os.remove(filename)
         bot.delete_message(message.chat.id, status.message_id)
@@ -493,7 +486,7 @@ def backup_command(message):
 @bot.message_handler(commands=['restore'])
 def restore_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        bot.reply_to(message, "❌ Нет прав!")
         return
     
     if message.chat.type != 'private':
@@ -542,7 +535,7 @@ def handle_restore_file(message):
             save_users_cache(chat_users)
         
         bot.edit_message_text(
-            f"✅ Восстановлено!\n👥 Пользователей: {len(chat_users)}\n⏰ Напоминаний: {len(reminders)}\n\n/users - показать список",
+            f"✅ Восстановлено!\n👥 {len(chat_users)} пользователей\n⏰ {len(reminders)} напоминаний",
             message.chat.id, status.message_id
         )
     except Exception as e:
@@ -567,15 +560,10 @@ def inline_query(query):
                 users = json.load(f)
                 for uid, user in users.items():
                     username = user.get('username')
-                    if username:
-                        if username == target_raw:
-                            target_id = uid
-                            target_name = user.get('first_name', target_raw)
-                            break
-                        if username.lower() == target_raw.lower():
-                            target_id = uid
-                            target_name = user.get('first_name', target_raw)
-                            break
+                    if username and username.lower() == target_raw.lower():
+                        target_id = uid
+                        target_name = user.get('first_name', target_raw)
+                        break
         
         if not target_id and target_raw.isdigit():
             target_id = target_raw
@@ -638,7 +626,7 @@ def handle_secret_read(call):
         return
     
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Истекло (1 час)", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Истекло", show_alert=True)
         del secret_messages[msg_id]
         return
     
@@ -654,7 +642,7 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (С АВТООБНОВЛЕНИЕМ) ==========
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (С ПРИНУДИТЕЛЬНЫМ ОБНОВЛЕНИЕМ) ==========
 @bot.message_handler(func=lambda message: True)
 def auto_collect_users(message):
     # Только группы
@@ -668,15 +656,19 @@ def auto_collect_users(message):
     global chat_users
     user_id = str(user.id)
     
-    # Telegram сам отдаёт правильный username (с _ если есть)
+    # Получаем данные от Telegram (всегда свежие)
     username = user.username if user.username else None
     first_name = user.first_name or ""
     last_name = user.last_name or ""
     
-    is_new = user_id not in chat_users
-    old_username = chat_users.get(user_id, {}).get("username") if not is_new else None
+    # Проверяем, есть ли пользователь уже в кэше
+    if user_id in chat_users:
+        old_username = chat_users[user_id].get("username")
+        # Если username изменился - обновляем
+        if old_username != username:
+            print(f"🔄 Обновляю username: @{old_username} → @{username} для {first_name}")
     
-    # Сохраняем данные
+    # ВСЕГДА обновляем данные (принудительно)
     chat_users[user_id] = {
         "id": user.id,
         "username": username,
@@ -686,21 +678,14 @@ def auto_collect_users(message):
         "last_seen": datetime.now(MOSCOW_TZ).isoformat()
     }
     
+    # Сохраняем в файл
     save_users_cache(chat_users)
     
     # Логируем
-    if is_new:
-        if username:
-            print(f"🆕 НОВЫЙ: @{username} ({first_name}) [ID: {user_id}]")
-        else:
-            print(f"🆕 НОВЫЙ: {first_name} (без username) [ID: {user_id}]")
+    if username:
+        print(f"📝 Сохранён: @{username} ({first_name}) [ID: {user_id}]")
     else:
-        if old_username != username:
-            print(f"🔄 ОБНОВЛЁН username: @{old_username} → @{username} ({first_name})")
-        elif username:
-            print(f"🔄 Обновлён: @{username} ({first_name})")
-        else:
-            print(f"🔄 Обновлён: {first_name} (без username)")
+        print(f"📝 Сохранён: {first_name} (без username) [ID: {user_id}]")
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
