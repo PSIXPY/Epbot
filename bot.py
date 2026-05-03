@@ -325,7 +325,7 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
-# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (С ПАГИНАЦИЕЙ ДЛЯ 10000+ ПОЛЬЗОВАТЕЛЕЙ) ===
+# === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ===
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -516,13 +516,30 @@ def add_user_manually(message):
         bot.reply_to(message, "❌ Нет прав!")
         return
     
+    if message.chat.type != 'private':
+        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
+        return
+    
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ /adduser @username")
+        bot.reply_to(message, "ℹ️ /adduser @username\n\nПример: `/adduser EternalParadisebot`", parse_mode="Markdown")
         return
     
     username = parts[1].strip().lstrip("@")
-    user_id = f"user_{int(time.time())}"
+    
+    # Проверяем, есть ли уже такой пользователь
+    existing_id = None
+    for uid, user in chat_users.items():
+        if user.get('username') == username:
+            existing_id = uid
+            break
+    
+    if existing_id:
+        bot.reply_to(message, f"⚠️ Пользователь @{username} уже есть в кэше!\nID: `{existing_id}`", parse_mode="Markdown")
+        return
+    
+    # Создаём нового пользователя
+    user_id = f"manual_{int(time.time())}"
     
     chat_users[user_id] = {
         "id": user_id,
@@ -534,13 +551,17 @@ def add_user_manually(message):
     }
     
     save_users_cache(chat_users)
-    bot.reply_to(message, f"✅ @{username} добавлен!")
+    bot.reply_to(message, f"✅ Пользователь @{username} добавлен в кэш!\n\n💡 Теперь он может получать скрытые сообщения", parse_mode="Markdown")
 
 @bot.message_handler(commands=['deluser'])
 def delete_user(message):
     global chat_users
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
+        return
+    
+    if message.chat.type != 'private':
+        bot.reply_to(message, "❌ Команда работает только в личных сообщениях!")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -763,9 +784,10 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (С ОТЛАДКОЙ USERNAME) ==========
 @bot.message_handler(func=lambda message: True)
 def auto_collect_users(message):
+    # Только группы
     if message.chat.type not in ['group', 'supergroup']:
         return
     
@@ -776,6 +798,12 @@ def auto_collect_users(message):
     global chat_users
     user_id = str(user.id)
     
+    # ОТЛАДКА: печатаем что пришло от Telegram
+    print(f"🐛 [ОТЛАДКА] Получен username от Telegram: '{user.username}'")
+    print(f"   Длина: {len(user.username) if user.username else 0}")
+    print(f"   Символы: {list(user.username) if user.username else []}")
+    
+    # Сохраняем username строго как пришло от Telegram
     username = user.username if user.username else None
     first_name = user.first_name or ""
     last_name = user.last_name or ""
@@ -784,12 +812,12 @@ def auto_collect_users(message):
     if user_id in chat_users:
         old_username = chat_users[user_id].get("username")
         if old_username != username:
-            print(f"🔄 Обновляю username: @{old_username} → @{username} для {first_name}")
+            print(f"🔄 Обновляю username: '{old_username}' → '{username}' для {first_name}")
     
-    # ВСЕГДА обновляем данные
+    # Сохраняем
     chat_users[user_id] = {
         "id": user.id,
-        "username": username,
+        "username": username,  # Сохраняем как есть, без изменений
         "first_name": first_name,
         "last_name": last_name,
         "full_name": f"{first_name} {last_name}".strip(),
@@ -798,10 +826,7 @@ def auto_collect_users(message):
     
     save_users_cache(chat_users)
     
-    if username:
-        print(f"📝 Сохранён: @{username} ({first_name}) [ID: {user_id}]")
-    else:
-        print(f"📝 Сохранён: {first_name} (без username) [ID: {user_id}]")
+    print(f"📝 Сохранён: @{username} ({first_name}) [ID: {user_id}]")
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
