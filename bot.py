@@ -33,9 +33,9 @@ chat_users = user_cache.load_users()
 
 # === ДЛЯ ЦИТАТ ===
 QUOTES_CACHE_FILE = "daily_quotes.json"
-daily_messages = []  # Временное хранилище сообщений за сегодня
-daily_quote_times = [9, 12, 15, 18, 21]  # Часы отправки цитат (МСК)
-active_chats = set()  # Хранилище чатов, куда отправлять цитаты
+daily_messages = []
+daily_quote_times = [9, 12, 15, 18, 21]
+active_chats = set()
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 def delete_after_delay(chat_id, message_id, delay=10):
@@ -147,7 +147,6 @@ def set_reaction(chat_id, message_id):
 # ========== ФУНКЦИИ ДЛЯ ЦИТАТ ==========
 
 def load_daily_quotes():
-    """Загружает сообщения текущего дня при перезапуске"""
     global daily_messages
     if os.path.exists(QUOTES_CACHE_FILE):
         try:
@@ -162,7 +161,6 @@ def load_daily_quotes():
             pass
 
 def save_daily_quotes():
-    """Сохраняет сообщения текущего дня"""
     try:
         data = {
             'date': datetime.now(MOSCOW_TZ).strftime('%Y-%m-%d'),
@@ -174,28 +172,34 @@ def save_daily_quotes():
         print(f"❌ Ошибка сохранения: {e}")
 
 def clear_daily_quotes():
-    """Очищает кэш сообщений (в 00:00)"""
     global daily_messages
     daily_messages = []
     save_daily_quotes()
-    print("🔄 Кэш цитат очищен! Начинаю собирать новые сообщения за сегодня")
+    print("🔄 Кэш цитат очищен")
 
 def add_message_to_quotes(message):
-    """Добавляет сообщение в кэш для цитат"""
+    """Добавляет сообщение в кэш для цитат - с усиленной отладкой"""
     global daily_messages
     
+    # ОТЛАДКА
+    print(f"🔍 [DEBUG] Чат: {message.chat.id} ({message.chat.type}), Текст: {message.text[:50] if message.text else 'None'}")
+    
     if not message.text:
+        print("⏩ Нет текста")
         return
     if message.text.startswith('/'):
+        print("⏩ Это команда")
         return
-    if len(message.text) < 3:
-        print(f"⏩ Сообщение слишком короткое ({len(message.text)} символов): {message.text[:30]}")
+    if len(message.text) < 2:
+        print(f"⏩ Слишком короткое ({len(message.text)} симв.)")
         return
     if len(message.text) > 500:
+        print("⏩ Слишком длинное")
         return
     
     user = message.from_user
     if not user:
+        print("⏩ Нет пользователя")
         return
     
     print(f"📝 ДОБАВЛЕНО сообщение в кэш: {message.text[:50]} от {user.first_name}")
@@ -215,47 +219,41 @@ def add_message_to_quotes(message):
     save_daily_quotes()
 
 def add_chat_to_active(message):
-    """Добавляет чат в список активных"""
     chat_id = message.chat.id
     if chat_id not in active_chats:
         active_chats.add(chat_id)
         print(f"📍 Добавлен чат {chat_id} в активные")
 
 def send_random_quote_to_chat(chat_id):
-    """Отправляет случайную цитату в конкретный чат (БЕЗ ИМЕНИ И ВРЕМЕНИ)"""
     global daily_messages
     
     chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
     
-    if len(chat_messages) < 3:
+    if len(chat_messages) < 2:
         return
     
     quote = random.choice(chat_messages)
     
-    text = f"📜 *Цитата дня*\n\n"
-    text += f"« {quote['text']} »"
+    text = f"📜 *Цитата дня*\n\n« {quote['text']} »"
     
     try:
         bot.send_message(chat_id, text, parse_mode="Markdown")
         print(f"📜 Отправлена цитата в чат {chat_id}")
     except Exception as e:
-        print(f"❌ Не удалось отправить в чат {chat_id}: {e}")
+        print(f"❌ Ошибка: {e}")
 
 def send_random_quote_to_all_chats():
-    """Отправляет цитаты во все активные чаты"""
     print(f"📜 Отправляю цитаты в {len(active_chats)} чатов...")
     for chat_id in list(active_chats):
         send_random_quote_to_chat(chat_id)
 
 def schedule_daily_quotes():
-    """Запускает ежедневную рассылку цитат во все чаты"""
     now_moscow = datetime.now(MOSCOW_TZ)
     
     for hour in daily_quote_times:
         target = now_moscow.replace(hour=hour, minute=0, second=0, microsecond=0)
         if target <= now_moscow:
             target += timedelta(days=1)
-        
         delay = (target - now_moscow).total_seconds()
         timer = threading.Timer(delay, send_random_quote_to_all_chats)
         timer.daemon = True
@@ -267,7 +265,7 @@ def schedule_daily_quotes():
     midnight_timer = threading.Timer(midnight_delay, clear_daily_quotes)
     midnight_timer.daemon = True
     midnight_timer.start()
-    print(f"🔄 Очистка кэша запланирована на 00:00")
+    print(f"🔄 Очистка кэша на 00:00")
 
 # ========== КОМАНДЫ ==========
 
@@ -277,21 +275,16 @@ def start_command(message):
     if message.from_user.id == ADMIN_ID:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
-            "⏰ *Напоминания:*\n`/remind 15:30 текст` - создать\n`/reminds` - список\n`/delremind ID` - удалить\n\n"
-            "📜 *Цитаты:*\n`/quote` - случайная цитата из чата\n\n"
+            "⏰ *Напоминания:*\n`/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
+            "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "👑 *Админ-команды (в ЛС):*\n"
-            "`/users` - список пользователей\n"
-            "`/adduser @username` - добавить\n"
-            "`/deluser @username` - удалить\n"
-            "`/backup` - создать бекап\n"
-            "`/restore` - восстановить",
+            "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore`",
             parse_mode="Markdown")
     else:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
-            "⏰ *Напоминания:*\n`/remind 15:30 текст` - создать\n`/reminds` - список\n`/delremind ID` - удалить\n\n"
-            "📜 *Цитаты:*\n`/quote` - случайная цитата из чата\n\n"
+            "⏰ *Напоминания:*\n`/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
+            "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`",
             parse_mode="Markdown")
 
@@ -432,29 +425,21 @@ def delete_reminder(message):
 
 @bot.message_handler(commands=['quote'])
 def quote_command(message):
-    """Отправляет случайную цитату из чата за сегодня (БЕЗ ИМЕНИ И ВРЕМЕНИ)"""
+    """Отправляет случайную цитату"""
     print(f"📜 /quote от {message.from_user.id} в чате {message.chat.id}")
     
-    # Отладочная информация
-    print(f"📊 Всего сообщений в кэше: {len(daily_messages)}")
-    
-    # Фильтруем сообщения только из этого чата
     chat_messages = [m for m in daily_messages if m.get('chat_id') == message.chat.id]
     print(f"📊 Сообщений в этом чате: {len(chat_messages)}")
     
-    if len(chat_messages) < 3:
-        bot.reply_to(message, f"📭 Пока недостаточно сообщений для цитаты.\nВ этом чате: {len(chat_messages)} сообщений (нужно минимум 3)\n\n✍️ Напишите ещё что-нибудь!")
+    if len(chat_messages) < 2:
+        bot.reply_to(message, f"📭 В этом чате пока нет сообщений для цитаты. Напишите что-нибудь в чат! (нужно минимум 2 сообщения)")
         return
     
-    # Выбираем случайную цитату
     quote = random.choice(chat_messages)
+    text = f"📜 *Цитата дня*\n\n« {quote['text']} »"
     
-    # Формируем красивое сообщение (БЕЗ ИМЕНИ И ВРЕМЕНИ)
-    text = f"📜 *Цитата дня*\n\n"
-    text += f"« {quote['text']} »"
-    
-    bot.send_message(message.chat.id, text, parse_mode="Markdown")
-    print(f"✅ Цитата отправлена в чат {message.chat.id}")
+    bot.reply_to(message, text, parse_mode="Markdown")
+    print(f"✅ Цитата отправлена")
 
 # === АДМИН-КОМАНДЫ ===
 
@@ -751,7 +736,7 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ И СООБЩЕНИЙ ДЛЯ ЦИТАТ ==========
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
 @bot.message_handler(func=lambda message: True)
 def auto_collect_users(message):
     # Пропускаем команды
@@ -760,6 +745,7 @@ def auto_collect_users(message):
     
     # Только группы
     if message.chat.type not in ['group', 'supergroup']:
+        print(f"⏩ Не группа: {message.chat.type}")
         return
     
     global chat_users
@@ -770,10 +756,8 @@ def auto_collect_users(message):
     if new_count > old_count:
         print(f"✨ Новый пользователь добавлен! Всего: {new_count}")
     
-    # Добавляем чат в активные для цитат
+    # Добавляем чат в активные и сохраняем сообщение
     add_chat_to_active(message)
-    
-    # Добавляем сообщение в кэш для цитат
     add_message_to_quotes(message)
 
 # ========== ВЕБХУК ==========
@@ -801,11 +785,7 @@ if __name__ == "__main__":
     r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={webhook_url}")
     print(f"Результат: {r.json()}")
     
-    # Запускаем планировщик цитат
     schedule_daily_quotes()
-    
-    # Загружаем сохранённые сообщения за сегодня
     load_daily_quotes()
-    
     start_all_reminders()
     app.run(host="0.0.0.0", port=port)
