@@ -11,7 +11,7 @@ from flask import Flask, request
 from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pytz
-import user_handler  # НОВЫЙ ФАЙЛ!
+import user_cache  # используем наш файл
 
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -25,12 +25,12 @@ secret_messages = {}
 
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ВЕРСИЯ С LOGGER")
+print("🤖 БОТ ЗАПУЩЕН")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
 # === ЗАГРУЗКА КЭША ===
-chat_users = user_handler.load_users()
+chat_users = user_cache.load_users()
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 def delete_after_delay(chat_id, message_id, delay=10):
@@ -317,8 +317,7 @@ def show_users(message):
     for uid, user in chat_users.items():
         username = user.get('username', 'нет')
         name = user.get('first_name', 'Без имени')
-        has_underscore = "✅" if user.get('has_underscore') else "❌"
-        text += f"• `{uid}` | @{username} | {name} | _{has_underscore}\n"
+        text += f"• `{uid}` | @{username} | {name}\n"
         
         if len(text) > 3500:
             bot.send_message(message.chat.id, text, parse_mode="Markdown")
@@ -353,11 +352,10 @@ def add_user_manually(message):
         "first_name": username,
         "last_name": "",
         "full_name": username,
-        "last_seen": datetime.now(MOSCOW_TZ).isoformat(),
-        "has_underscore": "_" in username
+        "last_seen": datetime.now(MOSCOW_TZ).isoformat()
     }
     
-    user_handler.save_users(chat_users)
+    user_cache.save_users(chat_users)
     bot.reply_to(message, f"✅ @{username} добавлен!")
 
 @bot.message_handler(commands=['deluser'])
@@ -387,7 +385,7 @@ def delete_user(message):
     
     if found:
         del chat_users[found]
-        user_handler.save_users(chat_users)
+        user_cache.save_users(chat_users)
         bot.reply_to(message, f"✅ @{target} удалён!")
     else:
         bot.reply_to(message, f"❌ @{target} не найден")
@@ -484,7 +482,7 @@ def handle_restore_file(message):
         
         if "chat_users" in data:
             chat_users = data["chat_users"]
-            user_handler.save_users(chat_users)
+            user_cache.save_users(chat_users)
         
         bot.edit_message_text(
             f"✅ Восстановлено!\n👥 {len(chat_users)} пользователей\n⏰ {len(reminders)} напоминаний",
@@ -602,14 +600,19 @@ def auto_collect_users(message):
         return
     
     global chat_users
-    print(f"📨 [AUTO] Сообщение от {message.from_user.id} в группе")
-    chat_users = user_handler.save_user_from_message(message, chat_users)
+    print(f"📨 [AUTO] Получено сообщение от {message.from_user.id} в чате {message.chat.id}")
+    old_count = len(chat_users)
+    chat_users = user_cache.save_user_from_message(message, chat_users)
+    new_count = len(chat_users)
+    
+    if new_count > old_count:
+        print(f"✨ [AUTO] Добавлен новый пользователь! Всего: {new_count}")
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
-        print("📨 [WEBHOOK] Запрос получен")
+        print("📨 [WEBHOOK] Получен POST запрос")
         update = request.get_json()
         if update:
             bot.process_new_updates([types.Update.de_json(update)])
