@@ -10,23 +10,17 @@ def load_users():
     if os.path.exists(USERS_CACHE_FILE):
         try:
             with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
-                users = json.load(f)
-                print(f"📂 [CACHE] Загружено {len(users)} пользователей")
-                return users
-        except Exception as e:
-            print(f"❌ [CACHE] Ошибка загрузки: {e}")
+                return json.load(f)
+        except:
             return {}
-    print("📂 [CACHE] Файл chat_users.json не найден")
     return {}
 
 def save_users(users):
     try:
         with open(USERS_CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(users, f, ensure_ascii=False, indent=2)
-        print(f"💾 [CACHE] Сохранено {len(users)} пользователей")
         return True
-    except Exception as e:
-        print(f"❌ [CACHE] Ошибка сохранения: {e}")
+    except:
         return False
 
 def save_user_from_message(message, chat_users):
@@ -39,16 +33,11 @@ def save_user_from_message(message, chat_users):
     first_name = user.first_name or ""
     last_name = user.last_name or ""
     
-    # Проверяем наличие подчёркивания
-    if username:
-        has_underscore = "_" in username
-        print(f"🔍 [CACHE] Username: '{username}' | Есть _ : {has_underscore}")
-    
-    is_new = user_id not in chat_users
-    old_username = chat_users.get(user_id, {}).get("username") if not is_new else None
-    
-    if not is_new and old_username != username:
-        print(f"🔄 [CACHE] Обновление: '{old_username}' → '{username}'")
+    # Проверка на подчёркивание
+    if username and "_" in username:
+        print(f"✅ Username с _ : @{username}")
+    elif username:
+        print(f"⚠️ Username БЕЗ _ : @{username}")
     
     chat_users[user_id] = {
         "id": user.id,
@@ -60,10 +49,4 @@ def save_user_from_message(message, chat_users):
     }
     
     save_users(chat_users)
-    
-    if is_new:
-        print(f"🆕 [CACHE] НОВЫЙ: @{username} ({first_name})")
-    else:
-        print(f"✅ [CACHE] ОБНОВЛЁН: @{username} ({first_name})")
-    
     return chat_users
