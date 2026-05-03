@@ -32,25 +32,25 @@ def save_users(users):
         return False
 
 def save_user_from_message(message, chat_users):
-    """Сохраняет пользователя из сообщения - ВСЕГДА ОБНОВЛЯЕТ username"""
+    """Сохраняет пользователя из сообщения"""
     user = message.from_user
     if not user:
         print("⚠️ Нет информации о пользователе")
         return chat_users
     
     user_id = str(user.id)
-    
-    # Получаем данные от Telegram (свежие!)
     username = user.username if user.username else None
     first_name = user.first_name or ""
     last_name = user.last_name or ""
     
     # Проверяем, был ли изменён username
-    old_username = chat_users.get(user_id, {}).get("username") if user_id in chat_users else None
-    if old_username != username:
+    is_new = user_id not in chat_users
+    old_username = chat_users.get(user_id, {}).get("username") if not is_new else None
+    
+    if not is_new and old_username != username:
         print(f"🔄 Обновление username: '{old_username}' → '{username}' для {first_name}")
     
-    # ВСЕГДА обновляем данные
+    # Сохраняем
     chat_users[user_id] = {
         "id": user.id,
         "username": username,
@@ -62,6 +62,7 @@ def save_user_from_message(message, chat_users):
     
     save_users(chat_users)
     
+    # ВСЕГДА логируем
     print(f"✅ Сохранён: @{username} ({first_name}) [ID: {user_id}]")
     
     return chat_users
@@ -88,7 +89,7 @@ def add_user_manual(chat_users, username, user_id=None):
     }
     
     save_users(chat_users)
-    return True, f"Пользователь @{username} добавлен"
+    return True, f"✅ Пользователь @{username} добавлен"
 
 def delete_user(chat_users, identifier):
     """Удаляет пользователя из кэша"""
@@ -111,18 +112,3 @@ def delete_user(chat_users, identifier):
         return True, deleted_user
     
     return False, None
-
-def get_all_users(chat_users):
-    """Возвращает всех пользователей в виде списка"""
-    users_list = []
-    for uid, user in chat_users.items():
-        users_list.append({
-            "id": uid,
-            "username": user.get('username', 'нет'),
-            "name": user.get('full_name', user.get('first_name', 'Без имени')),
-            "last_seen": user.get('last_seen', 'неизвестно')
-        })
-    return users_list
-
-def get_user_count(chat_users):
-    return len(chat_users)
