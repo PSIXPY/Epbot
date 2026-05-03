@@ -785,10 +785,10 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (НЕ ПЕРЕХВАТЫВАЕТ КОМАНДЫ) ==========
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
 @bot.message_handler(func=lambda message: True)
 def auto_collect_users(message):
-    # Пропускаем команды (они начинаются с /)
+    # Пропускаем команды
     if message.text and message.text.startswith('/'):
         return
     
@@ -803,7 +803,6 @@ def auto_collect_users(message):
     global chat_users
     user_id = str(user.id)
     
-    # ОТЛАДКА
     print(f"🐛 Получен username от Telegram: '{user.username}'")
     
     username = user.username if user.username else None
@@ -827,17 +826,19 @@ def auto_collect_users(message):
     save_users_cache(chat_users)
     print(f"📝 Сохранён: @{username} ({first_name})")
 
-# ========== ВЕБХУК ==========
+# ========== ВЕБХУК (ИСПРАВЛЕННЫЙ) ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
-        print("📨 Вебхук получил запрос")
-        update = request.get_json()
-        if update:
-            bot.process_new_updates([types.Update.de_json(update)])
+        print("📨 ВЕБХУК СРАБОТАЛ")
+        json_str = request.get_data().decode('UTF-8')
+        print(f"📨 Данные: {json_str[:200]}...")
+        update = types.Update.de_json(json_str)
+        print(f"📨 Update ID: {update.update_id}")
+        bot.process_new_updates([update])
         return "OK", 200
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ ОШИБКА ВЕБХУКА: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
