@@ -188,7 +188,6 @@ def add_message_to_quotes(message):
         return
     if message.text.startswith('/'):
         return
-    # Минимальная длина сообщения - 3 символа (исправлено)
     if len(message.text) < 3:
         print(f"⏩ Сообщение слишком короткое ({len(message.text)} символов): {message.text[:30]}")
         return
@@ -199,7 +198,6 @@ def add_message_to_quotes(message):
     if not user:
         return
     
-    # Логируем добавление
     print(f"📝 ДОБАВЛЕНО сообщение в кэш: {message.text[:50]} от {user.first_name}")
     
     daily_messages.append({
@@ -224,7 +222,7 @@ def add_chat_to_active(message):
         print(f"📍 Добавлен чат {chat_id} в активные")
 
 def send_random_quote_to_chat(chat_id):
-    """Отправляет случайную цитату в конкретный чат"""
+    """Отправляет случайную цитату в конкретный чат (БЕЗ ИМЕНИ И ВРЕМЕНИ)"""
     global daily_messages
     
     chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
@@ -235,10 +233,7 @@ def send_random_quote_to_chat(chat_id):
     quote = random.choice(chat_messages)
     
     text = f"📜 *Цитата дня*\n\n"
-    text += f"« {quote['text']} »\n\n"
-    text += f"— *{quote['author_name']}*"
-    if quote.get('time'):
-        text += f"  •  {quote['time']}"
+    text += f"« {quote['text']} »"
     
     try:
         bot.send_message(chat_id, text, parse_mode="Markdown")
@@ -437,7 +432,7 @@ def delete_reminder(message):
 
 @bot.message_handler(commands=['quote'])
 def quote_command(message):
-    """Отправляет случайную цитату из чата за сегодня"""
+    """Отправляет случайную цитату из чата за сегодня (БЕЗ ИМЕНИ И ВРЕМЕНИ)"""
     print(f"📜 /quote от {message.from_user.id} в чате {message.chat.id}")
     
     # Отладочная информация
@@ -447,10 +442,6 @@ def quote_command(message):
     chat_messages = [m for m in daily_messages if m.get('chat_id') == message.chat.id]
     print(f"📊 Сообщений в этом чате: {len(chat_messages)}")
     
-    # Показываем первые 3 сообщения для отладки
-    for i, msg in enumerate(chat_messages[:3]):
-        print(f"   Сообщение {i+1}: {msg['text'][:50]} от {msg['author_name']}")
-    
     if len(chat_messages) < 3:
         bot.reply_to(message, f"📭 Пока недостаточно сообщений для цитаты.\nВ этом чате: {len(chat_messages)} сообщений (нужно минимум 3)\n\n✍️ Напишите ещё что-нибудь!")
         return
@@ -458,12 +449,9 @@ def quote_command(message):
     # Выбираем случайную цитату
     quote = random.choice(chat_messages)
     
-    # Формируем красивое сообщение
+    # Формируем красивое сообщение (БЕЗ ИМЕНИ И ВРЕМЕНИ)
     text = f"📜 *Цитата дня*\n\n"
-    text += f"« {quote['text']} »\n\n"
-    text += f"— *{quote['author_name']}*"
-    if quote.get('time'):
-        text += f"  •  {quote['time']}"
+    text += f"« {quote['text']} »"
     
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
     print(f"✅ Цитата отправлена в чат {message.chat.id}")
