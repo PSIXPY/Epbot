@@ -12,12 +12,12 @@ def load_users():
         try:
             with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
                 users = json.load(f)
-                print(f"📂 Загружено {len(users)} пользователей из файла")
+                print(f"📂 Загружено {len(users)} пользователей")
                 return users
         except Exception as e:
             print(f"❌ Ошибка загрузки: {e}")
             return {}
-    print("📂 Файл chat_users.json не найден, создаю новый")
+    print("📂 Файл chat_users.json не найден")
     return {}
 
 def save_users(users):
@@ -25,28 +25,32 @@ def save_users(users):
     try:
         with open(USERS_CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(users, f, ensure_ascii=False, indent=2)
-        print(f"💾 Сохранено {len(users)} пользователей в файл")
+        print(f"💾 Сохранено {len(users)} пользователей")
         return True
     except Exception as e:
         print(f"❌ Ошибка сохранения: {e}")
         return False
 
 def save_user_from_message(message, chat_users):
-    """Сохраняет пользователя из сообщения"""
+    """Сохраняет пользователя из сообщения - ВСЕГДА ОБНОВЛЯЕТ username"""
     user = message.from_user
     if not user:
         print("⚠️ Нет информации о пользователе")
         return chat_users
     
     user_id = str(user.id)
+    
+    # Получаем данные от Telegram (свежие!)
     username = user.username if user.username else None
     first_name = user.first_name or ""
     last_name = user.last_name or ""
     
-    # Проверяем, новый ли пользователь
-    is_new = user_id not in chat_users
+    # Проверяем, был ли изменён username
+    old_username = chat_users.get(user_id, {}).get("username") if user_id in chat_users else None
+    if old_username != username:
+        print(f"🔄 Обновление username: '{old_username}' → '{username}' для {first_name}")
     
-    # Сохраняем данные
+    # ВСЕГДА обновляем данные
     chat_users[user_id] = {
         "id": user.id,
         "username": username,
@@ -56,32 +60,24 @@ def save_user_from_message(message, chat_users):
         "last_seen": datetime.now(MOSCOW_TZ).isoformat()
     }
     
-    # Сохраняем в файл
     save_users(chat_users)
     
-    # Логируем
-    time_now = datetime.now(MOSCOW_TZ).strftime('%H:%M:%S')
-    if is_new:
-        print(f"🆕 [{time_now}] НОВЫЙ пользователь: @{username} ({first_name}) [ID: {user_id}]")
-    else:
-        print(f"🔄 [{time_now}] Обновлён: @{username} ({first_name}) [ID: {user_id}]")
+    print(f"✅ Сохранён: @{username} ({first_name}) [ID: {user_id}]")
     
     return chat_users
 
 def add_user_manual(chat_users, username, user_id=None):
-    """Ручное добавление пользователя в кэш"""
+    """Ручное добавление пользователя"""
     import time
     
     if user_id is None:
-        user_id = f"temp_{int(time.time())}"
+        user_id = f"manual_{int(time.time())}"
     
     user_id_str = str(user_id)
     
-    # Проверяем, существует ли уже
     if user_id_str in chat_users:
         return False, "Пользователь уже существует"
     
-    # Добавляем
     chat_users[user_id_str] = {
         "id": user_id_str,
         "username": username,
@@ -129,5 +125,4 @@ def get_all_users(chat_users):
     return users_list
 
 def get_user_count(chat_users):
-    """Возвращает количество пользователей"""
     return len(chat_users)
