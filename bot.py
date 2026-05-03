@@ -163,15 +163,7 @@ def set_reaction(chat_id, message_id):
     except:
         pass
 
-# ========== ТЕСТОВЫЙ ОБРАБОТЧИК (ДОЛЖЕН СРАБОТАТЬ НА ЛЮБОЕ СООБЩЕНИЕ) ==========
-@bot.message_handler(func=lambda message: True)
-def test_all_messages(message):
-    print(f"🔥🔥🔥 ТЕСТ: Сообщение от {message.from_user.id} 🔥🔥🔥")
-    print(f"   Username: {message.from_user.username}")
-    print(f"   Текст: {message.text}")
-    print(f"   Чат: {message.chat.type}")
-
-# ========== ОСНОВНЫЕ КОМАНДЫ ==========
+# ========== КОМАНДЫ ==========
 
 @bot.message_handler(commands=['start', 'help'])
 def start_command(message):
@@ -793,20 +785,59 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (НЕ ПЕРЕХВАТЫВАЕТ КОМАНДЫ) ==========
+@bot.message_handler(func=lambda message: True)
+def auto_collect_users(message):
+    # Пропускаем команды (они начинаются с /)
+    if message.text and message.text.startswith('/'):
+        return
+    
+    # Только группы
+    if message.chat.type not in ['group', 'supergroup']:
+        return
+    
+    user = message.from_user
+    if not user:
+        return
+    
+    global chat_users
+    user_id = str(user.id)
+    
+    # ОТЛАДКА
+    print(f"🐛 Получен username от Telegram: '{user.username}'")
+    
+    username = user.username if user.username else None
+    first_name = user.first_name or ""
+    last_name = user.last_name or ""
+    
+    if user_id in chat_users:
+        old_username = chat_users[user_id].get("username")
+        if old_username != username:
+            print(f"🔄 Обновляю username: '{old_username}' → '{username}'")
+    
+    chat_users[user_id] = {
+        "id": user.id,
+        "username": username,
+        "first_name": first_name,
+        "last_name": last_name,
+        "full_name": f"{first_name} {last_name}".strip(),
+        "last_seen": datetime.now(MOSCOW_TZ).isoformat()
+    }
+    
+    save_users_cache(chat_users)
+    print(f"📝 Сохранён: @{username} ({first_name})")
+
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
-        print("📨 ВЕБХУК ПОЛУЧИЛ ЗАПРОС")
+        print("📨 Вебхук получил запрос")
         update = request.get_json()
         if update:
-            print(f"📨 Update: {update.get('update_id', 'нет ID')}")
-            if "message" in update:
-                print(f"📨 Сообщение от пользователя: {update['message'].get('from', {}).get('id', 'неизвестно')}")
             bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
-        print(f"❌ Ошибка вебхука: {e}")
+        print(f"❌ Ошибка: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
