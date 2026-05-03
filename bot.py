@@ -25,10 +25,19 @@ secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 print("🤖 БОТ ЗАПУЩЕН")
+print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
+print(f"👑 ADMIN: {ADMIN_ID}")
 
-# === ЗАГРУЗКА ===
+# === ЗАГРУЗКА КЭША ПОЛЬЗОВАТЕЛЕЙ ===
 chat_users = user_cache.load_users()
 
+# === ДЛЯ ЦИТАТ ===
+QUOTES_CACHE_FILE = "daily_quotes.json"
+daily_messages = []  # Временное хранилище сообщений за сегодня
+daily_quote_times = [9, 12, 15, 18, 21]  # Часы отправки цитат (МСК)
+active_chats = set()  # Хранилище чатов, куда отправлять цитаты
+
+# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
@@ -39,7 +48,9 @@ def load_reminders():
     if os.path.exists(REMINDERS_FILE):
         try:
             with open(REMINDERS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                reminders = json.load(f)
+                print(f"⏰ Загружено {len(reminders)} напоминаний")
+                return reminders
         except:
             return []
     return []
@@ -55,8 +66,8 @@ def save_reminders(reminders):
     try:
         with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(to_save, f, ensure_ascii=False, indent=2)
-    except:
-        pass
+    except Exception as e:
+        print(f"Ошибка: {e}")
 
 reminders = load_reminders()
 reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
@@ -64,8 +75,8 @@ reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
 def send_reminder(reminder):
     try:
         bot.send_message(reminder["chat_id"], f"⏰ НАПОМИНАНИЕ!\n\n{reminder['text']}", message_thread_id=reminder.get("thread_id"))
-    except:
-        pass
+    except Exception as e:
+        print(f"Ошибка: {e}")
 
 def schedule_reminder(reminder):
     now_moscow = datetime.now(MOSCOW_TZ)
@@ -77,6 +88,7 @@ def schedule_reminder(reminder):
     timer.daemon = True
     timer.start()
     reminder["_timer"] = timer
+    print(f"⏰ Напоминание {reminder['id']} на {target.strftime('%Y-%m-%d %H:%M:%S')}")
 
 def execute_reminder(reminder):
     send_reminder(reminder)
@@ -132,17 +144,155 @@ def set_reaction(chat_id, message_id):
     except:
         pass
 
+# ========== ФУНКЦИИ ДЛЯ ЦИТАТ (КАК @QuotLyBot) ==========
+
+def load_daily_quotes():
+    """Загружает сообщения текущего дня при перезапуске"""
+    global daily_messages
+    if os.path.exists(QUOTES_CACHE_FILE):
+        try:
+            with open(QUOTES_CACHE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if data.get('date') == datetime.now(MOSCOW_TZ).strftime('%Y-%m-%d'):
+                    daily_messages = data.get('messages', [])
+                    print(f"📚 Загружено {len(daily_messages)} сообщений за сегодня")
+                else:
+                    clear_daily_quotes()
+        except:
+            pass
+
+def save_daily_quotes():
+    """Сохраняет сообщения текущего дня"""
+    try:
+        data = {
+            'date': datetime.now(MOSCOW_TZ).strftime('%Y-%m-%d'),
+            'messages': daily_messages
+        }
+        with open(QUOTES_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ Ошибка сохранения: {e}")
+
+def clear_daily_quotes():
+    """Очищает кэш сообщений (в 00:00)"""
+    global daily_messages
+    daily_messages = []
+    save_daily_quotes()
+    print("🔄 Кэш цитат очищен! Начинаю собирать новые сообщения за сегодня")
+
+def add_message_to_quotes(message):
+    """Добавляет сообщение в кэш для цитат"""
+    global daily_messages
+    
+    if not message.text:
+        return
+    if message.text.startswith('/'):
+        return
+    if len(message.text) < 10:
+        return
+    if len(message.text) > 500:
+        return
+    
+    user = message.from_user
+    if not user:
+        return
+    
+    daily_messages.append({
+        'text': message.text.strip(),
+        'author': user.id,
+        'author_name': user.first_name or user.username or "Участник",
+        'author_username': user.username,
+        'time': datetime.now(MOSCOW_TZ).strftime('%H:%M:%S'),
+        'chat_id': message.chat.id
+    })
+    
+    if len(daily_messages) > 1000:
+        daily_messages = daily_messages[-1000:]
+    
+    save_daily_quotes()
+
+def add_chat_to_active(message):
+    """Добавляет чат в список активных"""
+    chat_id = message.chat.id
+    if chat_id not in active_chats:
+        active_chats.add(chat_id)
+        print(f"📍 Добавлен чат {chat_id} в активные")
+
+def send_random_quote_to_chat(chat_id):
+    """Отправляет случайную цитату в конкретный чат"""
+    global daily_messages
+    
+    chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
+    
+    if len(chat_messages) < 3:
+        return
+    
+    quote = random.choice(chat_messages)
+    
+    text = f"📜 *Цитата дня*\n\n"
+    text += f"« {quote['text']} »\n\n"
+    text += f"— *{quote['author_name']}*"
+    if quote.get('time'):
+        text += f"  •  {quote['time']}"
+    
+    try:
+        bot.send_message(chat_id, text, parse_mode="Markdown")
+        print(f"📜 Отправлена цитата в чат {chat_id}")
+    except Exception as e:
+        print(f"❌ Не удалось отправить в чат {chat_id}: {e}")
+
+def send_random_quote_to_all_chats():
+    """Отправляет цитаты во все активные чаты"""
+    print(f"📜 Отправляю цитаты в {len(active_chats)} чатов...")
+    for chat_id in list(active_chats):
+        send_random_quote_to_chat(chat_id)
+
+def schedule_daily_quotes():
+    """Запускает ежедневную рассылку цитат во все чаты"""
+    now_moscow = datetime.now(MOSCOW_TZ)
+    
+    for hour in daily_quote_times:
+        target = now_moscow.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if target <= now_moscow:
+            target += timedelta(days=1)
+        
+        delay = (target - now_moscow).total_seconds()
+        timer = threading.Timer(delay, send_random_quote_to_all_chats)
+        timer.daemon = True
+        timer.start()
+        print(f"📜 Цитата запланирована на {target.strftime('%H:%M:%S')}")
+    
+    midnight = now_moscow.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    midnight_delay = (midnight - now_moscow).total_seconds()
+    midnight_timer = threading.Timer(midnight_delay, clear_daily_quotes)
+    midnight_timer.daemon = True
+    midnight_timer.start()
+    print(f"🔄 Очистка кэша запланирована на 00:00")
+
 # ========== КОМАНДЫ ==========
 
 @bot.message_handler(commands=['start', 'help'])
 def start_command(message):
-    bot.send_message(message.chat.id, "✅ Бот работает!\n\n"
-        "🤖 ИИ: /ai вопрос\n\n"
-        "⏰ Напоминания:\n/remind 15:30 текст\n/reminds\n/delremind ID\n\n"
-        "📨 Скрытые сообщения: @бот username текст")
+    print(f"📢 /start от {message.from_user.id}")
+    if message.from_user.id == ADMIN_ID:
+        bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
+            "🤖 *ИИ:* `/ai вопрос`\n\n"
+            "⏰ *Напоминания:*\n`/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
+            "📜 *Цитаты:*\n`/quote` - случайная цитата из чата\n"
+            "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
+            "👑 *Админ-команды (в ЛС):*\n`/users` - список\n`/adduser` - добавить\n`/deluser` - удалить\n`/backup` - бекап\n`/restore` - восстановить",
+            parse_mode="Markdown")
+    else:
+        bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
+            "🤖 *ИИ:* `/ai вопрос`\n\n"
+            "⏰ *Напоминания:*\n`/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
+            "📜 *Цитаты:*\n`/quote` - случайная цитата из чата\n\n"
+            "📨 *Скрытые сообщения:* `@бот username текст`",
+            parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
+    print(f"🤖 /ai от {message.from_user.id}")
     prompt = message.text[3:].strip()
     if not prompt:
         bot.reply_to(message, "ℹ️ /ai вопрос")
@@ -207,6 +357,7 @@ def add_reminder(message):
 
 @bot.message_handler(commands=['reminds'])
 def list_reminders(message):
+    print(f"📋 /reminds от {message.from_user.id}")
     chat_id = message.chat.id
     thread_id = message.message_thread_id
     
@@ -274,10 +425,17 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
+@bot.message_handler(commands=['quote'])
+def quote_command(message):
+    """Отправляет случайную цитату из чата за сегодня"""
+    print(f"📜 /quote от {message.from_user.id} в чате {message.chat.id}")
+    send_random_quote_to_chat(message.chat.id)
+
 # === АДМИН-КОМАНДЫ ===
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
+    print(f"👥 /users от {message.from_user.id}")
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
@@ -309,6 +467,7 @@ def show_users(message):
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
     global chat_users
+    print(f"➕ /adduser от {message.from_user.id}")
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
@@ -340,6 +499,7 @@ def add_user_manually(message):
 @bot.message_handler(commands=['deluser'])
 def delete_user(message):
     global chat_users
+    print(f"❌ /deluser от {message.from_user.id}")
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
@@ -371,6 +531,7 @@ def delete_user(message):
 # === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
+    print(f"💾 /backup от {message.from_user.id}")
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
@@ -411,6 +572,7 @@ def backup_command(message):
 
 @bot.message_handler(commands=['restore'])
 def restore_command(message):
+    print(f"📥 /restore от {message.from_user.id}")
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
@@ -424,6 +586,7 @@ def restore_command(message):
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
     global chat_users, reminder_counter, reminders
+    print(f"📄 Файл от {message.from_user.id}")
     
     if message.from_user.id != ADMIN_ID:
         return
@@ -563,7 +726,7 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ (ПРОВЕРЯЕТ _) ==========
+# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ И СООБЩЕНИЙ ДЛЯ ЦИТАТ ==========
 @bot.message_handler(func=lambda message: True)
 def auto_collect_users(message):
     # Пропускаем команды
@@ -581,6 +744,12 @@ def auto_collect_users(message):
     
     if new_count > old_count:
         print(f"✨ Новый пользователь добавлен! Всего: {new_count}")
+    
+    # Добавляем чат в активные для цитат
+    add_chat_to_active(message)
+    
+    # Добавляем сообщение в кэш для цитат
+    add_message_to_quotes(message)
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -591,6 +760,7 @@ def webhook():
             bot.process_new_updates([types.Update.de_json(update)])
         return "OK", 200
     except Exception as e:
+        print(f"❌ Ошибка: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
@@ -605,6 +775,12 @@ if __name__ == "__main__":
     requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
     r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={webhook_url}")
     print(f"Результат: {r.json()}")
+    
+    # Запускаем планировщик цитат
+    schedule_daily_quotes()
+    
+    # Загружаем сохранённые сообщения за сегодня
+    load_daily_quotes()
     
     start_all_reminders()
     app.run(host="0.0.0.0", port=port)
