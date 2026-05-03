@@ -7,7 +7,6 @@ MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 USERS_CACHE_FILE = "chat_users.json"
 
 def load_users():
-    """Загружает пользователей из файла"""
     if os.path.exists(USERS_CACHE_FILE):
         try:
             with open(USERS_CACHE_FILE, 'r', encoding='utf-8') as f:
@@ -21,7 +20,6 @@ def load_users():
     return {}
 
 def save_users(users):
-    """Сохраняет пользователей в файл"""
     try:
         with open(USERS_CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(users, f, ensure_ascii=False, indent=2)
@@ -32,10 +30,8 @@ def save_users(users):
         return False
 
 def save_user_from_message(message, chat_users):
-    """Сохраняет пользователя из сообщения"""
     user = message.from_user
     if not user:
-        print("⚠️ Нет информации о пользователе")
         return chat_users
     
     user_id = str(user.id)
@@ -43,14 +39,12 @@ def save_user_from_message(message, chat_users):
     first_name = user.first_name or ""
     last_name = user.last_name or ""
     
-    # Проверяем, был ли изменён username
     is_new = user_id not in chat_users
     old_username = chat_users.get(user_id, {}).get("username") if not is_new else None
     
     if not is_new and old_username != username:
-        print(f"🔄 Обновление username: '{old_username}' → '{username}' для {first_name}")
+        print(f"🔄 Обновление username: '{old_username}' → '{username}'")
     
-    # Сохраняем
     chat_users[user_id] = {
         "id": user.id,
         "username": username,
@@ -61,54 +55,6 @@ def save_user_from_message(message, chat_users):
     }
     
     save_users(chat_users)
-    
-    # ВСЕГДА логируем
-    print(f"✅ Сохранён: @{username} ({first_name}) [ID: {user_id}]")
+    print(f"✅ Сохранён: @{username} ({first_name})")
     
     return chat_users
-
-def add_user_manual(chat_users, username, user_id=None):
-    """Ручное добавление пользователя"""
-    import time
-    
-    if user_id is None:
-        user_id = f"manual_{int(time.time())}"
-    
-    user_id_str = str(user_id)
-    
-    if user_id_str in chat_users:
-        return False, "Пользователь уже существует"
-    
-    chat_users[user_id_str] = {
-        "id": user_id_str,
-        "username": username,
-        "first_name": username,
-        "last_name": "",
-        "full_name": username,
-        "last_seen": datetime.now(MOSCOW_TZ).isoformat()
-    }
-    
-    save_users(chat_users)
-    return True, f"✅ Пользователь @{username} добавлен"
-
-def delete_user(chat_users, identifier):
-    """Удаляет пользователя из кэша"""
-    found_id = None
-    
-    for uid, user in chat_users.items():
-        if user.get('username') == identifier:
-            found_id = uid
-            break
-        if str(user.get('id')) == identifier:
-            found_id = uid
-            break
-        if uid == identifier:
-            found_id = uid
-            break
-    
-    if found_id:
-        deleted_user = chat_users.pop(found_id)
-        save_users(chat_users)
-        return True, deleted_user
-    
-    return False, None
