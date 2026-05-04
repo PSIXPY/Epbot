@@ -24,14 +24,14 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ЕДИНАЯ ВЕРСИЯ")
+print("🤖 БОТ ЗАПУЩЕН - ФИНАЛЬНАЯ ВЕРСИЯ")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
 # === ЗАГРУЗКА КЭША ПОЛЬЗОВАТЕЛЕЙ ===
 chat_users = user_cache.load_users()
 
-# === ДЛЯ ЦИТАТ (ВСЁ ВНУТРИ) ===
+# === ДЛЯ ЦИТАТ ===
 QUOTES_CACHE_FILE = "daily_quotes.json"
 daily_messages = []
 daily_quote_times = [9, 12, 15, 18, 21]
@@ -103,7 +103,7 @@ def add_chat_to_active(message):
     unique_id = f"{message.chat.id}_{thread_id}"
     if unique_id not in active_chats:
         active_chats.add(unique_id)
-        print(f"📍 Новый чат: {unique_id}")
+        print(f"📍 Новый чат/топик: {unique_id}")
 
 def get_chat_messages_count(chat_id, thread_id=0):
     unique_id = f"{chat_id}_{thread_id}"
@@ -136,21 +136,37 @@ def schedule_daily_quotes():
     print(f"🔄 Очистка в 00:00")
 
 def send_random_quote_to_all_chats():
-    print(f"📜 Отправляю в {len(active_chats)} чатов")
+    """Отправляет цитаты во все чаты (по одной на чат, не больше)"""
+    print(f"📜 Отправляю цитаты в часы рассылки")
+    sent_chats = set()  # Чтобы не отправлять в один чат дважды
+    
     for unique_id in list(active_chats):
         parts = unique_id.split("_")
         chat_id = int(parts[0])
         thread_id = int(parts[1]) if len(parts) > 1 else 0
-        chat_messages = [m for m in daily_messages if m.get('unique_id') == unique_id]
-        if len(chat_messages) < 2:
+        
+        # Если этот чат уже получил цитату - пропускаем
+        if chat_id in sent_chats:
+            print(f"⏩ Чат {chat_id} уже получил цитату, пропускаем")
             continue
+        
+        # Собираем ВСЕ сообщения из этого чата (из всех топиков/подтем)
+        chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
+        
+        if len(chat_messages) < 2:
+            print(f"⏩ В чате {chat_id} недостаточно сообщений ({len(chat_messages)})")
+            continue
+        
+        sent_chats.add(chat_id)
         quote = random.choice(chat_messages)
         text = f"📜 *Цитата дня*\n\n« {quote['text']} »"
+        
         try:
-            bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
-            print(f"✅ Отправлена в {unique_id}")
+            # Отправляем в основной чат (без thread_id)
+            bot.send_message(chat_id, text, parse_mode="Markdown")
+            print(f"✅ Отправлена в чат {chat_id}")
         except Exception as e:
-            print(f"❌ Ошибка: {e}")
+            print(f"❌ Ошибка в чате {chat_id}: {e}")
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 def delete_after_delay(chat_id, message_id, delay=10):
