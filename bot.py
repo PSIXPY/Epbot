@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ЗАЩИЩЁННАЯ ВЕРСИЯ")
+print("🤖 БОТ ЗАПУЩЕН - ПОЛНАЯ ВЕРСИЯ")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -100,7 +100,6 @@ def add_message_to_quotes(message):
 
 def add_chat_to_active(message):
     """Добавляет чат ТОЛЬКО при обычном сообщении (не команде)"""
-    # Не добавляем чат от команд
     if message.text and message.text.startswith('/'):
         print(f"⏩ Чат {message.chat.id}: не добавляем (команда)")
         return
@@ -133,7 +132,6 @@ def clean_inactive_chats():
         parts = unique_id.split("_")
         chat_id = int(parts[0])
         
-        # Проверяем, есть ли сообщения в этом чате
         chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
         if len(chat_messages) < 2:
             to_remove.append(unique_id)
@@ -164,7 +162,7 @@ def schedule_daily_quotes():
     print(f"🔄 Очистка кэша в 00:00")
 
 def send_random_quote_to_all_chats():
-    """Отправляет цитаты только в те чаты, где есть свои сообщения (100% защита)"""
+    """Отправляет цитаты только в те чаты, где есть свои сообщения"""
     clean_inactive_chats()
     
     print(f"📜 Отправляю цитаты в {len(active_chats)} чатов/топиков")
@@ -178,20 +176,15 @@ def send_random_quote_to_all_chats():
         if chat_id in sent_chats:
             continue
         
-        # Берём ТОЛЬКО сообщения из ЭТОГО чата
         chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
         
-        # Если нет своих сообщений - НЕ ОТПРАВЛЯЕМ!
         if len(chat_messages) < 2:
             print(f"⏩ Чат {chat_id}: СВОИХ сообщений нет ({len(chat_messages)}), пропускаем")
             continue
         
         sent_chats.add(chat_id)
-        
-        # Берём цитату ТОЛЬКО из своих сообщений
         quote = random.choice(chat_messages)
         
-        # Двойная проверка безопасности
         if quote.get('chat_id') != chat_id:
             print(f"❌ ОШИБКА: цитата не из чата {chat_id}! Пропускаем")
             continue
@@ -303,13 +296,24 @@ def ask_groq(user_id, prompt):
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
 
+# ========== ФУНКЦИЯ ДЛЯ РЕАКЦИЙ ==========
 def set_reaction(chat_id, message_id):
+    """Ставит реакцию 🔥 на сообщение в канале"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
-    data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "reaction": [{"type": "emoji", "emoji": "🔥"}]
+    }
     try:
-        requests.post(url, json=data, timeout=5)
-    except:
-        pass
+        response = requests.post(url, json=data, timeout=5)
+        result = response.json()
+        if result.get("ok"):
+            print(f"🔥 Реакция поставлена на {message_id} в канале {chat_id}")
+        else:
+            print(f"❌ Ошибка реакции: {result}")
+    except Exception as e:
+        print(f"❌ Исключение при реакции: {e}")
 
 # ========== КОМАНДЫ ==========
 
@@ -734,16 +738,34 @@ def auto_collect_users(message):
     add_chat_to_active(message)
     add_message_to_quotes(message)
 
-# ========== ВЕБХУК ==========
+# ========== ВЕБХУК С ПОДДЕРЖКОЙ РЕАКЦИЙ ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
+        print(f"📨 Вебхук: получен update")
+        
         if update:
+            # Проверяем канальные посты для реакций
+            if "channel_post" in update:
+                post = update["channel_post"]
+                chat_id = post["chat"]["id"]
+                message_id = post["message_id"]
+                print(f"📢 Канальный пост в {chat_id}, message_id: {message_id}")
+                
+                # Проверяем ID каналов
+                if chat_id in [-1002185590715, -1001317416582]:
+                    print(f"✅ Канал в списке, ставим реакцию 🔥")
+                    set_reaction(chat_id, message_id)
+                else:
+                    print(f"⏩ Канал {chat_id} не в списке")
+            
+            # Обрабатываем все обновления
             bot.process_new_updates([types.Update.de_json(update)])
+        
         return "OK", 200
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка вебхука: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
