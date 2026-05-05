@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ПОЛНАЯ ВЕРСИЯ")
+print("🤖 БОТ ЗАПУЩЕН - ФИНАЛЬНАЯ ВЕРСИЯ")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -45,7 +45,7 @@ def load_daily_quotes():
                 data = json.load(f)
                 if data.get('date') == datetime.now(MOSCOW_TZ).strftime('%Y-%m-%d'):
                     daily_messages = data.get('messages', [])
-                    print(f"📚 Загружено {len(daily_messages)} сообщений")
+                    print(f"📚 Загружено {len(daily_messages)} сообщений от людей")
                 else:
                     clear_daily_quotes()
         except Exception as e:
@@ -59,7 +59,7 @@ def save_daily_quotes():
         }
         with open(QUOTES_CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"💾 Сохранено {len(daily_messages)} сообщений")
+        print(f"💾 Сохранено {len(daily_messages)} сообщений от людей")
     except Exception as e:
         print(f"❌ Ошибка: {e}")
 
@@ -70,7 +70,14 @@ def clear_daily_quotes():
     print("🔄 Кэш цитат очищен")
 
 def add_message_to_quotes(message):
+    """Добавляет сообщение в кэш для цитат (только от людей, не от ботов)"""
     global daily_messages
+    
+    # Пропускаем сообщения от ботов
+    if message.from_user and message.from_user.is_bot:
+        print(f"⏩ Пропускаем сообщение от бота: {message.from_user.username}")
+        return
+    
     if not message.text:
         return
     if message.text.startswith('/'):
@@ -82,6 +89,7 @@ def add_message_to_quotes(message):
     user = message.from_user
     if not user:
         return
+    
     thread_id = message.message_thread_id if message.message_thread_id else 0
     unique_id = f"{message.chat.id}_{thread_id}"
     daily_messages.append({
@@ -96,7 +104,7 @@ def add_message_to_quotes(message):
     if len(daily_messages) > 1000:
         daily_messages = daily_messages[-1000:]
     save_daily_quotes()
-    print(f"📝 Добавлено в чат {message.chat.id}: {message.text[:40]}")
+    print(f"📝 Добавлено в чат {message.chat.id}: {message.text[:40]} от {user.first_name}")
 
 def add_chat_to_active(message):
     """Добавляет чат ТОЛЬКО при обычном сообщении (не команде)"""
@@ -296,7 +304,6 @@ def ask_groq(user_id, prompt):
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
 
-# ========== ФУНКЦИЯ ДЛЯ РЕАКЦИЙ ==========
 def set_reaction(chat_id, message_id):
     """Ставит реакцию 🔥 на сообщение в канале"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
@@ -462,9 +469,9 @@ def quote_command(message):
     thread_id = message.message_thread_id if message.message_thread_id else 0
     print(f"📜 /quote в чате {message.chat.id}, топик {thread_id}")
     count = get_chat_messages_count(message.chat.id, thread_id)
-    print(f"📊 Найдено {count} сообщений")
+    print(f"📊 Найдено {count} сообщений от людей")
     if count < 2:
-        bot.reply_to(message, f"📭 В этом чате/топике пока нет сообщений. Напишите что-нибудь! (нужно минимум 2 сообщения)")
+        bot.reply_to(message, f"📭 В этом чате/топике пока нет сообщений от людей. Напишите что-нибудь! (нужно минимум 2 сообщения)")
         return
     quote_text = get_random_quote(message.chat.id, thread_id)
     if quote_text:
@@ -738,27 +745,22 @@ def auto_collect_users(message):
     add_chat_to_active(message)
     add_message_to_quotes(message)
 
-# ========== ВЕБХУК С ПОДДЕРЖКОЙ РЕАКЦИЙ ==========
+# ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
         update = request.get_json()
-        print(f"📨 Вебхук: получен update")
         
         if update:
-            # Проверяем канальные посты для реакций
+            # Канальные посты для реакций
             if "channel_post" in update:
                 post = update["channel_post"]
                 chat_id = post["chat"]["id"]
                 message_id = post["message_id"]
-                print(f"📢 Канальный пост в {chat_id}, message_id: {message_id}")
+                print(f"📢 Канальный пост в {chat_id}")
                 
-                # Проверяем ID каналов
                 if chat_id in [-1002185590715, -1001317416582]:
-                    print(f"✅ Канал в списке, ставим реакцию 🔥")
                     set_reaction(chat_id, message_id)
-                else:
-                    print(f"⏩ Канал {chat_id} не в списке")
             
             # Обрабатываем все обновления
             bot.process_new_updates([types.Update.de_json(update)])
