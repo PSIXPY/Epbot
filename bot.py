@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ФИНАЛЬНАЯ ВЕРСИЯ")
+print("🤖 БОТ ЗАПУЩЕН - ПОЛНАЯ ВЕРСИЯ")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -479,6 +479,22 @@ def quote_command(message):
         print(f"✅ Цитата отправлена")
     else:
         bot.reply_to(message, f"❌ Ошибка: не удалось получить цитату")
+
+# === НОВАЯ КОМАНДА ДЛЯ ПРОВЕРКИ USERNAME ===
+@bot.message_handler(commands=['id'])
+def show_id(message):
+    """Показывает ID и username пользователя (для проверки _)"""
+    user = message.from_user
+    username = user.username if user.username else "нет"
+    has_underscore = "_" in username if user.username else False
+    
+    text = f"🆔 *Твой ID:* `{user.id}`\n"
+    text += f"👤 *Username:* @{username}\n"
+    text += f"📝 *Есть _ :* {'✅ ДА' if has_underscore else '❌ НЕТ'}\n"
+    text += f"📛 *Имя:* {user.first_name or 'не указано'}"
+    
+    bot.reply_to(message, text, parse_mode="Markdown")
+    print(f"🆔 Команда /id от {user.id} (username: {username}, _ : {has_underscore})")
 
 # === АДМИН-КОМАНДЫ ===
 
