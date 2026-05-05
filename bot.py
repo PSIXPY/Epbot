@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ВЕРСИЯ С ИСПРАВЛЕННЫМ USERINFO")
+print("🤖 БОТ ЗАПУЩЕН - ФИНАЛЬНАЯ ВЕРСИЯ")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -425,7 +425,7 @@ def quote_command(message):
         bot.reply_to(message, quote_text, parse_mode="Markdown")
         print(f"✅ Цитата отправлена")
 
-# === НОВАЯ КОМАНДА /userinfo ДЛЯ АДМИНА (ИСПРАВЛЕННАЯ) ===
+# === КОМАНДА /userinfo (ИСПРАВЛЕННАЯ - НАХОДИТ ВСЕХ) ===
 @bot.message_handler(commands=['userinfo'])
 def userinfo_command(message):
     """Показывает информацию о пользователе (только для админа)"""
@@ -433,16 +433,17 @@ def userinfo_command(message):
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
     
-    user_id = None
+    search_param = None
     username_target = None
+    user_id = None
     
     parts = message.text.split(maxsplit=1)
     if len(parts) > 1:
-        # Пробуем как username
-        username_target = parts[1].strip().lstrip("@")
-        # Или как ID (число) - сохраняем как СТРОКУ!
-        if parts[1].strip().isdigit():
-            user_id = parts[1].strip()
+        search_param = parts[1].strip().lstrip("@")
+        if search_param.isdigit():
+            user_id = search_param
+        else:
+            username_target = search_param
     
     if not username_target and not user_id and message.reply_to_message:
         user_id = str(message.reply_to_message.from_user.id)
@@ -462,11 +463,22 @@ def userinfo_command(message):
                 user_id = uid
                 break
     
+    # Поиск по ID (если не нашли по username)
+    if not user_id and search_param and search_param.isdigit():
+        # Проверяем как ключ
+        if search_param in chat_users:
+            user_id = search_param
+        else:
+            # Проверяем в значении 'id'
+            for uid, user in chat_users.items():
+                if str(user.get('id')) == search_param:
+                    user_id = uid
+                    break
+    
     if not user_id:
-        bot.reply_to(message, f"❌ Пользователь @{username_target} не найден в кэше.")
+        bot.reply_to(message, f"❌ Пользователь не найден в кэше.\nИскали: {username_target if username_target else search_param}")
         return
     
-    # Ищем в кэше (user_id уже строка)
     user_data = chat_users.get(str(user_id))
     
     if user_data:
