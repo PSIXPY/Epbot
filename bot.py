@@ -73,7 +73,6 @@ def add_message_to_quotes(message):
     """Добавляет сообщение в кэш для цитат (только от людей, не от ботов)"""
     global daily_messages
     
-    # Пропускаем сообщения от ботов
     if message.from_user and message.from_user.is_bot:
         print(f"⏩ Пропускаем сообщение от бота: {message.from_user.username}")
         return
@@ -305,7 +304,6 @@ def ask_groq(user_id, prompt):
         return f"❌ Ошибка: {str(e)[:100]}"
 
 def set_reaction(chat_id, message_id):
-    """Ставит реакцию 🔥 на сообщение в канале"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {
         "chat_id": chat_id,
@@ -316,11 +314,11 @@ def set_reaction(chat_id, message_id):
         response = requests.post(url, json=data, timeout=5)
         result = response.json()
         if result.get("ok"):
-            print(f"🔥 Реакция поставлена на {message_id} в канале {chat_id}")
+            print(f"🔥 Реакция на {message_id} в канале {chat_id}")
         else:
-            print(f"❌ Ошибка реакции: {result}")
+            print(f"❌ Ошибка: {result}")
     except Exception as e:
-        print(f"❌ Исключение при реакции: {e}")
+        print(f"❌ Исключение: {e}")
 
 # ========== КОМАНДЫ ==========
 
@@ -333,7 +331,7 @@ def start_command(message):
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore`",
+            "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`",
             parse_mode="Markdown")
     else:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
@@ -480,21 +478,63 @@ def quote_command(message):
     else:
         bot.reply_to(message, f"❌ Ошибка: не удалось получить цитату")
 
-# === НОВАЯ КОМАНДА ДЛЯ ПРОВЕРКИ USERNAME ===
-@bot.message_handler(commands=['id'])
-def show_id(message):
-    """Показывает ID и username пользователя (для проверки _)"""
-    user = message.from_user
-    username = user.username if user.username else "нет"
-    has_underscore = "_" in username if user.username else False
+# === НОВАЯ КОМАНДА ДЛЯ АДМИНА - ПРОВЕРКА ПОЛЬЗОВАТЕЛЕЙ ===
+@bot.message_handler(commands=['userinfo'])
+def userinfo_command(message):
+    """Показывает информацию о пользователе (только для админа)"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
     
-    text = f"🆔 *Твой ID:* `{user.id}`\n"
-    text += f"👤 *Username:* @{username}\n"
-    text += f"📝 *Есть _ :* {'✅ ДА' if has_underscore else '❌ НЕТ'}\n"
-    text += f"📛 *Имя:* {user.first_name or 'не указано'}"
+    user_id = None
+    username_target = None
+    
+    parts = message.text.split(maxsplit=1)
+    if len(parts) > 1:
+        username_target = parts[1].strip().lstrip("@")
+    
+    if not username_target and len(parts) > 1 and parts[1].strip().isdigit():
+        user_id = int(parts[1].strip())
+    
+    if not username_target and not user_id and message.reply_to_message:
+        user_id = message.reply_to_message.from_user.id
+    
+    if not username_target and not user_id:
+        bot.reply_to(message, "ℹ️ *Как использовать /userinfo:*\n\n"
+            "• По username: `/userinfo @username`\n"
+            "• По ID: `/userinfo 123456789`\n"
+            "• Ответом на сообщение: `/userinfo` (ответив на сообщение пользователя)",
+            parse_mode="Markdown")
+        return
+    
+    if username_target:
+        for uid, user in chat_users.items():
+            if user.get('username') == username_target:
+                user_id = int(uid) if str(uid).isdigit() else None
+                break
+    
+    if not user_id:
+        bot.reply_to(message, f"❌ Пользователь @{username_target} не найден в кэше. Он должен написать хотя бы одно сообщение в чат.")
+        return
+    
+    user_data = chat_users.get(str(user_id))
+    
+    if user_data:
+        username = user_data.get('username', 'нет')
+        name = user_data.get('first_name', 'неизвестно')
+        last_seen = user_data.get('last_seen', 'неизвестно')[:16]
+        has_underscore = username and "_" in username if username != 'нет' else False
+        
+        text = f"🔍 *Информация о пользователе*\n\n"
+        text += f"🆔 *ID:* `{user_id}`\n"
+        text += f"👤 *Username:* @{username}\n"
+        text += f"📛 *Имя:* {name}\n"
+        text += f"🕐 *Последнее сообщение:* {last_seen}\n"
+        text += f"📝 *Есть _ в username:* {'✅ ДА' if has_underscore else '❌ НЕТ'}"
+    else:
+        text = f"❌ Пользователь с ID `{user_id}` не найден в кэше."
     
     bot.reply_to(message, text, parse_mode="Markdown")
-    print(f"🆔 Команда /id от {user.id} (username: {username}, _ : {has_underscore})")
 
 # === АДМИН-КОМАНДЫ ===
 
@@ -768,7 +808,6 @@ def webhook():
         update = request.get_json()
         
         if update:
-            # Канальные посты для реакций
             if "channel_post" in update:
                 post = update["channel_post"]
                 chat_id = post["chat"]["id"]
@@ -778,12 +817,11 @@ def webhook():
                 if chat_id in [-1002185590715, -1001317416582]:
                     set_reaction(chat_id, message_id)
             
-            # Обрабатываем все обновления
             bot.process_new_updates([types.Update.de_json(update)])
         
         return "OK", 200
     except Exception as e:
-        print(f"❌ Ошибка вебхука: {e}")
+        print(f"❌ Ошибка: {e}")
         return "OK", 200
 
 @app.route("/", methods=["GET"])
