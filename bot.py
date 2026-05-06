@@ -290,7 +290,7 @@ def start_command(message):
             "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
             "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить и другие",
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, отлизать и другие",
             parse_mode="Markdown")
     else:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
@@ -298,7 +298,7 @@ def start_command(message):
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить и другие",
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, отлизать и другие",
             parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
@@ -731,9 +731,9 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (ПРИ ОТВЕТЕ НА СООБЩЕНИЕ) ==========
+# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (С ПОДДЕРЖКОЙ ТОПИКОВ) ==========
 def handle_actions(message):
-    """Обрабатывает действия при ответе на сообщение"""
+    """Обрабатывает действия при ответе на сообщение (работает в топиках)"""
     if not message.reply_to_message:
         return False
     
@@ -742,13 +742,15 @@ def handle_actions(message):
     action = parts[0]
     reply_text = parts[1] if len(parts) > 1 else ""
     
-    # Словарь действий
+    # ПОЛНЫЙ СЛОВАРЬ ДЕЙСТВИЙ (включая 18+)
     actions_map = {
         # Романтика и дружба
         "обнять": "🤗",
         "обнимаю": "🤗",
+        "обниму": "🤗",
         "поцеловать": "😘",
         "целую": "😘",
+        "поцелую": "😘",
         "прижать": "🫂",
         "погладить": "🫳",
         "потрогать": "✋",
@@ -760,7 +762,6 @@ def handle_actions(message):
         "поздравить": "🎉",
         "извиниться": "🙏",
         "пожать руку": "🤝",
-        "обнять": "🤗",
         "шлепнуть": "🖐️",
         "ущипнуть": "🤏",
         "покормить": "🍕",
@@ -793,10 +794,6 @@ def handle_actions(message):
         "повесить": "🪢",
         "уничтожить": "💥",
         "продать": "💰",
-        "оттрахать": "🔞",
-        "выебать": "🔞",
-        "трахнуть": "🔞",
-        "изнасиловать": "🔞",
         "кастрировать": "✂️",
         "отстрелить": "🔫",
         "выкопать": "⛏️",
@@ -805,28 +802,69 @@ def handle_actions(message):
         "щекотать": "😂",
         "пощекотать": "😂",
         
+        # 18+ (добавлены все)
+        "отлизать": "👅💦",
+        "отлизать": "👅💦",
+        "выебать": "🔞",
+        "выебать": "🔞",
+        "оттрахать": "🔞",
+        "трахнуть": "🔞",
+        "трахать": "🔞",
+        "изнасиловать": "🔞",
+        "отсосать": "👅💦",
+        "отсосать": "👅💦",
+        "отдрочить": "✊💦",
+        "подрочить": "✊💦",
+        "кончить": "💦",
+        "кончать": "💦",
+        "секс": "🔞",
+        
         # Бытовые
         "лечь": "😴",
         "прилечь": "😴",
         "пить": "🍺",
+        "спать": "😴",
+        "уснуть": "😴",
     }
     
+    # Нормализуем действие (убираем окончания)
+    action_normalized = action
+    if action.endswith("ть"):
+        action_normalized = action[:-3]
+    if action.endswith("ать"):
+        action_normalized = action[:-3]
+    
+    # Ищем в словаре
+    emoji = None
     if action in actions_map:
         emoji = actions_map[action]
+    elif action_normalized in actions_map:
+        emoji = actions_map[action_normalized]
+        action = action_normalized
+    
+    if emoji:
         sender = message.from_user.first_name or message.from_user.username or "Кто-то"
         target = message.reply_to_message.from_user.first_name or message.reply_to_message.from_user.username or "кому-то"
+        
+        # Получаем thread_id для ответа в топик
+        thread_id = message.message_thread_id if message.message_thread_id else None
         
         if reply_text:
             response = f"{emoji} | *{sender}* {action}(а) *{target}*\n📝 *Реплика:* {reply_text}"
         else:
             response = f"{emoji} | *{sender}* {action}(а) *{target}*"
         
-        bot.send_message(message.chat.id, response, parse_mode="Markdown")
-        return True
+        try:
+            bot.send_message(message.chat.id, response, parse_mode="Markdown", message_thread_id=thread_id)
+            print(f"🎭 Действие: {action} от {sender} к {target}")
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка при отправке действия: {e}")
+            return False
     
     return False
 
-# ========== ОСНОВНОЙ ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ ==========
+# ========== ОСНОВНОЙ ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ (С ПОДДЕРЖКОЙ ТОПИКОВ) ==========
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
     # 1. Проверяем действия при ответе на сообщение
@@ -843,7 +881,7 @@ def main_handler(message):
         if new_count > old_count:
             print(f"✨ Новый пользователь! Всего: {new_count}")
         
-        # Добавляем чат в активные и сообщение в цитаты
+        # Добавляем чат/топик в активные и сообщение в цитаты
         add_chat_to_active(message)
         add_message_to_quotes(message)
 
