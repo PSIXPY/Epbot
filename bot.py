@@ -290,7 +290,7 @@ def start_command(message):
             "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
             "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, отлизать и другие",
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, изнасиловать и другие",
             parse_mode="Markdown")
     else:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
@@ -298,7 +298,7 @@ def start_command(message):
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, отлизать и другие",
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, изнасиловать и другие",
             parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
@@ -731,7 +731,7 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (КАК У IRIS - С ЭМОДЗИ И ПОДДЕРЖКОЙ ТОПИКОВ) ==========
+# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (С ПРОШЕДШИМ ВРЕМЕНЕМ, КАК У IRIS) ==========
 def handle_actions(message):
     """Обрабатывает действия при ответе на сообщение (как у бота Iris)"""
     if not message.reply_to_message:
@@ -742,150 +742,202 @@ def handle_actions(message):
     action = parts[0]
     reply_text = parts[1] if len(parts) > 1 else ""
     
-    # Словарь действий с эмодзи
+    # Словарь действий с эмодзи и формами в прошедшем времени
     actions_map = {
         # Романтика и дружба
-        "обнять": "🤗",
-        "обнимаю": "🤗",
-        "обниму": "🤗",
-        "поцеловать": "😘",
-        "целую": "😘",
-        "поцелую": "😘",
-        "прижать": "🫂",
-        "погладить": "🫳",
-        "потрогать": "✋",
-        "кусь": "🦷",
-        "укусить": "🦷",
-        "лизнуть": "👅",
-        "облизать": "👅",
-        "похвалить": "👍",
-        "поздравить": "🎉",
-        "извиниться": "🙏",
-        "пожать руку": "🤝",
-        "шлепнуть": "🖐️",
-        "ущипнуть": "🤏",
-        "покормить": "🍕",
-        "дать пять": "🙏",
-        "понюхать": "👃",
-        "испугать": "😱",
-        "рассмешить": "😂",
-        "предложить": "💍",
+        "обнять": ("🤗", "обнял"),
+        "обнимаю": ("🤗", "обнял"),
+        "обниму": ("🤗", "обнял"),
+        "поцеловать": ("😘", "поцеловал"),
+        "целую": ("😘", "поцеловал"),
+        "поцелую": ("😘", "поцеловал"),
+        "прижать": ("🫂", "прижал"),
+        "погладить": ("🫳", "погладил"),
+        "потрогать": ("✋", "потрогал"),
+        "кусь": ("🦷", "куснул"),
+        "укусить": ("🦷", "укусил"),
+        "лизнуть": ("👅", "лизнул"),
+        "облизать": ("👅", "облизал"),
+        "похвалить": ("👍", "похвалил"),
+        "поздравить": ("🎉", "поздравил"),
+        "извиниться": ("🙏", "извинился"),
+        "пожать руку": ("🤝", "пожал руку"),
+        "шлепнуть": ("🖐️", "шлепнул"),
+        "ущипнуть": ("🤏", "ущипнул"),
+        "покормить": ("🍕", "покормил"),
+        "дать пять": ("🙏", "дал пять"),
+        "понюхать": ("👃", "понюхал"),
+        "испугать": ("😱", "испугал"),
+        "рассмешить": ("😂", "рассмешил"),
+        "предложить": ("💍", "предложил"),
         
         # Агрессивные
-        "ударить": "👊",
-        "пнуть": "🦶",
-        "убить": "💀",
-        "сжечь": "🔥",
-        "взорвать": "💣",
-        "расстрелять": "🔫",
-        "шмальнуть": "🔫",
-        "задушить": "🪢",
-        "послать нахуй": "🖕",
-        "послать наxуй": "🖕",
-        "наорать": "📢",
-        "унизить": "😢",
-        "арестовать": "🚔",
-        "ушатать": "⚰️",
-        "отрубить": "⚡",
-        "выпороть": "😨",
-        "закопать": "🪦",
-        "связать": "🪢",
-        "заставить": "😤",
-        "повесить": "🪢",
-        "уничтожить": "💥",
-        "продать": "💰",
-        "кастрировать": "✂️",
-        "отстрелить": "🔫",
-        "выкопать": "⛏️",
-        "выпить": "🍺",
-        "наказать": "😈",
-        "щекотать": "😂",
-        "пощекотать": "😂",
+        "ударить": ("👊", "ударил"),
+        "пнуть": ("🦶", "пнул"),
+        "убить": ("💀", "убил"),
+        "сжечь": ("🔥", "сжёг"),
+        "взорвать": ("💣", "взорвал"),
+        "расстрелять": ("🔫", "расстрелял"),
+        "шмальнуть": ("🔫", "шмальнул"),
+        "задушить": ("🪢", "задушил"),
+        "послать нахуй": ("🖕", "послал нахуй"),
+        "наорать": ("📢", "наорал"),
+        "унизить": ("😢", "унизил"),
+        "арестовать": ("🚔", "арестовал"),
+        "ушатать": ("⚰️", "ушатал"),
+        "отрубить": ("⚡", "отрубил"),
+        "выпороть": ("😨", "выпорол"),
+        "закопать": ("🪦", "закопал"),
+        "связать": ("🪢", "связал"),
+        "заставить": ("😤", "заставил"),
+        "повесить": ("🪢", "повесил"),
+        "уничтожить": ("💥", "уничтожил"),
+        "продать": ("💰", "продал"),
+        "кастрировать": ("✂️", "кастрировал"),
+        "отстрелить": ("🔫", "отстрелил"),
+        "выкопать": ("⛏️", "выкопал"),
+        "выпить": ("🍺", "выпил"),
+        "наказать": ("😈", "наказал"),
+        "щекотать": ("😂", "пощекотал"),
+        "пощекотать": ("😂", "пощекотал"),
         
         # 18+
-        "отлизать": "👅",
-        "отлизал": "👅",
-        "выебать": "🔞",
-        "выебал": "🔞",
-        "оттрахать": "🔞",
-        "оттрахал": "🔞",
-        "трахнуть": "🔞",
-        "трахнул": "🔞",
-        "изнасиловать": "🔞",
-        "изнасиловал": "🔞",
-        "отсосать": "👅",
-        "отсосал": "👅",
-        "отдрочить": "✊",
-        "отдрочил": "✊",
-        "подрочить": "✊",
-        "подрочил": "✊",
-        "кончить": "💦",
-        "кончил": "💦",
-        "секс": "🔞",
+        "отлизать": ("👅", "отлизал"),
+        "отлизал": ("👅", "отлизал"),
+        "выебать": ("🔞", "выебал"),
+        "выебал": ("🔞", "выебал"),
+        "оттрахать": ("🔞", "оттрахал"),
+        "оттрахал": ("🔞", "оттрахал"),
+        "трахнуть": ("🔞", "трахнул"),
+        "трахнул": ("🔞", "трахнул"),
+        "изнасиловать": ("🔞", "изнасиловал"),
+        "изнасиловал": ("🔞", "изнасиловал"),
+        "отсосать": ("👅", "отсосал"),
+        "отсосал": ("👅", "отсосал"),
+        "отдрочить": ("✊", "отдрочил"),
+        "отдрочил": ("✊", "отдрочил"),
+        "кончить": ("💦", "кончил"),
+        "кончил": ("💦", "кончил"),
         
         # Бытовые
-        "лечь": "😴",
-        "лёг": "😴",
-        "спать": "😴",
-        "уснуть": "😴",
-        "пить": "🍺",
-        "выпил": "🍺",
+        "лечь": ("😴", "лёг"),
+        "лёг": ("😴", "лёг"),
+        "спать": ("😴", "лёг спать"),
+        "уснуть": ("😴", "уснул"),
+        "пить": ("🍺", "выпил"),
     }
     
-    # Нормализация (откидываем окончания)
-    action_normalized = action
-    if action.endswith("ть"):
-        action_normalized = action[:-3]
-    if action.endswith("ать"):
-        action_normalized = action[:-3]
-    if action.endswith("ил"):
-        action_normalized = action[:-2]
-    
     # Поиск действия
-    emoji = None
     if action in actions_map:
-        emoji = actions_map[action]
-    elif action_normalized in actions_map:
-        emoji = actions_map[action_normalized]
-        action = action_normalized
+        emoji, past_action = actions_map[action]
+    else:
+        return False
     
-    if emoji:
-        # Получаем имена
-        sender = message.from_user.first_name or message.from_user.username or "Кто-то"
-        target = message.reply_to_message.from_user.first_name or message.reply_to_message.from_user.username or "кому-то"
-        
-        # Форматируем как у Iris: "Имя действие(а) Имя"
-        action_with_ending = action
-        if not action.endswith("ть") and not action.endswith("ать"):
-            action_with_ending = action + "(а)"
-        
-        # Базовый ответ
-        if reply_text:
-            response = f"{emoji} {sender} {action_with_ending} {target}: {reply_text}"
-        else:
-            response = f"{emoji} {sender} {action_with_ending} {target}"
-        
-        # Отправляем (с поддержкой топиков)
-        thread_id = message.message_thread_id if message.message_thread_id else None
-        try:
-            bot.send_message(message.chat.id, response, message_thread_id=thread_id)
-            print(f"🎭 {action} от {sender} к {target}")
-            return True
-        except Exception as e:
-            print(f"❌ Ошибка: {e}")
-            return False
+    # Получаем имена
+    sender = message.from_user.first_name or message.from_user.username or "Кто-то"
+    target = message.reply_to_message.from_user.first_name or message.reply_to_message.from_user.username or "кому-то"
     
-    return False
+    # Формируем ответ как у Iris
+    if reply_text:
+        response = f"{emoji} {sender} {past_action} {target}: {reply_text}"
+    else:
+        response = f"{emoji} {sender} {past_action} {target}"
+    
+    # Отправляем (с поддержкой топиков)
+    thread_id = message.message_thread_id if message.message_thread_id else None
+    try:
+        bot.send_message(message.chat.id, response, message_thread_id=thread_id)
+        print(f"🎭 {action} -> {past_action} от {sender} к {target}")
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return False
 
 # ========== ОСНОВНОЙ ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ ==========
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
-    # 1. Проверяем действия при ответе на сообщение
-    if message.text and not message.text.startswith('/'):
-        if handle_actions(message):
-            return  # Если действие обработано - выходим
+    # 1. Обрабатываем приветствия и другие команды без ответа
+    if message.text and not message.text.startswith('/') and not message.reply_to_message:
+        text_lower = message.text.lower().strip()
+        
+        # Приветствия
+        if text_lower in ["привет", "здарова", "здравствуй", "хай", "hello", "ку", "приветики", "здравствуйте"]:
+            user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
+            bot.reply_to(message, f"👋 Привет, {user_name}!")
+            return
+        
+        # Доброе утро / вечер / ночь
+        if text_lower in ["доброе утро", "доброго утра", "с добрым утром"]:
+            user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
+            bot.reply_to(message, f"🌅 Доброе утро, {user_name}! Хорошего дня ☀️")
+            return
+        
+        if text_lower in ["добрый вечер", "доброго вечера"]:
+            user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
+            bot.reply_to(message, f"🌆 Добрый вечер, {user_name}! Как прошёл день?")
+            return
+        
+        if text_lower in ["спокойной ночи", "доброй ночи", "сладких снов"]:
+            user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
+            bot.reply_to(message, f"🌙 Спокойной ночи, {user_name}! Сладких снов 💤")
+            return
+        
+        # Спасибо
+        if text_lower in ["спасибо", "благодарю", "thanks", "thank you", "спс"]:
+            user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
+            responses = [f"🙏 Пожалуйста, {user_name}!", f"😊 Всегда рад помочь, {user_name}!", f"🤗 Обращайся, {user_name}!"]
+            bot.reply_to(message, random.choice(responses))
+            return
+        
+        # Пока
+        if text_lower in ["пока", "до свидания", "прощай", "bye", "до встречи", "удачи"]:
+            user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
+            responses = [f"👋 Пока, {user_name}! Возвращайся!", f"😢 До встречи, {user_name}!", f"👋 {user_name}, хорошего дня!"]
+            bot.reply_to(message, random.choice(responses))
+            return
+        
+        # Как дела
+        if text_lower in ["как дела", "как дела?", "как ты"]:
+            user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
+            responses = [f"😊 У меня всё отлично, {user_name}! А у тебя?", f"🤖 Работаю, {user_name}! Спасибо что спросил!", f"🎉 Отлично, {user_name}! Что нового?"]
+            bot.reply_to(message, random.choice(responses))
+            return
+        
+        # Грустно
+        if text_lower in ["грустно", "печально", "мне грустно", "плохое настроение"]:
+            user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
+            bot.reply_to(message, f"😢 Обнимаю, {user_name}! Всё будет хорошо, ты справишься! 🤗❤️")
+            return
+        
+        # Скучаю
+        if text_lower in ["скучаю", "скучаю по тебе"]:
+            user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
+            bot.reply_to(message, f"🥺 {user_name}, я тоже по тебе скучаю! Приходи почаще! 🤗")
+            return
+        
+        # Ты лучший
+        if text_lower in ["ты лучший", "ты лучшая", "лучший бот", "ты крут", "ты крутая", "молодец", "умница"]:
+            user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
+            bot.reply_to(message, f"😊 Спасибо, {user_name}! Ты тоже лучший/лучшая! ❤️")
+            return
+        
+        # Возрастные маркеры
+        if text_lower == "0+":
+            bot.reply_to(message, f"🍼 Для самых маленьких! Но ты уже большой! 😊")
+            return
+        if text_lower == "13+":
+            bot.reply_to(message, f"🔥 13+ — тут уже интереснее! 😎")
+            return
+        if text_lower == "18+":
+            bot.reply_to(message, f"🔞 18+ — только для взрослых! Ты уверен? 😏")
+            return
     
-    # 2. Автосохранение пользователей и добавление в цитаты (только группы)
+    # 2. Проверяем действия при ответе на сообщение
+    if message.text and not message.text.startswith('/') and message.reply_to_message:
+        if handle_actions(message):
+            return
+    
+    # 3. Автосохранение пользователей и добавление в цитаты (только группы)
     if message.chat.type in ['group', 'supergroup']:
         global chat_users
         old_count = len(chat_users)
