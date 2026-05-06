@@ -290,7 +290,7 @@ def start_command(message):
             "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
             "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, лизать, кончить, сквиртануть и другие",
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, дрочить, кончить, сквиртануть и другие",
             parse_mode="Markdown")
     else:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
@@ -298,7 +298,7 @@ def start_command(message):
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, лизать, кончить, сквиртануть и другие",
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, дрочить, кончить, сквиртануть и другие",
             parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
@@ -733,25 +733,18 @@ threading.Thread(target=clean_old_secrets, daemon=True).start()
 
 # ========== ФУНКЦИЯ ДЛЯ СКЛОНЕНИЯ ИМЁН ==========
 def decline_name(name, preposition=""):
-    """Склоняет имя в зависимости от предлога (поддерживает двойные имена)"""
     preposition = preposition.lower()
-    
     if name in ["кому-то", "пользователь", "участник", "кто-то", "кого-то"]:
         return name
-    
     parts = name.split()
     declined_parts = []
     for part in parts:
         declined_parts.append(decline_single_name(part, preposition))
-    
     return " ".join(declined_parts)
 
 def decline_single_name(name, preposition=""):
-    """Склоняет одно слово (имя или фамилию)"""
     name_lower = name.lower()
-    
     male_exceptions = ['никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья']
-    female_endings = ('а', 'я', 'ия', 'ья')
     
     if preposition in ["в", "на", "за", "про", "через", "сквозь", "под", "над"]:
         if name_lower.endswith('а'):
@@ -820,19 +813,15 @@ def decline_single_name(name, preposition=""):
     return name
 
 def get_gender(user):
-    """Пытаемся определить пол по имени"""
     name = (user.first_name or "").lower()
-    
     female_endings = ('а', 'я', 'ия', 'ья')
     male_exceptions = ('никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья')
-    
     if name.endswith(female_endings) and name not in male_exceptions:
         return 'female'
     return 'male'
 
 # ========== РЕАКЦИИ НА ДЕЙСТВИЯ ==========
 def handle_actions(message):
-    """Обрабатывает действия при ответе на сообщение"""
     if not message.reply_to_message:
         return False
     
@@ -868,6 +857,7 @@ def handle_actions(message):
         "рассмешить": ("😂", "рассмешил", "рассмешила", ""),
         "предложить": ("💍", "предложил", "предложила", ""),
         "помочь": ("🫶", "помог", "помогла", ""),
+        "уважать": ("🙏", "уважал", "уважала", ""),
         
         # Агрессивные
         "ударить": ("👊", "ударил", "ударила", ""),
@@ -901,8 +891,15 @@ def handle_actions(message):
         "пощекотать": ("😂", "пощекотал", "пощекотала", ""),
         
         # 18+
+        "дрочить": ("✊", "дрочил", "дрочила", ""),
+        "дрочу": ("✊", "дрочил", "дрочила", ""),
+        "подрочить": ("✊", "подрочил", "подрочила", ""),
+        "отдрочить": ("✊", "отдрочил", "отдрочила", ""),
+        "отдрочил": ("✊", "отдрочил", "отдрочила", ""),
+        "отдрочила": ("✊", "отдрочила", "отдрочила", ""),
         "лизать": ("👅", "лизал", "лизала", ""),
         "лижет": ("👅", "лизал", "лизала", ""),
+        "лизнуть": ("👅", "лизнул", "лизнула", ""),
         "отлизать": ("👅", "отлизал", "отлизала", ""),
         "отлизал": ("👅", "отлизал", "отлизала", ""),
         "отлизала": ("👅", "отлизала", "отлизала", ""),
@@ -921,10 +918,6 @@ def handle_actions(message):
         "отсосать": ("👅", "отсосал", "отсосала", ""),
         "отсосал": ("👅", "отсосал", "отсосала", ""),
         "отсосала": ("👅", "отсосала", "отсосала", ""),
-        "отдрочить": ("✊", "отдрочил", "отдрочила", ""),
-        "отдрочил": ("✊", "отдрочил", "отдрочила", ""),
-        "отдрочила": ("✊", "отдрочила", "отдрочила", ""),
-        "подрочить": ("✊", "подрочил", "подрочила", ""),
         "кончить": ("💦", "кончил", "кончила", "в"),
         "кончил": ("💦", "кончил", "кончила", "в"),
         "кончила": ("💦", "кончила", "кончила", "в"),
@@ -968,7 +961,6 @@ def handle_actions(message):
         parts = full_text.split(maxsplit=1)
         first_word = parts[0]
         reply_text = parts[1] if len(parts) > 1 else ""
-        
         if first_word in actions_map:
             emoji, past_action_male, past_action_female, preposition = actions_map[first_word]
             action = first_word
@@ -977,7 +969,6 @@ def handle_actions(message):
     
     sender = message.from_user
     target_user = message.reply_to_message.from_user
-    
     sender_name = sender.first_name or sender.username or "Кто-то"
     target_name = target_user.first_name or target_user.username or "кому-то"
     
@@ -998,7 +989,6 @@ def handle_actions(message):
     thread_id = message.message_thread_id if message.message_thread_id else None
     try:
         bot.send_message(message.chat.id, response, message_thread_id=thread_id)
-        print(f"🎭 {action} -> {past_action} от {sender_name} ({sender_gender}) к {target_name}")
         return True
     except Exception as e:
         print(f"❌ Ошибка: {e}")
@@ -1067,29 +1057,17 @@ def main_handler(message):
             return
         
         if text_lower in ["кончить на всех", "кончитьнавсех"]:
-            responses = [
-                f"💦 {user_name} кончил(а) на всех присутствующих! 💦",
-                f"🌊 {user_name} устроил(а) настоящий потоп на всех! 💦",
-                f"💥 {user_name} кончил(а) так, что всем досталось! 💦"
-            ]
+            responses = [f"💦 {user_name} кончил(а) на всех присутствующих! 💦", f"🌊 {user_name} устроил(а) настоящий потоп на всех! 💦", f"💥 {user_name} кончил(а) так, что всем досталось! 💦"]
             bot.reply_to(message, random.choice(responses))
             return
         
         if text_lower in ["сквиртануть", "сквирт", "сквиртанул", "сквиртанула"]:
-            responses = [
-                f"💦💦 {user_name} сквиртанул(а) так, что всех облило! 💦💦",
-                f"🌊 {user_name} устроил(а) настоящий фонтан! 💦💦",
-                f"💦 {user_name} сквиртанул(а) с такой силой! 🔥"
-            ]
+            responses = [f"💦💦 {user_name} сквиртанул(а) так, что всех облило! 💦💦", f"🌊 {user_name} устроил(а) настоящий фонтан! 💦💦", f"💦 {user_name} сквиртанул(а) с такой силой! 🔥"]
             bot.reply_to(message, random.choice(responses))
             return
         
         if text_lower in ["сесть на лицо", "сестьна лицо", "на лицо"]:
-            responses = [
-                f"🍑 {user_name} хочет сесть на лицо? 🤔 Осторожнее!",
-                f"🍑 {user_name}, ты уверен(а)? 👀",
-                f"🍑 Ну {user_name}, это уже слишком! 😳"
-            ]
+            responses = [f"🍑 {user_name} хочет сесть на лицо? 🤔 Осторожнее!", f"🍑 {user_name}, ты уверен(а)? 👀", f"🍑 Ну {user_name}, это уже слишком! 😳"]
             bot.reply_to(message, random.choice(responses))
             return
         
@@ -1099,6 +1077,10 @@ def main_handler(message):
         
         if text_lower in ["унизить", "опустить"]:
             bot.reply_to(message, f"😢 {user_name}, зачем унижать? Давай лучше мирно! 🤗")
+            return
+        
+        if text_lower in ["дрочить", "подрочить"]:
+            bot.reply_to(message, f"✊ {user_name}, ты чего? Не прилюдно же... 🤨")
             return
     
     # 2. Действия при ответе на сообщение
@@ -1114,7 +1096,6 @@ def main_handler(message):
         new_count = len(chat_users)
         if new_count > old_count:
             print(f"✨ Новый пользователь! Всего: {new_count}")
-        
         add_chat_to_active(message)
         add_message_to_quotes(message)
 
