@@ -24,12 +24,13 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ФИНАЛЬНАЯ ВЕРСИЯ")
+print("🤖 БОТ ЗАПУЩЕН - ПОЛНАЯ ВЕРСИЯ")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
 # === ЗАГРУЗКА КЭША ПОЛЬЗОВАТЕЛЕЙ ===
 chat_users = user_cache.load_users()
+print(f"👥 Загружено {len(chat_users)} пользователей")
 
 # === ДЛЯ ЦИТАТ ===
 QUOTES_CACHE_FILE = "daily_quotes.json"
@@ -141,6 +142,7 @@ def schedule_daily_quotes():
         timer = threading.Timer(delay, send_random_quote_to_all_chats)
         timer.daemon = True
         timer.start()
+        print(f"📜 Цитата на {target.strftime('%H:%M')}")
     midnight = now_moscow.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     midnight_delay = (midnight - now_moscow).total_seconds()
     midnight_timer = threading.Timer(midnight_delay, clear_daily_quotes)
@@ -203,8 +205,9 @@ reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
 def send_reminder(reminder):
     try:
         bot.send_message(reminder["chat_id"], f"⏰ НАПОМИНАНИЕ!\n\n{reminder['text']}", message_thread_id=reminder.get("thread_id"))
+        print(f"✅ Напоминание {reminder['id']} отправлено")
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"❌ Ошибка отправки: {e}")
 
 def schedule_reminder(reminder):
     now_moscow = datetime.now(MOSCOW_TZ)
@@ -216,6 +219,7 @@ def schedule_reminder(reminder):
     timer.daemon = True
     timer.start()
     reminder["_timer"] = timer
+    print(f"⏰ Напоминание {reminder['id']} на {target.strftime('%Y-%m-%d %H:%M')}")
 
 def execute_reminder(reminder):
     send_reminder(reminder)
@@ -267,7 +271,10 @@ def set_reaction(chat_id, message_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
     try:
-        requests.post(url, json=data, timeout=5)
+        response = requests.post(url, json=data, timeout=5)
+        result = response.json()
+        if result.get("ok"):
+            print(f"🔥 Реакция на {message_id} в канале {chat_id}")
     except:
         pass
 
@@ -275,21 +282,23 @@ def set_reaction(chat_id, message_id):
 
 @bot.message_handler(commands=['start', 'help'])
 def start_command(message):
-    print(f"📢 /start в чате {message.chat.id}")
+    print(f"📢 /start от {message.from_user.id}")
     if message.from_user.id == ADMIN_ID:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`",
+            "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`\n\n"
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить и другие",
             parse_mode="Markdown")
     else:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
-            "📨 *Скрытые сообщения:* `@бот username текст`",
+            "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить и другие",
             parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
@@ -414,23 +423,18 @@ def delete_reminder(message):
 @bot.message_handler(commands=['quote'])
 def quote_command(message):
     thread_id = message.message_thread_id if message.message_thread_id else 0
-    print(f"📜 /quote в чате {message.chat.id}, топик {thread_id}")
     count = get_chat_messages_count(message.chat.id, thread_id)
-    print(f"📊 Найдено {count} сообщений")
     if count < 2:
-        bot.reply_to(message, f"📭 В этом чате/топике пока нет сообщений. Напишите что-нибудь! (нужно минимум 2 сообщения)")
+        bot.reply_to(message, "📭 Пока нет сообщений для цитаты. Напишите что-нибудь!")
         return
     quote_text = get_random_quote(message.chat.id, thread_id)
     if quote_text:
         bot.reply_to(message, quote_text, parse_mode="Markdown")
-        print(f"✅ Цитата отправлена")
 
-# === КОМАНДА /userinfo (ИСПРАВЛЕННАЯ - НАХОДИТ ВСЕХ) ===
 @bot.message_handler(commands=['userinfo'])
 def userinfo_command(message):
-    """Показывает информацию о пользователе (только для админа)"""
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        bot.reply_to(message, "❌ Нет прав!")
         return
     
     search_param = None
@@ -449,37 +453,31 @@ def userinfo_command(message):
         user_id = str(message.reply_to_message.from_user.id)
     
     if not username_target and not user_id:
-        bot.reply_to(message, "ℹ️ *Как использовать /userinfo:*\n\n"
-            "• По username: `/userinfo @username`\n"
-            "• По ID: `/userinfo 123456789`\n"
-            "• Ответом на сообщение: `/userinfo` (ответив на сообщение пользователя)",
-            parse_mode="Markdown")
+        bot.reply_to(message, "ℹ️ /userinfo @username или /userinfo ID")
         return
     
-    # Поиск по username
     if username_target:
         for uid, user in chat_users.items():
             if user.get('username') == username_target:
                 user_id = uid
                 break
     
-    # Поиск по ID (если не нашли по username)
     if not user_id and search_param and search_param.isdigit():
-        # Проверяем как ключ
         if search_param in chat_users:
             user_id = search_param
         else:
-            # Проверяем в значении 'id'
             for uid, user in chat_users.items():
                 if str(user.get('id')) == search_param:
                     user_id = uid
                     break
     
     if not user_id:
-        bot.reply_to(message, f"❌ Пользователь не найден в кэше.\nИскали: {username_target if username_target else search_param}")
+        bot.reply_to(message, "❌ Пользователь не найден в кэше")
         return
     
     user_data = chat_users.get(str(user_id))
+    if not user_data:
+        user_data = chat_users.get(user_id)
     
     if user_data:
         username = user_data.get('username', 'нет')
@@ -493,10 +491,9 @@ def userinfo_command(message):
         text += f"📛 *Имя:* {name}\n"
         text += f"🕐 *Последнее сообщение:* {last_seen}\n"
         text += f"📝 *Есть _ в username:* {'✅ ДА' if has_underscore else '❌ НЕТ'}"
+        bot.reply_to(message, text, parse_mode="Markdown")
     else:
-        text = f"❌ Пользователь с ID `{user_id}` не найден в кэше."
-    
-    bot.reply_to(message, text, parse_mode="Markdown")
+        bot.reply_to(message, "❌ Пользователь не найден")
 
 # === АДМИН-КОМАНДЫ ===
 
@@ -514,15 +511,13 @@ def show_users(message):
     total = len(chat_users)
     bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
     text = "📋 *Список пользователей:*\n\n"
-    for uid, user in chat_users.items():
+    for uid, user in list(chat_users.items())[:50]:
         username = user.get('username', 'нет')
         name = user.get('first_name', 'Без имени')
         text += f"• `{uid}` | @{username} | {name}\n"
-        if len(text) > 3500:
-            bot.send_message(message.chat.id, text, parse_mode="Markdown")
-            text = ""
-    if text:
-        bot.send_message(message.chat.id, text, parse_mode="Markdown")
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+    if len(chat_users) > 50:
+        bot.send_message(message.chat.id, f"📊 и ещё {len(chat_users)-50} пользователей...\n/users full - полный список")
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
@@ -650,10 +645,7 @@ def handle_restore_file(message):
         if "chat_users" in data:
             chat_users = data["chat_users"]
             user_cache.save_users(chat_users)
-        bot.edit_message_text(
-            f"✅ Восстановлено!\n👥 {len(chat_users)} пользователей\n⏰ {len(reminders)} напоминаний",
-            message.chat.id, status.message_id
-        )
+        bot.edit_message_text(f"✅ Восстановлено!\n👥 {len(chat_users)} пользователей\n⏰ {len(reminders)} напоминаний", message.chat.id, status.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, status.message_id)
 
@@ -739,21 +731,121 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== АВТОСБОР ПОЛЬЗОВАТЕЛЕЙ ==========
+# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (ПРИ ОТВЕТЕ НА СООБЩЕНИЕ) ==========
+def handle_actions(message):
+    """Обрабатывает действия при ответе на сообщение"""
+    if not message.reply_to_message:
+        return False
+    
+    text = message.text.strip().lower()
+    parts = text.split(maxsplit=1)
+    action = parts[0]
+    reply_text = parts[1] if len(parts) > 1 else ""
+    
+    # Словарь действий
+    actions_map = {
+        # Романтика и дружба
+        "обнять": "🤗",
+        "обнимаю": "🤗",
+        "поцеловать": "😘",
+        "целую": "😘",
+        "прижать": "🫂",
+        "погладить": "🫳",
+        "потрогать": "✋",
+        "кусь": "🦷",
+        "укусить": "🦷",
+        "лизнуть": "👅",
+        "облизать": "👅",
+        "похвалить": "👍",
+        "поздравить": "🎉",
+        "извиниться": "🙏",
+        "пожать руку": "🤝",
+        "обнять": "🤗",
+        "шлепнуть": "🖐️",
+        "ущипнуть": "🤏",
+        "покормить": "🍕",
+        "дать пять": "🙏",
+        "понюхать": "👃",
+        "испугать": "😱",
+        "рассмешить": "😂",
+        "предложить": "💍",
+        
+        # Агрессивные
+        "ударить": "👊",
+        "пнуть": "🦶",
+        "убить": "💀",
+        "сжечь": "🔥",
+        "взорвать": "💣",
+        "расстрелять": "🔫",
+        "шмальнуть": "🔫",
+        "задушить": "🪢",
+        "послать нахуй": "🖕",
+        "послать наxуй": "🖕",
+        "наорать": "📢",
+        "унизить": "😢",
+        "арестовать": "🚔",
+        "ушатать": "⚰️",
+        "отрубить": "⚡",
+        "выпороть": "😨",
+        "закопать": "🪦",
+        "связать": "🪢",
+        "заставить": "😤",
+        "повесить": "🪢",
+        "уничтожить": "💥",
+        "продать": "💰",
+        "оттрахать": "🔞",
+        "выебать": "🔞",
+        "трахнуть": "🔞",
+        "изнасиловать": "🔞",
+        "кастрировать": "✂️",
+        "отстрелить": "🔫",
+        "выкопать": "⛏️",
+        "выпить": "🍺",
+        "наказать": "😈",
+        "щекотать": "😂",
+        "пощекотать": "😂",
+        
+        # Бытовые
+        "лечь": "😴",
+        "прилечь": "😴",
+        "пить": "🍺",
+    }
+    
+    if action in actions_map:
+        emoji = actions_map[action]
+        sender = message.from_user.first_name or message.from_user.username or "Кто-то"
+        target = message.reply_to_message.from_user.first_name or message.reply_to_message.from_user.username or "кому-то"
+        
+        if reply_text:
+            response = f"{emoji} | *{sender}* {action}(а) *{target}*\n📝 *Реплика:* {reply_text}"
+        else:
+            response = f"{emoji} | *{sender}* {action}(а) *{target}*"
+        
+        bot.send_message(message.chat.id, response, parse_mode="Markdown")
+        return True
+    
+    return False
+
+# ========== ОСНОВНОЙ ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ ==========
 @bot.message_handler(func=lambda message: True)
-def auto_collect_users(message):
-    if message.text and message.text.startswith('/'):
-        return
-    if message.chat.type not in ['group', 'supergroup']:
-        return
-    global chat_users
-    old_count = len(chat_users)
-    chat_users = user_cache.save_user_from_message(message, chat_users)
-    new_count = len(chat_users)
-    if new_count > old_count:
-        print(f"✨ Новый пользователь! Всего: {new_count}")
-    add_chat_to_active(message)
-    add_message_to_quotes(message)
+def main_handler(message):
+    # 1. Проверяем действия при ответе на сообщение
+    if message.text and not message.text.startswith('/'):
+        if handle_actions(message):
+            return  # Если действие обработано - выходим
+    
+    # 2. Автосохранение пользователей и добавление в цитаты (только группы)
+    if message.chat.type in ['group', 'supergroup']:
+        global chat_users
+        old_count = len(chat_users)
+        chat_users = user_cache.save_user_from_message(message, chat_users)
+        new_count = len(chat_users)
+        if new_count > old_count:
+            print(f"✨ Новый пользователь! Всего: {new_count}")
+        
+        # Добавляем чат в активные и сообщение в цитаты
+        add_chat_to_active(message)
+        add_message_to_quotes(message)
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -777,6 +869,7 @@ def webhook():
 def health():
     return "OK", 200
 
+# ========== ЗАПУСК ==========
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
