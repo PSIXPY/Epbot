@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ВЕРСИЯ С АВТООПРЕДЕЛЕНИЕМ РОДА")
+print("🤖 БОТ ЗАПУЩЕН - ВЕРСИЯ СО СКЛОНЕНИЕМ ИМЁН")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -731,7 +731,89 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (С АВТООПРЕДЕЛЕНИЕМ РОДА) ==========
+# ========== ФУНКЦИЯ ДЛЯ СКЛОНЕНИЯ ИМЁН ==========
+def decline_name(name, preposition=""):
+    """Склоняет имя в зависимости от предлога"""
+    name_lower = name.lower()
+    preposition = preposition.lower()
+    
+    # Если в имени уже есть пробел или это не имя
+    if " " in name or name in ["кому-то", "пользователь", "участник", "кто-то"]:
+        return name
+    
+    # Винительный падеж (кого?/что?) для предлогов "в", "на", "за", "про", "через", "сквозь"
+    if preposition in ["в", "на", "за", "про", "через", "сквозь", "под", "над"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'у'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'ю'
+        elif name_lower.endswith('й'):
+            return name[:-1] + 'я'
+        elif name_lower.endswith('ь'):
+            return name[:-1] + 'я'
+        else:
+            return name + 'а'
+    
+    # Родительный падеж (кого?/чего?) для предлогов "у", "без", "до", "из", "от", "для", "после", "с"
+    if preposition in ["у", "без", "до", "из", "от", "для", "ради", "после", "с", "со"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'ы'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'и'
+        elif name_lower.endswith('й'):
+            return name[:-1] + 'я'
+        elif name_lower.endswith('ь'):
+            return name[:-1] + 'я'
+        else:
+            return name + 'а'
+    
+    # Дательный падеж (кому?/чему?) для предлогов "к", "по", "благодаря", "вопреки"
+    if preposition in ["к", "по", "благодаря", "вопреки"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'е'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'е'
+        elif name_lower.endswith('й'):
+            return name[:-1] + 'ю'
+        else:
+            return name + 'у'
+    
+    # Творительный падеж (кем?/чем?) для предлогов "с", "над", "под", "перед", "за"
+    if preposition in ["с", "над", "под", "перед", "за"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'ой'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'ей'
+        elif name_lower.endswith('й'):
+            return name[:-1] + 'ем'
+        else:
+            return name + 'ом'
+    
+    # Предложный падеж (о ком?/о чём?) для предлогов "о", "об", "при", "на", "в"
+    if preposition in ["о", "об", "при", "на", "в"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'е'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'е'
+        else:
+            return name + 'е'
+    
+    # По умолчанию - винительный падеж (если предлог "в" или "на" или другой)
+    if preposition:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'у'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'ю'
+        elif name_lower.endswith('й'):
+            return name[:-1] + 'я'
+        elif name_lower.endswith('ь'):
+            return name[:-1] + 'я'
+        else:
+            return name + 'а'
+    
+    return name
+
+# ========== ФУНКЦИЯ ДЛЯ ОПРЕДЕЛЕНИЯ ПОЛА ==========
 def get_gender(user):
     """Пытаемся определить пол по имени"""
     name = (user.first_name or "").lower()
@@ -745,6 +827,7 @@ def get_gender(user):
         return 'female'
     return 'male'
 
+# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (С АВТООПРЕДЕЛЕНИЕМ РОДА И СКЛОНЕНИЕМ ИМЁН) ==========
 def handle_actions(message):
     """Обрабатывает действия при ответе на сообщение"""
     if not message.reply_to_message:
@@ -874,28 +957,31 @@ def handle_actions(message):
         else:
             return False
     
-    # Определяем пол отправителя
+    # Получаем имена
     sender = message.from_user
     target_user = message.reply_to_message.from_user
     
     sender_name = sender.first_name or sender.username or "Кто-то"
     target_name = target_user.first_name or target_user.username or "кому-то"
     
+    # Определяем пол отправителя
     sender_gender = get_gender(sender)
     past_action = past_action_male if sender_gender == 'male' else past_action_female
     
-    # Формируем ответ
+    # Склоняем имя получателя
     if preposition:
-        target_with_preposition = f"{preposition} {target_name}"
+        declined_target = decline_name(target_name, preposition)
+        target_with_preposition = f"{preposition} {declined_target}"
     else:
-        target_with_preposition = target_name
+        target_with_preposition = decline_name(target_name, "")
     
+    # Формируем ответ
     if reply_text:
         response = f"{emoji} {sender_name} {past_action} {target_with_preposition}: {reply_text}"
     else:
         response = f"{emoji} {sender_name} {past_action} {target_with_preposition}"
     
-    # Отправляем
+    # Отправляем (с поддержкой топиков)
     thread_id = message.message_thread_id if message.message_thread_id else None
     try:
         bot.send_message(message.chat.id, response, message_thread_id=thread_id)
@@ -918,7 +1004,6 @@ def main_handler(message):
             bot.reply_to(message, f"👋 Привет, {user_name}!")
             return
         
-        # Доброе утро / вечер / ночь
         if text_lower in ["доброе утро", "доброго утра", "с добрым утром"]:
             bot.reply_to(message, f"🌅 Доброе утро, {user_name}! Хорошего дня ☀️")
             return
@@ -931,40 +1016,33 @@ def main_handler(message):
             bot.reply_to(message, f"🌙 Спокойной ночи, {user_name}! Сладких снов 💤")
             return
         
-        # Спасибо
         if text_lower in ["спасибо", "благодарю", "thanks", "thank you", "спс"]:
             responses = [f"🙏 Пожалуйста, {user_name}!", f"😊 Всегда рад помочь, {user_name}!", f"🤗 Обращайся, {user_name}!"]
             bot.reply_to(message, random.choice(responses))
             return
         
-        # Пока
         if text_lower in ["пока", "до свидания", "прощай", "bye", "до встречи", "удачи"]:
             responses = [f"👋 Пока, {user_name}! Возвращайся!", f"😢 До встречи, {user_name}!", f"👋 {user_name}, хорошего дня!"]
             bot.reply_to(message, random.choice(responses))
             return
         
-        # Как дела
         if text_lower in ["как дела", "как дела?", "как ты"]:
             responses = [f"😊 У меня всё отлично, {user_name}! А у тебя?", f"🤖 Работаю, {user_name}! Спасибо что спросил!", f"🎉 Отлично, {user_name}! Что нового?"]
             bot.reply_to(message, random.choice(responses))
             return
         
-        # Грустно
         if text_lower in ["грустно", "печально", "мне грустно", "плохое настроение"]:
             bot.reply_to(message, f"😢 Обнимаю, {user_name}! Всё будет хорошо, ты справишься! 🤗❤️")
             return
         
-        # Скучаю
         if text_lower in ["скучаю", "скучаю по тебе"]:
             bot.reply_to(message, f"🥺 {user_name}, я тоже по тебе скучаю! Приходи почаще! 🤗")
             return
         
-        # Ты лучший
         if text_lower in ["ты лучший", "ты лучшая", "лучший бот", "ты крут", "ты крутая", "молодец", "умница"]:
             bot.reply_to(message, f"😊 Спасибо, {user_name}! Ты тоже лучший/лучшая! ❤️")
             return
         
-        # Возрастные маркеры
         if text_lower == "0+":
             bot.reply_to(message, f"🍼 Для самых маленьких! Но ты уже большой! 😊")
             return
@@ -980,7 +1058,7 @@ def main_handler(message):
         if handle_actions(message):
             return
     
-    # 3. Автосохранение пользователей и цитаты
+    # 3. Автосохранение пользователей и цитаты (только группы)
     if message.chat.type in ['group', 'supergroup']:
         global chat_users
         old_count = len(chat_users)
