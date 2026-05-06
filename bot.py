@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ФИНАЛЬНАЯ ВЕРСИЯ")
+print("🤖 БОТ ЗАПУЩЕН - ПОЛНАЯ ВЕРСИЯ")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -91,6 +91,7 @@ def add_message_to_quotes(message):
         'text': message.text.strip(),
         'author': user.id,
         'author_name': user.first_name or user.username or "Участник",
+        'author_username': user.username,
         'time': datetime.now(MOSCOW_TZ).strftime('%H:%M:%S'),
         'chat_id': message.chat.id,
         'thread_id': thread_id,
@@ -278,6 +279,173 @@ def set_reaction(chat_id, message_id):
     except:
         pass
 
+# ========== НАСТРАИВАЕМОЕ САММАРИ ЧАТА ==========
+
+summary_settings = {}
+
+def load_summary_settings():
+    global summary_settings
+    if os.path.exists("summary_settings.json"):
+        try:
+            with open("summary_settings.json", 'r', encoding='utf-8') as f:
+                summary_settings = json.load(f)
+                print(f"📋 Загружено {len(summary_settings)} настроек саммари")
+        except:
+            pass
+
+def save_summary_settings():
+    try:
+        with open("summary_settings.json", 'w', encoding='utf-8') as f:
+            json.dump(summary_settings, f, ensure_ascii=False, indent=2)
+        print(f"💾 Сохранены настройки саммари для {len(summary_settings)} чатов")
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+
+def get_chat_summary_settings(chat_id):
+    chat_id_str = str(chat_id)
+    if chat_id_str not in summary_settings:
+        summary_settings[chat_id_str] = {
+            "time": "22:00",
+            "style": "normal",
+            "length": "full"
+        }
+        save_summary_settings()
+    return summary_settings[chat_id_str]
+
+def update_chat_summary_settings(chat_id, key, value):
+    chat_id_str = str(chat_id)
+    if chat_id_str not in summary_settings:
+        summary_settings[chat_id_str] = {"time": "22:00", "style": "normal", "length": "full"}
+    summary_settings[chat_id_str][key] = value
+    save_summary_settings()
+
+def generate_chat_summary(chat_id, style="normal", length="full"):
+    today = datetime.now(MOSCOW_TZ).strftime('%Y-%m-%d')
+    
+    today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
+    
+    if len(today_messages) < 3:
+        return None
+    
+    total_msgs = len(today_messages)
+    users_count = len(set(m.get('author') for m in today_messages))
+    
+    user_activity = {}
+    for msg in today_messages:
+        author = msg.get('author_name', 'Unknown')
+        user_activity[author] = user_activity.get(author, 0) + 1
+    
+    top_users = sorted(user_activity.items(), key=lambda x: x[1], reverse=True)[:5]
+    
+    stop_words = {'и', 'в', 'на', 'не', 'а', 'но', 'за', 'по', 'с', 'у', 'к', 'из', 'от', 'до', 'о', 'об', 'же', 'ли', 'бы', 'это', 'что', 'как', 'так', 'все', 'меня', 'мне', 'тебя', 'тебе', 'его', 'её', 'нас', 'вас', 'их', 'мой', 'твой', 'наш', 'ваш', 'их', 'просто', 'вот', 'если', 'или', 'без', 'для'}
+    
+    word_count = {}
+    for msg in today_messages:
+        words = msg.get('text', '').lower().split()
+        for word in words:
+            word_clean = word.strip('.,!?;:()[]{}"\'')
+            if len(word_clean) > 3 and word_clean not in stop_words and not word_clean.startswith('/'):
+                word_count[word_clean] = word_count.get(word_clean, 0) + 1
+    
+    top_words = sorted(word_count.items(), key=lambda x: x[1], reverse=True)[:5]
+    random_quote = random.choice(today_messages) if today_messages else None
+    
+    if length == "full":
+        if style == "troll":
+            troll_opening = [
+                f"🤪 *Тролль-сводка дня*\n\nВ чате как всегда — {total_msgs} сообщений от {users_count} \"активных\" пользователей.\n\n",
+                f"😈 *А вот и сводка от тролля*\n\n{total_msgs} сообщений, {users_count} \"писателей\".\n\n",
+                f"🎭 *Сводка дня (версия для взрослых)*\n\nЗа сегодня {total_msgs} сообщений от {users_count} участников.\n\n"
+            ]
+            text = random.choice(troll_opening)
+            
+            if top_users:
+                text += f"🔥 *Топ \"болтунов\":*\n"
+                for i, (name, count) in enumerate(top_users[:3]):
+                    if count > 30:
+                        text += f"• {name} — {count} раз (ужас!)\n"
+                    elif count > 15:
+                        text += f"• {name} — {count} раз (мог бы и больше)\n"
+                    else:
+                        text += f"• {name} — {count} раз\n"
+                text += "\n"
+            
+            if top_words:
+                text += f"📝 *Часто проскакивало:* {', '.join([f'\"{word}\" ({count})' for word, count in top_words[:3]])}\n\n"
+            else:
+                text += f"📝 *Ничего умного не замечено*\n\n"
+            
+            if random_quote:
+                text += f"💬 *Цитата дня:*\n« {random_quote['text'][:100]} »\n— {random_quote['author_name']}"
+                if random_quote.get('time'):
+                    text += f"  •  {random_quote['time']}"
+                text += "\n\n"
+            
+            text += f"🤡 *Итог:* Всё как обычно — говорим много, делу — ноль."
+            return text
+        else:
+            text = f"📋 *Сводка дня*\n\n"
+            text += f"📊 *Статистика:*\n"
+            text += f"• Сообщений: {total_msgs}\n"
+            text += f"• Участников: {users_count}\n\n"
+            
+            if top_users:
+                text += f"🏆 *Самые активные:*\n"
+                for name, count in top_users[:3]:
+                    text += f"• {name} — {count}\n"
+                text += "\n"
+            
+            if top_words:
+                text += f"📝 *Часто обсуждали:* {', '.join([f'\"{word}\" ({count})' for word, count in top_words[:3]])}\n\n"
+            else:
+                text += f"📝 *Темы дня:* разнообразные\n\n"
+            
+            if random_quote:
+                text += f"💬 *Цитата дня:*\n« {random_quote['text'][:100]} »\n— {random_quote['author_name']}"
+                if random_quote.get('time'):
+                    text += f"  •  {random_quote['time']}"
+                text += "\n\n"
+            
+            return text
+    else:
+        if style == "troll":
+            return f"🤪 *Кратко:* {total_msgs} сообщений, {users_count} человек. Лидер: {top_users[0][0] if top_users else 'никто'}. Цитата: «{random_quote['text'][:50] if random_quote else '...'}»"
+        else:
+            return f"📋 *Краткая сводка:* {total_msgs} сообщений, {users_count} участников. Самый активный: {top_users[0][0] if top_users else 'нет'}."
+
+def send_scheduled_summary(chat_id, thread_id=0):
+    settings = get_chat_summary_settings(chat_id)
+    summary = generate_chat_summary(chat_id, settings["style"], settings["length"])
+    if summary:
+        try:
+            bot.send_message(chat_id, summary, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
+            print(f"📋 Отправлена сводка в чат {chat_id} (стиль: {settings['style']}, длина: {settings['length']})")
+        except Exception as e:
+            print(f"❌ Ошибка: {e}")
+    else:
+        print(f"⏩ Недостаточно сообщений для сводки в чате {chat_id}")
+
+def schedule_chat_summaries():
+    now_moscow = datetime.now(MOSCOW_TZ)
+    for unique_chat in active_chats:
+        parts = unique_chat.split("_")
+        chat_id = int(parts[0])
+        thread_id = int(parts[1]) if len(parts) > 1 else 0
+        settings = get_chat_summary_settings(chat_id)
+        time_str = settings["time"]
+        try:
+            target_hour, target_minute = map(int, time_str.split(":"))
+            target = now_moscow.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+            if target <= now_moscow:
+                target += timedelta(days=1)
+            delay = (target - now_moscow).total_seconds()
+            timer = threading.Timer(delay, lambda: send_scheduled_summary(chat_id, thread_id))
+            timer.daemon = True
+            timer.start()
+            print(f"📋 Сводка для чата {chat_id} на {target.strftime('%H:%M')} (стиль: {settings['style']}, длина: {settings['length']})")
+        except:
+            pass
+
 # ========== КОМАНДЫ ==========
 
 @bot.message_handler(commands=['start', 'help'])
@@ -288,17 +456,18 @@ def start_command(message):
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
+            "📋 *Сводка дня:* `/summary`\n`/summary тролль`\n`/summary кратко`\n`/summary полно`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, сосать, дрочить, кончить и другие",
+            "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`\n"
+            "`/summary_time 20:00` `/summary_style тролль` `/summary_length кратко` `/summary_settings`",
             parse_mode="Markdown")
     else:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
-            "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, сосать, дрочить, кончить и другие",
+            "📋 *Сводка дня:* `/summary`\n`/summary тролль`\n`/summary кратко`\n`/summary полно`\n\n"
+            "📨 *Скрытые сообщения:* `@бот username текст`",
             parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
@@ -431,69 +600,139 @@ def quote_command(message):
     if quote_text:
         bot.reply_to(message, quote_text, parse_mode="Markdown")
 
-@bot.message_handler(commands=['userinfo'])
-def userinfo_command(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
-        return
+# === КОМАНДЫ САММАРИ ===
+
+@bot.message_handler(commands=['summary'])
+def summary_command(message):
+    parts = message.text.split(maxsplit=2)
+    param1 = parts[1].lower() if len(parts) > 1 else ""
+    param2 = parts[2].lower() if len(parts) > 2 else ""
     
-    search_param = None
-    username_target = None
-    user_id = None
+    style = get_chat_summary_settings(message.chat.id)["style"]
+    length = get_chat_summary_settings(message.chat.id)["length"]
+    
+    if param1 == "тролль" or param1 == "troll":
+        style = "troll"
+    elif param1 == "обычный" or param1 == "normal":
+        style = "normal"
+    
+    if param2 == "кратко" or param2 == "short":
+        length = "short"
+    elif param2 == "полно" or param2 == "full":
+        length = "full"
+    
+    if param1 in ["кратко", "short"]:
+        style = get_chat_summary_settings(message.chat.id)["style"]
+        length = "short"
+        if param2 in ["тролль", "troll"]:
+            style = "troll"
+        elif param2 in ["обычный", "normal"]:
+            style = "normal"
+    elif param1 in ["полно", "full"]:
+        style = get_chat_summary_settings(message.chat.id)["style"]
+        length = "full"
+        if param2 in ["тролль", "troll"]:
+            style = "troll"
+        elif param2 in ["обычный", "normal"]:
+            style = "normal"
+    
+    summary = generate_chat_summary(message.chat.id, style, length)
+    if summary:
+        bot.reply_to(message, summary, parse_mode="Markdown")
+    else:
+        bot.reply_to(message, "📭 Пока недостаточно сообщений для сводки (нужно минимум 3)")
+
+@bot.message_handler(commands=['summary_time'])
+def summary_time_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
     
     parts = message.text.split(maxsplit=1)
-    if len(parts) > 1:
-        search_param = parts[1].strip().lstrip("@")
-        if search_param.isdigit():
-            user_id = search_param
-        else:
-            username_target = search_param
-    
-    if not username_target and not user_id and message.reply_to_message:
-        user_id = str(message.reply_to_message.from_user.id)
-    
-    if not username_target and not user_id:
-        bot.reply_to(message, "ℹ️ /userinfo @username или /userinfo ID")
+    if len(parts) < 2:
+        bot.reply_to(message, "ℹ️ /summary_time 20:00\nвремя в формате ЧЧ:ММ (МСК)")
         return
     
-    if username_target:
-        for uid, user in chat_users.items():
-            if user.get('username') == username_target:
-                user_id = uid
-                break
-    
-    if not user_id and search_param and search_param.isdigit():
-        if search_param in chat_users:
-            user_id = search_param
+    time_str = parts[1].strip()
+    try:
+        if ":" in time_str:
+            hours, minutes = map(int, time_str.split(":"))
         else:
-            for uid, user in chat_users.items():
-                if str(user.get('id')) == search_param:
-                    user_id = uid
-                    break
-    
-    if not user_id:
-        bot.reply_to(message, "❌ Пользователь не найден в кэше")
+            hours = int(time_str)
+            minutes = 0
+        if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
+            raise ValueError
+    except:
+        bot.reply_to(message, "❌ Неверный формат времени. Используйте ЧЧ:ММ (МСК)")
         return
     
-    user_data = chat_users.get(str(user_id))
-    if not user_data:
-        user_data = chat_users.get(user_id)
+    update_chat_summary_settings(message.chat.id, "time", time_str)
+    bot.reply_to(message, f"✅ Время сводки установлено на {hours:02d}:{minutes:02d} МСК")
+
+@bot.message_handler(commands=['summary_style'])
+def summary_style_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
     
-    if user_data:
-        username = user_data.get('username', 'нет')
-        name = user_data.get('first_name', 'неизвестно')
-        last_seen = user_data.get('last_seen', 'неизвестно')[:16]
-        has_underscore = username and "_" in username if username != 'нет' else False
-        
-        text = f"🔍 *Информация о пользователе*\n\n"
-        text += f"🆔 *ID:* `{user_id}`\n"
-        text += f"👤 *Username:* @{username}\n"
-        text += f"📛 *Имя:* {name}\n"
-        text += f"🕐 *Последнее сообщение:* {last_seen}\n"
-        text += f"📝 *Есть _ в username:* {'✅ ДА' if has_underscore else '❌ НЕТ'}"
-        bot.reply_to(message, text, parse_mode="Markdown")
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        bot.reply_to(message, "ℹ️ /summary_style обычный\nили /summary_style тролль")
+        return
+    
+    style = parts[1].strip().lower()
+    if style in ["обычный", "normal"]:
+        update_chat_summary_settings(message.chat.id, "style", "normal")
+        bot.reply_to(message, "✅ Стиль сводки установлен на *обычный*", parse_mode="Markdown")
+    elif style in ["тролль", "troll"]:
+        update_chat_summary_settings(message.chat.id, "style", "troll")
+        bot.reply_to(message, "✅ Стиль сводки установлен на *тролль (язвительный)*", parse_mode="Markdown")
     else:
-        bot.reply_to(message, "❌ Пользователь не найден")
+        bot.reply_to(message, "❌ Доступные стили: обычный, тролль")
+
+@bot.message_handler(commands=['summary_length'])
+def summary_length_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
+    
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        bot.reply_to(message, "ℹ️ /summary_length полно\nили /summary_length кратко")
+        return
+    
+    length = parts[1].strip().lower()
+    if length in ["полно", "полный", "full"]:
+        update_chat_summary_settings(message.chat.id, "length", "full")
+        bot.reply_to(message, "✅ Длина сводки установлена на *полную*", parse_mode="Markdown")
+    elif length in ["кратко", "краткий", "short"]:
+        update_chat_summary_settings(message.chat.id, "length", "short")
+        bot.reply_to(message, "✅ Длина сводки установлена на *краткую*", parse_mode="Markdown")
+    else:
+        bot.reply_to(message, "❌ Доступные варианты: полно, кратко")
+
+@bot.message_handler(commands=['summary_settings'])
+def summary_settings_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав! Только администратор.")
+        return
+    
+    settings = get_chat_summary_settings(message.chat.id)
+    style_text = "обычный" if settings["style"] == "normal" else "тролль (язвительный)"
+    length_text = "полная" if settings["length"] == "full" else "краткая"
+    
+    text = f"⚙️ *Настройки сводки в этом чате*\n\n"
+    text += f"🕐 Время отправки: `{settings['time']}` МСК\n"
+    text += f"🎭 Стиль: *{style_text}*\n"
+    text += f"📏 Длина: *{length_text}*\n\n"
+    text += f"Изменить:\n"
+    text += f"• /summary_time 20:00\n"
+    text += f"• /summary_style обычный\n"
+    text += f"• /summary_style тролль\n"
+    text += f"• /summary_length полно\n"
+    text += f"• /summary_length кратко"
+    
+    bot.reply_to(message, text, parse_mode="Markdown")
 
 # === АДМИН-КОМАНДЫ ===
 
@@ -731,7 +970,7 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== ФУНКЦИИ ДЛЯ СКЛОНЕНИЯ ==========
+# ========== ФУНКЦИИ ДЛЯ СКЛОНЕНИЯ ИМЁН (ДЛЯ ДЕЙСТВИЙ) ==========
 def decline_name(name, preposition=""):
     preposition = preposition.lower()
     if name in ["кому-то", "пользователь", "участник", "кто-то", "кого-то"]:
@@ -746,33 +985,6 @@ def decline_single_name(name, preposition=""):
     name_lower = name.lower()
     male_exceptions = ['никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья']
     
-    # Винительный падеж (кого?) - НЕ используется для сосать (там дательный)
-    if preposition in ["в", "на", "за", "про", "через"]:
-        if name_lower.endswith('а'):
-            return name[:-1] + 'у'
-        elif name_lower.endswith('я'):
-            return name[:-1] + 'ю'
-        elif name_lower.endswith('й'):
-            return name[:-1] + 'я'
-        elif name_lower.endswith('ь'):
-            return name[:-1] + 'я'
-        else:
-            return name + 'а'
-    
-    # Дательный падеж (кому?) — нужен для сосать: "сосала Владимиру"
-    if preposition in ["к", "по", "благодаря", "вопреки"] or preposition == "":
-        if name_lower.endswith('а'):
-            return name[:-1] + 'е'
-        elif name_lower.endswith('я'):
-            return name[:-1] + 'е'
-        elif name_lower.endswith('й'):
-            return name[:-1] + 'ю'
-        elif name_lower.endswith('ь'):
-            return name[:-1] + 'ю'
-        else:
-            return name + 'у'
-    
-    # Родительный, творительный и предложный падежи (на всякий случай)
     if preposition in ["у", "без", "до", "из", "от", "для"]:
         if name_lower.endswith('а'):
             return name[:-1] + 'ы'
@@ -799,7 +1011,7 @@ def decline_single_name(name, preposition=""):
         else:
             return name + 'е'
     
-    # Дательный падеж по умолчанию
+    # Дательный падеж по умолчанию (кому?)
     if name_lower.endswith('а'):
         return name[:-1] + 'е'
     elif name_lower.endswith('я'):
@@ -819,7 +1031,6 @@ def get_gender(user):
         return 'female'
     return 'male'
 
-# ========== РЕАКЦИИ НА ДЕЙСТВИЯ ==========
 def handle_actions(message):
     if not message.reply_to_message:
         return False
@@ -828,93 +1039,11 @@ def handle_actions(message):
     
     actions_map = {
         "обнять": ("🤗", "обнял", "обняла", ""),
-        "обнимаю": ("🤗", "обнял", "обняла", ""),
-        "обниму": ("🤗", "обнял", "обняла", ""),
         "поцеловать": ("😘", "поцеловал", "поцеловала", ""),
-        "целую": ("😘", "поцеловал", "поцеловала", ""),
-        "поцелую": ("😘", "поцеловал", "поцеловала", ""),
-        "прижать": ("🫂", "прижал", "прижала", ""),
-        "погладить": ("🫳", "погладил", "погладила", ""),
-        "потрогать": ("✋", "потрогал", "потрогала", ""),
-        "кусь": ("🦷", "куснул", "куснула", ""),
-        "укусить": ("🦷", "укусил", "укусила", ""),
-        "лизнуть": ("👅", "лизнул", "лизнула", ""),
-        "облизать": ("👅", "облизал", "облизала", ""),
-        "похвалить": ("👍", "похвалил", "похвалила", ""),
-        "поздравить": ("🎉", "поздравил", "поздравила", "с"),
-        "извиниться": ("🙏", "извинился", "извинилась", "перед"),
-        "пожать руку": ("🤝", "пожал руку", "пожала руку", ""),
-        "пожатьруку": ("🤝", "пожал руку", "пожала руку", ""),
-        "шлепнуть": ("🖐️", "шлепнул", "шлепнула", ""),
-        "ущипнуть": ("🤏", "ущипнул", "ущипнула", ""),
-        "покормить": ("🍕", "покормил", "покормила", ""),
-        "дать пять": ("🙏", "дал пять", "дала пять", ""),
-        "датьпять": ("🙏", "дал пять", "дала пять", ""),
-        "понюхать": ("👃", "понюхал", "понюхала", ""),
-        "испугать": ("😱", "испугал", "испугала", ""),
-        "рассмешить": ("😂", "рассмешил", "рассмешила", ""),
-        "предложить": ("💍", "предложил", "предложила", ""),
-        "помочь": ("🫶", "помог", "помогла", ""),
-        "уважать": ("🙏", "уважал", "уважала", ""),
         "ударить": ("👊", "ударил", "ударила", ""),
-        "пнуть": ("🦶", "пнул", "пнула", ""),
-        "убить": ("💀", "убил", "убила", ""),
-        "сжечь": ("🔥", "сжёг", "сожгла", ""),
-        "взорвать": ("💣", "взорвал", "взорвала", ""),
-        "расстрелять": ("🔫", "расстрелял", "расстреляла", ""),
-        "шмальнуть": ("🔫", "шмальнул", "шмальнула", "в"),
-        "задушить": ("🪢", "задушил", "задушила", ""),
-        "послать нахуй": ("🖕", "послал нахуй", "послала нахуй", ""),
-        "послатьнахуй": ("🖕", "послал нахуй", "послала нахуй", ""),
-        "наорать": ("📢", "наорал", "наорала", "на"),
-        "унизить": ("😢", "унизил", "унизила", ""),
-        "арестовать": ("🚔", "арестовал", "арестовала", ""),
-        "ушатать": ("⚰️", "ушатал", "ушатала", ""),
-        "отрубить": ("⚡", "отрубил", "отрубила", ""),
-        "выпороть": ("😨", "выпорол", "выпорола", ""),
-        "закопать": ("🪦", "закопал", "закопала", ""),
-        "связать": ("🪢", "связал", "связала", ""),
-        "заставить": ("😤", "заставил", "заставила", ""),
-        "повесить": ("🪢", "повесил", "повесила", "на"),
-        "уничтожить": ("💥", "уничтожил", "уничтожила", ""),
-        "продать": ("💰", "продал", "продала", ""),
-        "кастрировать": ("✂️", "кастрировал", "кастрировала", ""),
-        "отстрелить": ("🔫", "отстрелил", "отстрелила", ""),
-        "выкопать": ("⛏️", "выкопал", "выкопала", ""),
-        "выпить": ("🍺", "выпил", "выпила", ""),
-        "наказать": ("😈", "наказал", "наказала", ""),
-        "щекотать": ("😂", "пощекотал", "пощекотала", ""),
-        "пощекотать": ("😂", "пощекотал", "пощекотала", ""),
-        "дрочить": ("✊", "дрочил", "дрочила", ""),
-        "дрочу": ("✊", "дрочил", "дрочила", ""),
-        "подрочить": ("✊", "подрочил", "подрочила", ""),
-        "отдрочить": ("✊", "отдрочил", "отдрочила", ""),
         "лизать": ("👅", "лизал", "лизала", ""),
-        "лижет": ("👅", "лизал", "лизала", ""),
-        "отлизать": ("👅", "отлизал", "отлизала", ""),
-        "выебать": ("🔞", "выебал", "выебала", ""),
-        "оттрахать": ("🔞", "оттрахал", "оттрахала", ""),
-        "трахнуть": ("🔞", "трахнул", "трахнула", ""),
-        "изнасиловать": ("🔞", "изнасиловал", "изнасиловала", ""),
-        "отсосать": ("👅", "отсосал", "отсосала", ""),
-        "отсосал": ("👅", "отсосал", "отсосала", ""),
-        "отсосала": ("👅", "отсосала", "отсосала", ""),
         "кончить": ("💦", "кончил", "кончила", "в"),
-        "сквиртануть": ("💦💦", "сквиртанул", "сквиртанула", "на"),
-        "сестьналицо": ("🍑", "сел на лицо", "села на лицо", "на"),
-        "вылизать": ("👅", "вылизал", "вылизала", ""),
-        "засосать": ("🫦", "засосал", "засосала", ""),
-        "опустить": ("😢", "опустил", "опустила", ""),
-        "привсех": ("👥", "унизил при всех", "унизила при всех", ""),
-        "публично": ("👥", "унизил публично", "унизила публично", ""),
-        # НОВАЯ КОМАНДА "СОСАТЬ" (использует дательный падеж)
-        "сосать": ("👅", "сосал", "сосала", ""),
-        "сосал": ("👅", "сосал", "сосала", ""),
-        "сосала": ("👅", "сосала", "сосала", ""),
-        "лечь": ("😴", "лёг", "леглá", "на"),
-        "спать": ("😴", "лёг спать", "леглá спать", ""),
-        "уснуть": ("😴", "уснул", "уснула", ""),
-        "пить": ("🍺", "выпил", "выпила", ""),
+        "выебать": ("🔞", "выебал", "выебала", ""),
     }
     
     search_key = full_text.replace(" ", "")
@@ -946,23 +1075,16 @@ def handle_actions(message):
     sender_gender = get_gender(sender)
     past_action = past_action_male if sender_gender == 'male' else past_action_female
     
-    # Для команды сосать: если предлога нет, то склоняем в дательный падеж
-    if action in ["сосать", "сосал", "сосала"] and not preposition:
-        declined_target = decline_name(target_name, "")
-        response = f"{emoji} {sender_name} {past_action} {declined_target}"
-        if reply_text:
-            response += f": {reply_text}"
+    if preposition:
+        declined_target = decline_name(target_name, preposition)
+        target_with_preposition = f"{preposition} {declined_target}"
     else:
-        if preposition:
-            declined_target = decline_name(target_name, preposition)
-            target_with_preposition = f"{preposition} {declined_target}"
-        else:
-            target_with_preposition = decline_name(target_name, "")
-        
-        if reply_text:
-            response = f"{emoji} {sender_name} {past_action} {target_with_preposition}: {reply_text}"
-        else:
-            response = f"{emoji} {sender_name} {past_action} {target_with_preposition}"
+        target_with_preposition = decline_name(target_name, "")
+    
+    if reply_text:
+        response = f"{emoji} {sender_name} {past_action} {target_with_preposition}: {reply_text}"
+    else:
+        response = f"{emoji} {sender_name} {past_action} {target_with_preposition}"
     
     thread_id = message.message_thread_id if message.message_thread_id else None
     try:
@@ -975,102 +1097,27 @@ def handle_actions(message):
 # ========== ОСНОВНОЙ ОБРАБОТЧИК ==========
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
-    # 1. Приветствия и команды без ответа
     if message.text and not message.text.startswith('/') and not message.reply_to_message:
         text_lower = message.text.lower().strip()
         user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
         
-        # Приветствия
-        if text_lower in ["привет", "здарова", "здравствуй", "хай", "hello", "ку", "приветики", "здравствуйте"]:
+        if text_lower in ["привет", "здарова", "ку", "хай"]:
             bot.reply_to(message, f"👋 Привет, {user_name}!")
             return
-        
-        if text_lower in ["доброе утро", "доброго утра", "с добрым утром"]:
-            bot.reply_to(message, f"🌅 Доброе утро, {user_name}! Хорошего дня ☀️")
+        if text_lower in ["спасибо", "благодарю"]:
+            bot.reply_to(message, f"🙏 Пожалуйста, {user_name}!")
             return
-        
-        if text_lower in ["добрый вечер", "доброго вечера"]:
-            bot.reply_to(message, f"🌆 Добрый вечер, {user_name}! Как прошёл день?")
+        if text_lower in ["пока", "до свидания"]:
+            bot.reply_to(message, f"👋 Пока, {user_name}!")
             return
-        
-        if text_lower in ["спокойной ночи", "доброй ночи", "сладких снов"]:
-            bot.reply_to(message, f"🌙 Спокойной ночи, {user_name}! Сладких снов 💤")
-            return
-        
-        if text_lower in ["спасибо", "благодарю", "thanks", "thank you", "спс"]:
-            responses = [f"🙏 Пожалуйста, {user_name}!", f"😊 Всегда рад помочь, {user_name}!", f"🤗 Обращайся, {user_name}!"]
-            bot.reply_to(message, random.choice(responses))
-            return
-        
-        if text_lower in ["пока", "до свидания", "прощай", "bye", "до встречи", "удачи"]:
-            responses = [f"👋 Пока, {user_name}! Возвращайся!", f"😢 До встречи, {user_name}!", f"👋 {user_name}, хорошего дня!"]
-            bot.reply_to(message, random.choice(responses))
-            return
-        
-        if text_lower in ["как дела", "как дела?", "как ты"]:
-            responses = [f"😊 У меня всё отлично, {user_name}! А у тебя?", f"🤖 Работаю, {user_name}! Спасибо что спросил!", f"🎉 Отлично, {user_name}! Что нового?"]
-            bot.reply_to(message, random.choice(responses))
-            return
-        
-        if text_lower in ["грустно", "печально", "мне грустно", "плохое настроение"]:
-            bot.reply_to(message, f"😢 Обнимаю, {user_name}! Всё будет хорошо, ты справишься! 🤗❤️")
-            return
-        
-        if text_lower in ["скучаю", "скучаю по тебе"]:
-            bot.reply_to(message, f"🥺 {user_name}, я тоже по тебе скучаю! Приходи почаще! 🤗")
-            return
-        
-        if text_lower in ["ты лучший", "ты лучшая", "лучший бот", "ты крут", "ты крутая", "молодец", "умница"]:
-            bot.reply_to(message, f"😊 Спасибо, {user_name}! Ты тоже лучший/лучшая! ❤️")
-            return
-        
-        if text_lower == "0+":
-            bot.reply_to(message, f"🍼 Для самых маленьких! Но ты уже большой! 😊")
-            return
-        if text_lower == "13+":
-            bot.reply_to(message, f"🔥 13+ — тут уже интереснее! 😎")
-            return
-        if text_lower == "18+":
-            bot.reply_to(message, f"🔞 18+ — только для взрослых! Ты уверен? 😏")
-            return
-        
-        if text_lower in ["кончить на всех", "кончитьнавсех"]:
-            responses = [f"💦 {user_name} кончил(а) на всех присутствующих! 💦", f"🌊 {user_name} устроил(а) настоящий потоп на всех! 💦", f"💥 {user_name} кончил(а) так, что всем досталось! 💦"]
-            bot.reply_to(message, random.choice(responses))
-            return
-        
-        if text_lower in ["сквиртануть", "сквирт", "сквиртанул", "сквиртанула"]:
-            responses = [f"💦💦 {user_name} сквиртанул(а) так, что всех облило! 💦💦", f"🌊 {user_name} устроил(а) настоящий фонтан! 💦💦", f"💦 {user_name} сквиртанул(а) с такой силой! 🔥"]
-            bot.reply_to(message, random.choice(responses))
-            return
-        
-        if text_lower in ["сесть на лицо", "сестьна лицо", "на лицо"]:
-            responses = [f"🍑 {user_name} хочет сесть на лицо? 🤔 Осторожнее!", f"🍑 {user_name}, ты уверен(а)? 👀", f"🍑 Ну {user_name}, это уже слишком! 😳"]
-            bot.reply_to(message, random.choice(responses))
-            return
-        
-        if text_lower in ["вылизать", "вылизывать"]:
-            bot.reply_to(message, f"👅 {user_name}, ты чего? 🤨")
-            return
-        
-        if text_lower in ["унизить", "опустить"]:
-            bot.reply_to(message, f"😢 {user_name}, зачем унижать? Давай лучше мирно! 🤗")
-            return
-        
-        if text_lower in ["дрочить", "подрочить"]:
-            bot.reply_to(message, f"✊ {user_name}, ты чего? Не прилюдно же... 🤨")
-            return
-        
-        if text_lower in ["сосать", "сосал", "сосала"]:
-            bot.reply_to(message, f"👅 {user_name}, ты чего? Тут дети... 🤨")
+        if text_lower in ["как дела", "как ты"]:
+            bot.reply_to(message, f"😊 У меня всё отлично, {user_name}!")
             return
     
-    # 2. Действия при ответе на сообщение
     if message.text and not message.text.startswith('/') and message.reply_to_message:
         if handle_actions(message):
             return
     
-    # 3. Автосохранение и цитаты
     if message.chat.type in ['group', 'supergroup']:
         global chat_users
         old_count = len(chat_users)
@@ -1079,6 +1126,7 @@ def main_handler(message):
         if new_count > old_count:
             print(f"✨ Новый пользователь! Всего: {new_count}")
         add_chat_to_active(message)
+        get_chat_summary_settings(message.chat.id)
         add_message_to_quotes(message)
 
 # ========== ВЕБХУК ==========
@@ -1111,7 +1159,10 @@ if __name__ == "__main__":
     requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
     r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={webhook_url}")
     print(f"Результат: {r.json()}")
+    
     schedule_daily_quotes()
+    load_summary_settings()
+    schedule_chat_summaries()
     load_daily_quotes()
     start_all_reminders()
     app.run(host="0.0.0.0", port=port)
