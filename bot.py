@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ВЕРСИЯ СО СКЛОНЕНИЕМ ИМЁН")
+print("🤖 БОТ ЗАПУЩЕН - ПОЛНАЯ ВЕРСИЯ")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -290,7 +290,7 @@ def start_command(message):
             "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
             "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, изнасиловать, шмальнуть и другие",
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, изнасиловать, шмальнуть, кончить, сквиртануть и другие",
             parse_mode="Markdown")
     else:
         bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
@@ -298,7 +298,7 @@ def start_command(message):
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, изнасиловать, шмальнуть и другие",
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, изнасиловать, шмальнуть, кончить, сквиртануть и другие",
             parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
@@ -733,15 +733,28 @@ threading.Thread(target=clean_old_secrets, daemon=True).start()
 
 # ========== ФУНКЦИЯ ДЛЯ СКЛОНЕНИЯ ИМЁН ==========
 def decline_name(name, preposition=""):
-    """Склоняет имя в зависимости от предлога"""
-    name_lower = name.lower()
+    """Склоняет имя в зависимости от предлога (поддерживает двойные имена)"""
     preposition = preposition.lower()
     
-    # Если в имени уже есть пробел или это не имя
-    if " " in name or name in ["кому-то", "пользователь", "участник", "кто-то"]:
+    if name in ["кому-то", "пользователь", "участник", "кто-то", "кого-то"]:
         return name
     
-    # Винительный падеж (кого?/что?) для предлогов "в", "на", "за", "про", "через", "сквозь"
+    parts = name.split()
+    declined_parts = []
+    for part in parts:
+        declined_parts.append(decline_single_name(part, preposition))
+    
+    return " ".join(declined_parts)
+
+def decline_single_name(name, preposition=""):
+    """Склоняет одно слово (имя или фамилию)"""
+    name_lower = name.lower()
+    
+    male_exceptions = ['никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья']
+    female_endings = ('а', 'я', 'ия', 'ья')
+    
+    is_likely_female = name_lower.endswith(female_endings) and name_lower not in male_exceptions
+    
     if preposition in ["в", "на", "за", "про", "через", "сквозь", "под", "над"]:
         if name_lower.endswith('а'):
             return name[:-1] + 'у'
@@ -754,7 +767,6 @@ def decline_name(name, preposition=""):
         else:
             return name + 'а'
     
-    # Родительный падеж (кого?/чего?) для предлогов "у", "без", "до", "из", "от", "для", "после", "с"
     if preposition in ["у", "без", "до", "из", "от", "для", "ради", "после", "с", "со"]:
         if name_lower.endswith('а'):
             return name[:-1] + 'ы'
@@ -767,7 +779,6 @@ def decline_name(name, preposition=""):
         else:
             return name + 'а'
     
-    # Дательный падеж (кому?/чему?) для предлогов "к", "по", "благодаря", "вопреки"
     if preposition in ["к", "по", "благодаря", "вопреки"]:
         if name_lower.endswith('а'):
             return name[:-1] + 'е'
@@ -778,7 +789,6 @@ def decline_name(name, preposition=""):
         else:
             return name + 'у'
     
-    # Творительный падеж (кем?/чем?) для предлогов "с", "над", "под", "перед", "за"
     if preposition in ["с", "над", "под", "перед", "за"]:
         if name_lower.endswith('а'):
             return name[:-1] + 'ой'
@@ -789,7 +799,6 @@ def decline_name(name, preposition=""):
         else:
             return name + 'ом'
     
-    # Предложный падеж (о ком?/о чём?) для предлогов "о", "об", "при", "на", "в"
     if preposition in ["о", "об", "при", "на", "в"]:
         if name_lower.endswith('а'):
             return name[:-1] + 'е'
@@ -798,7 +807,6 @@ def decline_name(name, preposition=""):
         else:
             return name + 'е'
     
-    # По умолчанию - винительный падеж (если предлог "в" или "на" или другой)
     if preposition:
         if name_lower.endswith('а'):
             return name[:-1] + 'у'
@@ -813,21 +821,18 @@ def decline_name(name, preposition=""):
     
     return name
 
-# ========== ФУНКЦИЯ ДЛЯ ОПРЕДЕЛЕНИЯ ПОЛА ==========
 def get_gender(user):
     """Пытаемся определить пол по имени"""
     name = (user.first_name or "").lower()
     
-    # Женские окончания
     female_endings = ('а', 'я', 'ия', 'ья')
-    # Исключения (мужские имена, заканчивающиеся на а/я)
-    male_exceptions = ('ника', 'кирилл', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя')
+    male_exceptions = ('никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья')
     
     if name.endswith(female_endings) and name not in male_exceptions:
         return 'female'
     return 'male'
 
-# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (С АВТООПРЕДЕЛЕНИЕМ РОДА И СКЛОНЕНИЕМ ИМЁН) ==========
+# ========== РЕАКЦИИ НА ДЕЙСТВИЯ ==========
 def handle_actions(message):
     """Обрабатывает действия при ответе на сообщение"""
     if not message.reply_to_message:
@@ -835,7 +840,6 @@ def handle_actions(message):
     
     full_text = message.text.strip().lower()
     
-    # Словарь действий
     actions_map = {
         # Романтика и дружба
         "обнять": ("🤗", "обнял", "обняла", ""),
@@ -924,6 +928,20 @@ def handle_actions(message):
         "кончить": ("💦", "кончил", "кончила", "в"),
         "кончил": ("💦", "кончил", "кончила", "в"),
         "кончила": ("💦", "кончила", "кончила", "в"),
+        "сквиртануть": ("💦💦", "сквиртанул", "сквиртанула", "на"),
+        "сквиртанул": ("💦💦", "сквиртанул", "сквиртанула", "на"),
+        "сквиртанула": ("💦💦", "сквиртанула", "сквиртанула", "на"),
+        "сквирт": ("💦💦", "сквиртанул", "сквиртанула", "на"),
+        "сесть на лицо": ("🍑", "сел на лицо", "села на лицо", "на"),
+        "сестьна лицо": ("🍑", "сел на лицо", "села на лицо", "на"),
+        "на лицо": ("🍑", "сел на лицо", "села на лицо", "на"),
+        "вылизать": ("👅", "вылизал", "вылизала", ""),
+        "вылизывать": ("👅", "вылизал", "вылизала", ""),
+        "засосать": ("🫦", "засосал", "засосала", ""),
+        "засосала": ("🫦", "засосал", "засосала", ""),
+        "опустить": ("😢", "опустил", "опустила", ""),
+        "при всех": ("👥", "унизил при всех", "унизила при всех", ""),
+        "публично": ("👥", "унизил публично", "унизила публично", ""),
         
         # Бытовые
         "лечь": ("😴", "лёг", "леглá", "на"),
@@ -934,7 +952,6 @@ def handle_actions(message):
         "пить": ("🍺", "выпил", "выпила", ""),
     }
     
-    # Поиск действия
     search_key = full_text.replace(" ", "")
     emoji = None
     past_action_male = None
@@ -957,31 +974,26 @@ def handle_actions(message):
         else:
             return False
     
-    # Получаем имена
     sender = message.from_user
     target_user = message.reply_to_message.from_user
     
     sender_name = sender.first_name or sender.username or "Кто-то"
     target_name = target_user.first_name or target_user.username or "кому-то"
     
-    # Определяем пол отправителя
     sender_gender = get_gender(sender)
     past_action = past_action_male if sender_gender == 'male' else past_action_female
     
-    # Склоняем имя получателя
     if preposition:
         declined_target = decline_name(target_name, preposition)
         target_with_preposition = f"{preposition} {declined_target}"
     else:
         target_with_preposition = decline_name(target_name, "")
     
-    # Формируем ответ
     if reply_text:
         response = f"{emoji} {sender_name} {past_action} {target_with_preposition}: {reply_text}"
     else:
         response = f"{emoji} {sender_name} {past_action} {target_with_preposition}"
     
-    # Отправляем (с поддержкой топиков)
     thread_id = message.message_thread_id if message.message_thread_id else None
     try:
         bot.send_message(message.chat.id, response, message_thread_id=thread_id)
@@ -991,10 +1003,10 @@ def handle_actions(message):
         print(f"❌ Ошибка: {e}")
         return False
 
-# ========== ОСНОВНОЙ ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ ==========
+# ========== ОСНОВНОЙ ОБРАБОТЧИК ==========
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
-    # 1. Приветствия и другие команды без ответа
+    # 1. Приветствия и команды без ответа
     if message.text and not message.text.startswith('/') and not message.reply_to_message:
         text_lower = message.text.lower().strip()
         user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
@@ -1052,13 +1064,49 @@ def main_handler(message):
         if text_lower == "18+":
             bot.reply_to(message, f"🔞 18+ — только для взрослых! Ты уверен? 😏")
             return
+        
+        # Новые команды без ответа
+        if text_lower in ["кончить на всех", "кончитьнавсех"]:
+            responses = [
+                f"💦 {user_name} кончил(а) на всех присутствующих! 💦",
+                f"🌊 {user_name} устроил(а) настоящий потоп на всех! 💦",
+                f"💥 {user_name} кончил(а) так, что всем досталось! 💦"
+            ]
+            bot.reply_to(message, random.choice(responses))
+            return
+        
+        if text_lower in ["сквиртануть", "сквирт", "сквиртанул", "сквиртанула"]:
+            responses = [
+                f"💦💦 {user_name} сквиртанул(а) так, что всех облило! 💦💦",
+                f"🌊 {user_name} устроил(а) настоящий фонтан! 💦💦",
+                f"💦 {user_name} сквиртанул(а) с такой силой! 🔥"
+            ]
+            bot.reply_to(message, random.choice(responses))
+            return
+        
+        if text_lower in ["сесть на лицо", "сестьна лицо", "на лицо"]:
+            responses = [
+                f"🍑 {user_name} хочет сесть на лицо? 🤔 Осторожнее!",
+                f"🍑 {user_name}, ты уверен(а)? 👀",
+                f"🍑 Ну {user_name}, это уже слишком! 😳"
+            ]
+            bot.reply_to(message, random.choice(responses))
+            return
+        
+        if text_lower in ["вылизать", "вылизывать"]:
+            bot.reply_to(message, f"👅 {user_name}, ты чего? 🤨")
+            return
+        
+        if text_lower in ["унизить", "опустить"]:
+            bot.reply_to(message, f"😢 {user_name}, зачем унижать? Давай лучше мирно! 🤗")
+            return
     
     # 2. Действия при ответе на сообщение
     if message.text and not message.text.startswith('/') and message.reply_to_message:
         if handle_actions(message):
             return
     
-    # 3. Автосохранение пользователей и цитаты (только группы)
+    # 3. Автосохранение и цитаты
     if message.chat.type in ['group', 'supergroup']:
         global chat_users
         old_count = len(chat_users)
