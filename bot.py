@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ПОЛНАЯ ВЕРСИЯ")
+print("🤖 БОТ ЗАПУЩЕН - ВЕРСИЯ КАК У IRIS")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -731,9 +731,9 @@ def clean_old_secrets():
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
-# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (С ПОДДЕРЖКОЙ ТОПИКОВ) ==========
+# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (КАК У IRIS - С ЭМОДЗИ И ПОДДЕРЖКОЙ ТОПИКОВ) ==========
 def handle_actions(message):
-    """Обрабатывает действия при ответе на сообщение (работает в топиках)"""
+    """Обрабатывает действия при ответе на сообщение (как у бота Iris)"""
     if not message.reply_to_message:
         return False
     
@@ -742,7 +742,7 @@ def handle_actions(message):
     action = parts[0]
     reply_text = parts[1] if len(parts) > 1 else ""
     
-    # ПОЛНЫЙ СЛОВАРЬ ДЕЙСТВИЙ (включая 18+)
+    # Словарь действий с эмодзи
     actions_map = {
         # Романтика и дружба
         "обнять": "🤗",
@@ -802,39 +802,46 @@ def handle_actions(message):
         "щекотать": "😂",
         "пощекотать": "😂",
         
-        # 18+ (добавлены все)
-        "отлизать": "👅💦",
-        "отлизать": "👅💦",
+        # 18+
+        "отлизать": "👅",
+        "отлизал": "👅",
         "выебать": "🔞",
-        "выебать": "🔞",
+        "выебал": "🔞",
         "оттрахать": "🔞",
+        "оттрахал": "🔞",
         "трахнуть": "🔞",
-        "трахать": "🔞",
+        "трахнул": "🔞",
         "изнасиловать": "🔞",
-        "отсосать": "👅💦",
-        "отсосать": "👅💦",
-        "отдрочить": "✊💦",
-        "подрочить": "✊💦",
+        "изнасиловал": "🔞",
+        "отсосать": "👅",
+        "отсосал": "👅",
+        "отдрочить": "✊",
+        "отдрочил": "✊",
+        "подрочить": "✊",
+        "подрочил": "✊",
         "кончить": "💦",
-        "кончать": "💦",
+        "кончил": "💦",
         "секс": "🔞",
         
         # Бытовые
         "лечь": "😴",
-        "прилечь": "😴",
-        "пить": "🍺",
+        "лёг": "😴",
         "спать": "😴",
         "уснуть": "😴",
+        "пить": "🍺",
+        "выпил": "🍺",
     }
     
-    # Нормализуем действие (убираем окончания)
+    # Нормализация (откидываем окончания)
     action_normalized = action
     if action.endswith("ть"):
         action_normalized = action[:-3]
     if action.endswith("ать"):
         action_normalized = action[:-3]
+    if action.endswith("ил"):
+        action_normalized = action[:-2]
     
-    # Ищем в словаре
+    # Поиск действия
     emoji = None
     if action in actions_map:
         emoji = actions_map[action]
@@ -843,28 +850,34 @@ def handle_actions(message):
         action = action_normalized
     
     if emoji:
+        # Получаем имена
         sender = message.from_user.first_name or message.from_user.username or "Кто-то"
         target = message.reply_to_message.from_user.first_name or message.reply_to_message.from_user.username or "кому-то"
         
-        # Получаем thread_id для ответа в топик
-        thread_id = message.message_thread_id if message.message_thread_id else None
+        # Форматируем как у Iris: "Имя действие(а) Имя"
+        action_with_ending = action
+        if not action.endswith("ть") and not action.endswith("ать"):
+            action_with_ending = action + "(а)"
         
+        # Базовый ответ
         if reply_text:
-            response = f"{emoji} | *{sender}* {action}(а) *{target}*\n📝 *Реплика:* {reply_text}"
+            response = f"{emoji} {sender} {action_with_ending} {target}: {reply_text}"
         else:
-            response = f"{emoji} | *{sender}* {action}(а) *{target}*"
+            response = f"{emoji} {sender} {action_with_ending} {target}"
         
+        # Отправляем (с поддержкой топиков)
+        thread_id = message.message_thread_id if message.message_thread_id else None
         try:
-            bot.send_message(message.chat.id, response, parse_mode="Markdown", message_thread_id=thread_id)
-            print(f"🎭 Действие: {action} от {sender} к {target}")
+            bot.send_message(message.chat.id, response, message_thread_id=thread_id)
+            print(f"🎭 {action} от {sender} к {target}")
             return True
         except Exception as e:
-            print(f"❌ Ошибка при отправке действия: {e}")
+            print(f"❌ Ошибка: {e}")
             return False
     
     return False
 
-# ========== ОСНОВНОЙ ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ (С ПОДДЕРЖКОЙ ТОПИКОВ) ==========
+# ========== ОСНОВНОЙ ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ ==========
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
     # 1. Проверяем действия при ответе на сообщение
