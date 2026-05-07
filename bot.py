@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ПОЛНАЯ ВЕРСИЯ")
+print("🤖 БОТ ЗАПУЩЕН - ВЕРСИЯ С ИИ-СВОДКОЙ")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -268,6 +268,29 @@ def ask_groq(user_id, prompt):
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
 
+def ask_groq_for_summary(prompt):
+    """Запрос к Groq для генерации сводки"""
+    if not GROQ_API_KEY:
+        return None
+    
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    data = {
+        "model": "qwen/qwen3-32b",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1000,
+        "temperature": 0.8
+    }
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=45)
+        if response.status_code == 200:
+            answer = response.json()["choices"][0]["message"]["content"]
+            return answer.strip()
+        else:
+            return None
+    except:
+        return None
+
 def set_reaction(chat_id, message_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
@@ -322,7 +345,7 @@ def update_chat_summary_settings(chat_id, key, value):
     save_summary_settings()
 
 def generate_chat_summary(chat_id, style="normal", length="full"):
-    """Генерирует сводку дня для чата"""
+    """Генерирует обычную сводку дня для чата (без ИИ)"""
     today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
     
     if len(today_messages) < 3:
@@ -339,7 +362,7 @@ def generate_chat_summary(chat_id, style="normal", length="full"):
     top_users = sorted(user_activity.items(), key=lambda x: x[1], reverse=True)[:5]
     
     # Часто встречающиеся слова
-    stop_words = {'и', 'в', 'на', 'не', 'а', 'но', 'за', 'по', 'с', 'у', 'к', 'из', 'от', 'до', 'о', 'об', 'же', 'ли', 'бы', 'это', 'что', 'как', 'так', 'все', 'меня', 'мне', 'тебя', 'тебе', 'его', 'её', 'нас', 'вас', 'их', 'мой', 'твой', 'наш', 'ваш', 'их', 'просто', 'вот', 'если', 'или', 'без', 'para'}
+    stop_words = {'и', 'в', 'на', 'не', 'а', 'но', 'за', 'по', 'с', 'у', 'к', 'из', 'от', 'до', 'о', 'об', 'же', 'ли', 'бы', 'это', 'что', 'как', 'так', 'все', 'меня', 'мне', 'тебя', 'тебе', 'его', 'её', 'нас', 'вас', 'их', 'мой', 'твой', 'наш', 'ваш', 'их', 'просто', 'вот', 'если', 'или', 'без', 'для'}
     
     word_count = {}
     for msg in today_messages:
@@ -352,7 +375,6 @@ def generate_chat_summary(chat_id, style="normal", length="full"):
     top_words = sorted(word_count.items(), key=lambda x: x[1], reverse=True)[:5]
     random_quote = random.choice(today_messages) if today_messages else None
     
-    # МИНИ-ВЕРСИЯ (компактный формат)
     if length == "mini":
         if style == "troll":
             top_text = f"Лидер: {top_users[0][0]}" if top_users else "Лидеров нет"
@@ -365,7 +387,6 @@ def generate_chat_summary(chat_id, style="normal", length="full"):
             quote_text = f" | «{random_quote['text'][:40]}»" if random_quote else ""
             return f"📊 *Мини-сводка:* {total_msgs} сообщ | {users_count} уч | {top_text}{words_text}{quote_text}"
     
-    # КРАТКАЯ ВЕРСИЯ
     if length == "short":
         if style == "troll":
             return f"🤪 *Кратко:* {total_msgs} сообщений, {users_count} человек. Лидер: {top_users[0][0] if top_users else 'никто'}. Часто: {', '.join([f'\"{w}\"' for w, _ in top_words[:2]]) if top_words else '...'}. Цитата: «{random_quote['text'][:50] if random_quote else '...'}»"
@@ -374,7 +395,6 @@ def generate_chat_summary(chat_id, style="normal", length="full"):
             words_text = f" | Обсуждали: {', '.join([f'\"{w}\"' for w, _ in top_words[:2]])}" if top_words else ""
             return f"📋 *Сводка:* {total_msgs} сообщ | {users_count} уч | {top_text}{words_text}"
     
-    # ПОЛНАЯ ВЕРСИЯ
     if style == "troll":
         troll_opening = [
             f"🤪 *Тролль-сводка дня*\n\nВ чате как всегда — {total_msgs} сообщений от {users_count} \"активных\" пользователей.\n\n",
@@ -427,7 +447,82 @@ def generate_chat_summary(chat_id, style="normal", length="full"):
         
         return text
 
+def generate_ai_summary(chat_id, style="normal"):
+    """Генерирует ИИ-сводку дня для чата"""
+    today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
+    
+    if len(today_messages) < 5:
+        return None
+    
+    # Собираем последние 40 сообщений
+    recent_messages = today_messages[-40:]
+    
+    # Формируем текст для анализа
+    chat_log = []
+    for msg in recent_messages:
+        author = msg.get('author_name', 'Участник')
+        text = msg.get('text', '')
+        if text and len(text) < 200:
+            chat_log.append(f"{author}: {text}")
+    
+    if not chat_log:
+        return None
+    
+    conversation = "\n".join(chat_log)
+    
+    if style == "troll":
+        prompt = f"""Ты — тролль-журналист. Напиши юмористическую сводку по этому чату, как ChatNorrisBot.
+Используй эмодзи, подкалывай участников, будь остроумным и язвительным.
+Формат: разбей на 4-6 тем с эмодзи и заголовками.
+
+Вот диалог в чате:
+{conversation}
+
+Напиши сводку в стиле ChatNorrisBot:
+- Выдели 4-6 тем
+- К каждой теме подбери подходящий эмодзи (🌼, 🍻, 💍, 🐍, 🔞 и т.д.)
+- Добавь хештег в конце #summary
+- Не используй статистику (цифры)
+- Будь смешным, но не слишком оскорбительным
+- Не упоминай, что это ИИ"""
+    else:
+        prompt = f"""Ты — журналист. Напиши краткую информативную сводку по этому чату.
+Разбей на 4-6 тем с эмодзи и заголовками. Будь нейтральным и объективным.
+
+Вот диалог в чате:
+{conversation}
+
+Напиши сводку:
+- Выдели 4-6 тем
+- К каждой теме подбери эмодзи
+- Добавь хештег в конце #summary
+- Без статистики, только о чём говорили"""
+    
+    try:
+        response = ask_groq_for_summary(prompt)
+        if response and "Ошибка" not in response:
+            return response
+        else:
+            return generate_fallback_summary(chat_id, style)
+    except:
+        return generate_fallback_summary(chat_id, style)
+
+def generate_fallback_summary(chat_id, style="normal"):
+    """Резервная сводка если ИИ не доступен"""
+    today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
+    if len(today_messages) < 3:
+        return None
+    
+    total_msgs = len(today_messages)
+    users_count = len(set(m.get('author') for m in today_messages))
+    
+    if style == "troll":
+        return f"🤪 *ИИ временно недоступен*\n\nВ чате сегодня было {total_msgs} сообщений от {users_count} участников.\n\nПопробуй ещё раз через минуту или напиши /summary обычно. #summary"
+    else:
+        return f"📋 *ИИ временно недоступен*\n\nСегодня в чате {total_msgs} сообщений от {users_count} участников. Попробуй позже. #summary"
+
 def send_scheduled_summary(chat_id, thread_id=0):
+    """Отправляет запланированную сводку (обычную, не ИИ)"""
     settings = get_chat_summary_settings(chat_id)
     
     if not settings.get("enabled", True):
@@ -445,6 +540,7 @@ def send_scheduled_summary(chat_id, thread_id=0):
         print(f"⏩ Недостаточно сообщений для сводки в чате {chat_id}")
 
 def schedule_chat_summaries():
+    """Запускает планировщик сводок для всех чатов"""
     now_moscow = datetime.now(MOSCOW_TZ)
     
     for unique_chat in list(active_chats):
@@ -480,7 +576,7 @@ def start_command(message):
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
-            "📋 *Сводка дня:* `/summary` `/summary_on` `/summary_off` `/summary_time` `/summary_style` `/summary_length` `/summary_settings`\n\n"
+            "📋 *Сводка дня:* `/summary` — обычная\n`/summary тролль` — ИИ-сводка с юмором\n`/summary ии` — ИИ-сводка обычная\n`/summary_on` `/summary_off` `/summary_time` `/summary_style` `/summary_length` `/summary_settings`\n\n"
             "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, кончить, выебать и другие\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
             "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`",
@@ -490,7 +586,7 @@ def start_command(message):
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
-            "📋 *Сводка дня:* `/summary`\n\n"
+            "📋 *Сводка дня:* `/summary`\n`/summary тролль` — ИИ-сводка с юмором\n\n"
             "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить и другие\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`",
             parse_mode="Markdown")
@@ -625,47 +721,42 @@ def quote_command(message):
     if quote_text:
         bot.reply_to(message, quote_text, parse_mode="Markdown")
 
-# === КОМАНДЫ САММАРИ (ИСПРАВЛЕННЫЕ) ===
+# === КОМАНДЫ САММАРИ ===
 
 @bot.message_handler(commands=['summary'])
 def summary_command(message):
-    """Показать сводку сейчас"""
+    """Показать сводку сейчас (обычную или ИИ)"""
     parts = message.text.split(maxsplit=2)
     param1 = parts[1].lower() if len(parts) > 1 else ""
-    param2 = parts[2].lower() if len(parts) > 2 else ""
     
-    # Определяем стиль
-    if param1 in ["тролль", "troll"]:
-        style = "troll"
-    elif param1 in ["обычный", "normal"]:
-        style = "normal"
+    # Проверяем, хочет ли пользователь ИИ-сводку
+    use_ai = param1 in ["ии", "ai", "умная", "умный", "тролль", "troll"]
+    style = "troll" if param1 in ["тролль", "troll"] else "normal"
+    
+    if use_ai and GROQ_API_KEY:
+        summary = generate_ai_summary(message.chat.id, style)
+        if summary:
+            bot.reply_to(message, summary, parse_mode="Markdown")
+        else:
+            bot.reply_to(message, "🤖 Не удалось сгенерировать ИИ-сводку. Попробуй позже или используй /summary обычный", parse_mode="Markdown")
     else:
-        style = get_chat_summary_settings(message.chat.id)["style"]
-    
-    # Определяем длину
-    if param1 in ["мини", "mini"]:
-        length = "mini"
-    elif param1 in ["кратко", "short"]:
-        length = "short"
-    elif param1 in ["полно", "full"]:
-        length = "full"
-    elif param2 in ["мини", "mini"]:
-        length = "mini"
-    elif param2 in ["кратко", "short"]:
-        length = "short"
-    elif param2 in ["полно", "full"]:
-        length = "full"
-    else:
-        length = get_chat_summary_settings(message.chat.id)["length"]
-    
-    if param1 in ["мини", "mini", "кратко", "short", "полно", "full"]:
-        style = get_chat_summary_settings(message.chat.id)["style"]
-    
-    summary = generate_chat_summary(message.chat.id, style, length)
-    if summary:
-        bot.reply_to(message, summary, parse_mode="Markdown")
-    else:
-        bot.reply_to(message, "📭 Пока недостаточно сообщений для сводки (нужно минимум 3)")
+        # Обычная сводка
+        settings = get_chat_summary_settings(message.chat.id)
+        length = settings["length"]
+        
+        # Если указана длина в команде
+        if param1 in ["мини", "mini"]:
+            length = "mini"
+        elif param1 in ["кратко", "short"]:
+            length = "short"
+        elif param1 in ["полно", "full"]:
+            length = "full"
+        
+        summary = generate_chat_summary(message.chat.id, settings["style"], length)
+        if summary:
+            bot.reply_to(message, summary, parse_mode="Markdown")
+        else:
+            bot.reply_to(message, "📭 Пока недостаточно сообщений для сводки (нужно минимум 3)")
 
 @bot.message_handler(commands=['summary_on'])
 def summary_on_command(message):
@@ -717,7 +808,7 @@ def summary_time_command(message):
 
 @bot.message_handler(commands=['summary_style'])
 def summary_style_command(message):
-    """Установить стиль сводки (обычный/тролль)"""
+    """Установить стиль обычной сводки (обычный/тролль)"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -730,16 +821,16 @@ def summary_style_command(message):
     style = parts[1].strip().lower()
     if style in ["обычный", "normal"]:
         update_chat_summary_settings(message.chat.id, "style", "normal")
-        bot.reply_to(message, "✅ Стиль сводки установлен на *обычный*", parse_mode="Markdown")
+        bot.reply_to(message, "✅ Стиль обычной сводки установлен на *обычный*", parse_mode="Markdown")
     elif style in ["тролль", "troll"]:
         update_chat_summary_settings(message.chat.id, "style", "troll")
-        bot.reply_to(message, "✅ Стиль сводки установлен на *тролль (язвительный)*", parse_mode="Markdown")
+        bot.reply_to(message, "✅ Стиль обычной сводки установлен на *тролль*", parse_mode="Markdown")
     else:
         bot.reply_to(message, "❌ Доступные стили: обычный, тролль")
 
 @bot.message_handler(commands=['summary_length'])
 def summary_length_command(message):
-    """Установить длину сводки (мини/кратко/полно)"""
+    """Установить длину обычной сводки (мини/кратко/полно)"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -774,13 +865,14 @@ def summary_settings_command(message):
     style_text = "обычный" if settings["style"] == "normal" else "тролль (язвительный)"
     length_text = "полная" if settings["length"] == "full" else ("краткая" if settings["length"] == "short" else "мини (компактный)")
     
-    text = f"⚙️ *Настройки сводки в этом чате*\n\n"
+    text = f"⚙️ *Настройки обычной сводки в этом чате*\n\n"
     text += f"🟢 Статус: {status_text}\n"
     text += f"🕐 Время отправки: `{settings['time']}` МСК\n"
     text += f"🎭 Стиль: *{style_text}*\n"
     text += f"📏 Длина: *{length_text}*\n\n"
     text += f"📋 *Команды:*\n"
     text += f"• `/summary` — сводка сейчас\n"
+    text += f"• `/summary тролль` — ИИ-сводка с юмором\n"
     text += f"• `/summary_on` — включить авто\n"
     text += f"• `/summary_off` — выключить авто\n"
     text += f"• `/summary_time 20:00` — время\n"
@@ -1067,7 +1159,6 @@ def decline_single_name(name, preposition=""):
         else:
             return name + 'е'
     
-    # Дательный падеж по умолчанию (кому?)
     if name_lower.endswith('а'):
         return name[:-1] + 'е'
     elif name_lower.endswith('я'):
@@ -1077,7 +1168,7 @@ def decline_single_name(name, preposition=""):
     elif name_lower.endswith('ь'):
         return name[:-1] + 'ю'
     else:
-        return name + 'u'
+        return name + 'у'
 
 def get_gender(user):
     name = (user.first_name or "").lower()
@@ -1095,7 +1186,6 @@ def handle_actions(message):
     full_text = message.text.strip().lower()
     
     actions_map = {
-        # Романтика и дружба
         "обнять": ("🤗", "обнял", "обняла", ""),
         "обнимаю": ("🤗", "обнял", "обняла", ""),
         "обниму": ("🤗", "обнял", "обняла", ""),
@@ -1122,8 +1212,6 @@ def handle_actions(message):
         "рассмешить": ("😂", "рассмешил", "рассмешила", ""),
         "предложить": ("💍", "предложил", "предложила", ""),
         "помочь": ("🫶", "помог", "помогла", ""),
-        
-        # Агрессивные
         "ударить": ("👊", "ударил", "ударила", ""),
         "пнуть": ("🦶", "пнул", "пнула", ""),
         "убить": ("💀", "убил", "убила", ""),
@@ -1151,8 +1239,6 @@ def handle_actions(message):
         "выпить": ("🍺", "выпил", "выпила", ""),
         "наказать": ("😈", "наказал", "наказала", ""),
         "щекотать": ("😂", "пощекотал", "пощекотала", ""),
-        
-        # 18+
         "дрочить": ("✊", "дрочил", "дрочила", ""),
         "подрочить": ("✊", "подрочил", "подрочила", ""),
         "отдрочить": ("✊", "отдрочил", "отдрочила", ""),
@@ -1168,8 +1254,6 @@ def handle_actions(message):
         "сквиртануть": ("💦💦", "сквиртанул", "сквиртанула", "на"),
         "сесть на лицо": ("🍑", "сел на лицо", "села на лицо", "на"),
         "сосать": ("👅", "сосал", "сосала", ""),
-        
-        # Бытовые
         "лечь": ("😴", "лёг", "леглá", "на"),
         "спать": ("😴", "лёг спать", "леглá спать", ""),
         "уснуть": ("😴", "уснул", "уснула", ""),
