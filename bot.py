@@ -339,7 +339,7 @@ def generate_chat_summary(chat_id, style="normal", length="full"):
     top_users = sorted(user_activity.items(), key=lambda x: x[1], reverse=True)[:5]
     
     # Часто встречающиеся слова
-    stop_words = {'и', 'в', 'на', 'не', 'а', 'но', 'за', 'по', 'с', 'у', 'к', 'из', 'от', 'до', 'о', 'об', 'же', 'ли', 'бы', 'это', 'что', 'как', 'так', 'все', 'меня', 'мне', 'тебя', 'тебе', 'его', 'её', 'нас', 'вас', 'их', 'мой', 'твой', 'наш', 'ваш', 'их', 'просто', 'вот', 'если', 'или', 'без', 'для'}
+    stop_words = {'и', 'в', 'на', 'не', 'а', 'но', 'за', 'по', 'с', 'у', 'к', 'из', 'от', 'до', 'о', 'об', 'же', 'ли', 'бы', 'это', 'что', 'как', 'так', 'все', 'меня', 'мне', 'тебя', 'тебе', 'его', 'её', 'нас', 'вас', 'их', 'мой', 'твой', 'наш', 'ваш', 'их', 'просто', 'вот', 'если', 'или', 'без', 'para'}
     
     word_count = {}
     for msg in today_messages:
@@ -625,50 +625,41 @@ def quote_command(message):
     if quote_text:
         bot.reply_to(message, quote_text, parse_mode="Markdown")
 
-# === КОМАНДЫ САММАРИ ===
+# === КОМАНДЫ САММАРИ (ИСПРАВЛЕННЫЕ) ===
 
 @bot.message_handler(commands=['summary'])
 def summary_command(message):
+    """Показать сводку сейчас"""
     parts = message.text.split(maxsplit=2)
     param1 = parts[1].lower() if len(parts) > 1 else ""
     param2 = parts[2].lower() if len(parts) > 2 else ""
     
-    style = get_chat_summary_settings(message.chat.id)["style"]
-    length = get_chat_summary_settings(message.chat.id)["length"]
-    
+    # Определяем стиль
     if param1 in ["тролль", "troll"]:
         style = "troll"
     elif param1 in ["обычный", "normal"]:
         style = "normal"
+    else:
+        style = get_chat_summary_settings(message.chat.id)["style"]
     
-    if param2 in ["кратко", "short"]:
+    # Определяем длину
+    if param1 in ["мини", "mini"]:
+        length = "mini"
+    elif param1 in ["кратко", "short"]:
         length = "short"
-    elif param2 in ["полно", "full"]:
+    elif param1 in ["полно", "full"]:
         length = "full"
     elif param2 in ["мини", "mini"]:
         length = "mini"
-    
-    if param1 in ["кратко", "short"]:
-        style = get_chat_summary_settings(message.chat.id)["style"]
+    elif param2 in ["кратко", "short"]:
         length = "short"
-        if param2 in ["тролль", "troll"]:
-            style = "troll"
-        elif param2 in ["обычный", "normal"]:
-            style = "normal"
-    elif param1 in ["полно", "full"]:
-        style = get_chat_summary_settings(message.chat.id)["style"]
+    elif param2 in ["полно", "full"]:
         length = "full"
-        if param2 in ["тролль", "troll"]:
-            style = "troll"
-        elif param2 in ["обычный", "normal"]:
-            style = "normal"
-    elif param1 in ["мини", "mini"]:
+    else:
+        length = get_chat_summary_settings(message.chat.id)["length"]
+    
+    if param1 in ["мини", "mini", "кратко", "short", "полно", "full"]:
         style = get_chat_summary_settings(message.chat.id)["style"]
-        length = "mini"
-        if param2 in ["тролль", "troll"]:
-            style = "troll"
-        elif param2 in ["обычный", "normal"]:
-            style = "normal"
     
     summary = generate_chat_summary(message.chat.id, style, length)
     if summary:
@@ -678,15 +669,17 @@ def summary_command(message):
 
 @bot.message_handler(commands=['summary_on'])
 def summary_on_command(message):
+    """Включить авто-сводку"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
     
     update_chat_summary_settings(message.chat.id, "enabled", True)
-    bot.reply_to(message, "✅ *Авто-сводка включена!*\n\nСводка будет приходить в установленное время.", parse_mode="Markdown")
+    bot.reply_to(message, "✅ *Авто-сводка включена!*\n\nСводка будет приходить в установленное время.\n\n📋 Текущие настройки: /summary_settings", parse_mode="Markdown")
 
 @bot.message_handler(commands=['summary_off'])
 def summary_off_command(message):
+    """Выключить авто-сводку"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -696,6 +689,7 @@ def summary_off_command(message):
 
 @bot.message_handler(commands=['summary_time'])
 def summary_time_command(message):
+    """Установить время отправки сводки"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -723,6 +717,7 @@ def summary_time_command(message):
 
 @bot.message_handler(commands=['summary_style'])
 def summary_style_command(message):
+    """Установить стиль сводки (обычный/тролль)"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -744,6 +739,7 @@ def summary_style_command(message):
 
 @bot.message_handler(commands=['summary_length'])
 def summary_length_command(message):
+    """Установить длину сводки (мини/кратко/полно)"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -768,6 +764,7 @@ def summary_length_command(message):
 
 @bot.message_handler(commands=['summary_settings'])
 def summary_settings_command(message):
+    """Показать текущие настройки сводки"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав! Только администратор.")
         return
@@ -1080,7 +1077,7 @@ def decline_single_name(name, preposition=""):
     elif name_lower.endswith('ь'):
         return name[:-1] + 'ю'
     else:
-        return name + 'у'
+        return name + 'u'
 
 def get_gender(user):
     name = (user.first_name or "").lower()
