@@ -38,6 +38,29 @@ daily_messages = []
 daily_quote_times = [9, 12, 15, 18, 21]
 active_chats = set()
 
+# === КЭШ ПОСЛЕДНИХ СООБЩЕНИЙ ДЛЯ РП КОМАНД ===
+last_message_cache = {}
+
+def get_last_message_sender(chat_id, thread_id=0):
+    """Получает отправителя последнего сообщения в чате"""
+    unique_id = f"{chat_id}_{thread_id}"
+    if unique_id in last_message_cache:
+        return last_message_cache[unique_id]
+    return None
+
+def update_last_message_cache(message):
+    """Обновляет кэш последнего сообщения"""
+    if message.from_user and not message.from_user.is_bot:
+        thread_id = message.message_thread_id if message.message_thread_id else 0
+        unique_id = f"{message.chat.id}_{thread_id}"
+        last_message_cache[unique_id] = {
+            'user_id': message.from_user.id,
+            'user_name': message.from_user.first_name or message.from_user.username or "Участник",
+            'username': message.from_user.username,
+            'text': message.text,
+            'time': datetime.now(MOSCOW_TZ).isoformat()
+        }
+
 def load_daily_quotes():
     global daily_messages
     if os.path.exists(QUOTES_CACHE_FILE):
@@ -100,6 +123,9 @@ def add_message_to_quotes(message):
     if len(daily_messages) > 1000:
         daily_messages = daily_messages[-1000:]
     save_daily_quotes()
+    
+    # Обновляем кэш последнего сообщения
+    update_last_message_cache(message)
 
 def add_chat_to_active(message):
     if message.text and message.text.startswith('/'):
@@ -537,7 +563,7 @@ def start_command(message):
             "`/summary` — показать\n"
             "`/summary on` — включить авто\n"
             "`/summary off` — выключить авто\n\n"
-            "🎭 *РП команды:* Ответь на сообщение и напиши действие\n"
+            "🎭 *РП команды:* Просто напиши: кончить, сесть на лицо, обнять, поцеловать, ударить\n"
             "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
             "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore`",
@@ -548,7 +574,7 @@ def start_command(message):
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
             "📋 *Сводка дня:* `/summary`\n\n"
-            "🎭 *РП команды:* Ответь на сообщение и напиши действие\n"
+            "🎭 *РП команды:* Просто напиши: кончить, сесть на лицо, обнять, поцеловать, ударить\n"
             "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`",
             parse_mode="Markdown")
@@ -1137,15 +1163,20 @@ def decline_name(name, preposition=""):
 def decline_single_name(name, preposition=""):
     name_lower = name.lower()
     
-    if preposition in ["у", "без", "до", "из", "от", "para"]:
+    # Правила склонения для разных предлогов
+    if preposition in ["у", "без", "до", "из", "от", "для"]:
+        # Родительный падеж: у кого? без кого?
         if name_lower.endswith('а'):
             return name[:-1] + 'ы'
         elif name_lower.endswith('я'):
             return name[:-1] + 'и'
+        elif name_lower.endswith('й'):
+            return name[:-1] + 'я'
         else:
             return name + 'а'
     
-    if preposition in ["с", "над", "под", "перед"]:
+    if preposition in ["с", "со", "над", "под", "перед", "за"]:
+        # Творительный падеж: с кем? над кем?
         if name_lower.endswith('а'):
             return name[:-1] + 'ой'
         elif name_lower.endswith('я'):
@@ -1155,26 +1186,32 @@ def decline_single_name(name, preposition=""):
         else:
             return name + 'ом'
     
-    if preposition in ["о", "об", "при"]:
-        if name_lower.endswith('а'):
-            return name[:-1] + 'е'
-        elif name_lower.endswith('я'):
-            return name[:-1] + 'е'
+    if preposition in ["о", "об", "при", "в", "во", "на", "за", "про", "через"]:
+        # Предложный или винительный падеж
+        if preposition in ["в", "на", "за", "про"]:
+            # Винительный: в кого? на кого?
+            if name_lower.endswith('а'):
+                return name[:-1] + 'у'
+            elif name_lower.endswith('я'):
+                return name[:-1] + 'ю'
+            elif name_lower.endswith('й'):
+                return name[:-1] + 'я'
+            else:
+                return name + 'а'
         else:
-            return name + 'е'
+            # Предложный: о ком? при ком?
+            if name_lower.endswith('а'):
+                return name[:-1] + 'е'
+            elif name_lower.endswith('я'):
+                return name[:-1] + 'е'
+            else:
+                return name + 'е'
     
-    if preposition in ["в", "на", "за", "про"]:
-        if name_lower.endswith('а'):
-            return name[:-1] + 'у'
-        elif name_lower.endswith('я'):
-            return name[:-1] + 'ю'
-        else:
-            return name
-    
+    # По умолчанию дательный падеж (кому?)
     if name_lower.endswith('а'):
-        return name[:-1] + 'у'
+        return name[:-1] + 'е'
     elif name_lower.endswith('я'):
-        return name[:-1] + 'ю'
+        return name[:-1] + 'е'
     elif name_lower.endswith('й'):
         return name[:-1] + 'ю'
     elif name_lower.endswith('ь'):
@@ -1185,7 +1222,7 @@ def decline_single_name(name, preposition=""):
 def get_gender(user):
     name = (user.first_name or user.username or "").lower()
     
-    male_names = ['владимир', 'вова', 'володя', 'александр', 'саша', 'саня', 'дмитрий', 'дима', 'николай', 'коля', 'сергей', 'андрей', 'алексей', 'иван', 'михаил', 'максим', 'никита', 'кирилл', 'павел', 'артём', 'егор', 'даниил']
+    male_names = ['владимир', 'вова', 'володя', 'александр', 'саша', 'саня', 'дмитрий', 'дима', 'николай', 'коля', 'сергей', 'андрей', 'алексей', 'иван', 'михаил', 'максим', 'никита', 'кирилл', 'павел', 'артём', 'егор', 'даниил', 'олег', 'виталий']
     female_names = ['анна', 'аня', 'мария', 'маша', 'елена', 'лена', 'ольга', 'оля', 'татьяна', 'наталья', 'наташа', 'екатерина', 'катя', 'юлия', 'юля', 'ирина', 'ира', 'светлана', 'света', 'виктория', 'вика', 'арина', 'алина', 'александра', 'кристина', 'дарья', 'даша', 'полина', 'валерия', 'лера']
     
     if name in male_names:
@@ -1193,6 +1230,7 @@ def get_gender(user):
     if name in female_names:
         return 'female'
     
+    # Определение по окончанию
     female_endings = ('а', 'я', 'ия', 'ья')
     male_exceptions = ('никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья')
     
@@ -1202,18 +1240,73 @@ def get_gender(user):
 
 # ========== РЕАКЦИИ НА ДЕЙСТВИЯ ==========
 def handle_actions(message):
+    full_text = message.text.strip().lower()
+    
+    # Команды без ответа (на последнее сообщение в чате)
+    no_reply_actions = {
+        "кончить": ("💦", "кончил на", "кончила на"),
+        "кончил": ("💦", "кончил на", "кончила на"),
+        "кончила": ("💦", "кончил на", "кончила на"),
+        "сесть на лицо": ("🍑", "сел на лицо", "села на лицо"),
+        "на лицо": ("🍑", "сел на лицо", "села на лицо"),
+        "обнять": ("🤗", "обнял", "обняла"),
+        "обнял": ("🤗", "обнял", "обняла"),
+        "обняла": ("🤗", "обнял", "обняла"),
+        "поцеловать": ("😘", "поцеловал", "поцеловала"),
+        "поцеловал": ("😘", "поцеловал", "поцеловала"),
+        "поцеловала": ("😘", "поцеловал", "поцеловала"),
+        "ударить": ("👊", "ударил", "ударила"),
+        "ударил": ("👊", "ударил", "ударила"),
+        "ударила": ("👊", "ударил", "ударила"),
+    }
+    
+    # Если команда без ответа И нет ответа на сообщение
+    if full_text in no_reply_actions and not message.reply_to_message:
+        emoji, male_action, female_action = no_reply_actions[full_text]
+        sender = message.from_user
+        sender_name = sender.first_name or sender.username or "Кто-то"
+        sender_gender = get_gender(sender)
+        
+        # Определяем действие в нужном роде
+        if male_action == female_action:
+            action = male_action
+        else:
+            action = male_action if sender_gender == 'male' else female_action
+        
+        # Ищем последнее сообщение в чате
+        target_name = "кого-то"
+        try:
+            unique_id = f"{message.chat.id}_{message.message_thread_id or 0}"
+            if unique_id in last_message_cache:
+                last = last_message_cache[unique_id]
+                target_name = last['user_name']
+        except:
+            pass
+        
+        # Склоняем имя цели
+        declined_target = decline_name(target_name, "на" if "на" in action else "в")
+        
+        if "на лицо" in action:
+            response = f"{emoji} {sender_name} {action} {declined_target}"
+        elif "на" in action:
+            response = f"{emoji} {sender_name} {action} {declined_target}"
+        else:
+            response = f"{emoji} {sender_name} {action} {declined_target}"
+        
+        thread_id = message.message_thread_id if message.message_thread_id else None
+        try:
+            bot.send_message(message.chat.id, response, message_thread_id=thread_id)
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка: {e}")
+            return False
+    
     # Команды "на всех" (без ответа)
     if not message.reply_to_message:
-        full_text = message.text.strip().lower()
-        
         global_actions = {
             "кончить на всех": ("💦", "кончил на всех", "кончила на всех"),
             "сквиртануть на всех": ("💦💦", "сквиртанул на всех", "сквиртанула на всех"),
             "кончить всем в лицо": ("💦", "кончил всем в лицо", "кончила всем в лицо"),
-            "сесть на лицо": ("🍑", "хочет сесть на лицо", "хочет сесть на лицо"),
-            "вылизать": ("👅", "хочет вылизать всех", "хочет вылизать всех"),
-            "унизить": ("😢", "унижает всех", "унижает всех"),
-            "опустить": ("😢", "опускает всех", "опускает всех"),
         }
         
         if full_text in global_actions:
@@ -1221,11 +1314,7 @@ def handle_actions(message):
             sender = message.from_user
             sender_name = sender.first_name or sender.username or "Кто-то"
             sender_gender = get_gender(sender)
-            
-            if female_action == male_action:
-                action = male_action
-            else:
-                action = male_action if sender_gender == 'male' else female_action
+            action = male_action if sender_gender == 'male' else female_action
             
             response = f"{emoji} {sender_name} {action}"
             thread_id = message.message_thread_id if message.message_thread_id else None
@@ -1237,6 +1326,7 @@ def handle_actions(message):
                 return False
         return False
     
+    # Обычные команды с ответом на сообщение
     full_text = message.text.strip().lower()
     
     # Многословные команды
@@ -1324,12 +1414,6 @@ def handle_actions(message):
         "спать": ("😴", "лёг спать", "леглá спать", ""),
         "уснуть": ("😴", "уснул", "уснула", ""),
         "пить": ("🍺", "выпил", "выпила", ""),
-        "вылизать": ("👅", "вылизал", "вылизала", ""),
-        "вылизывать": ("👅", "вылизывал", "вылизывала", ""),
-        "засосать": ("🫦", "засосал", "засосала", ""),
-        "опустить": ("😢", "опустил", "опустила", ""),
-        "привсех": ("👥", "опустил при всех", "опустила при всех", ""),
-        "публично": ("👥", "опустил публично", "опустила публично", ""),
     }
     
     emoji = None
@@ -1359,10 +1443,7 @@ def handle_actions(message):
     
     if preposition:
         declined_target = decline_name(target_name, preposition)
-        if preposition in ["в", "на", "за", "про"]:
-            target_with_preposition = f"{preposition} {declined_target}"
-        else:
-            target_with_preposition = f"{preposition} {declined_target}"
+        target_with_preposition = f"{preposition} {declined_target}"
     else:
         target_with_preposition = decline_name(target_name, "")
     
@@ -1382,6 +1463,9 @@ def handle_actions(message):
 # ========== ОСНОВНОЙ ОБРАБОТЧИК ==========
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
+    # Обновляем кэш последнего сообщения
+    update_last_message_cache(message)
+    
     if message.text and not message.text.startswith('/') and not message.reply_to_message:
         text_lower = message.text.lower().strip()
         user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
