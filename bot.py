@@ -268,29 +268,6 @@ def ask_groq(user_id, prompt):
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
 
-def ask_groq_for_summary(prompt):
-    """Запрос к Groq для генерации сводки"""
-    if not GROQ_API_KEY:
-        return None
-    
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "qwen/qwen3-32b",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1000,
-        "temperature": 0.8
-    }
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=45)
-        if response.status_code == 200:
-            answer = response.json()["choices"][0]["message"]["content"]
-            return answer.strip()
-        else:
-            return None
-    except:
-        return None
-
 def set_reaction(chat_id, message_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
@@ -354,14 +331,12 @@ def generate_chat_summary(chat_id, style="normal", length="full"):
     total_msgs = len(today_messages)
     users_count = len(set(m.get('author') for m in today_messages))
     
-    # Самые активные пользователи
     user_activity = {}
     for msg in today_messages:
         author = msg.get('author_name', 'Unknown')
         user_activity[author] = user_activity.get(author, 0) + 1
     top_users = sorted(user_activity.items(), key=lambda x: x[1], reverse=True)[:5]
     
-    # Часто встречающиеся слова
     stop_words = {'и', 'в', 'на', 'не', 'а', 'но', 'за', 'по', 'с', 'у', 'к', 'из', 'от', 'до', 'о', 'об', 'же', 'ли', 'бы', 'это', 'что', 'как', 'так', 'все', 'меня', 'мне', 'тебя', 'тебе', 'его', 'её', 'нас', 'вас', 'их', 'мой', 'твой', 'наш', 'ваш', 'их', 'просто', 'вот', 'если', 'или', 'без', 'для'}
     
     word_count = {}
@@ -447,17 +422,47 @@ def generate_chat_summary(chat_id, style="normal", length="full"):
         
         return text
 
-def generate_ai_summary(chat_id, style="normal"):
-    """Генерирует ИИ-сводку дня для чата"""
-    today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
-    
-    if len(today_messages) < 5:
+def ask_groq_for_summary(prompt):
+    """Запрос к Groq для генерации сводки"""
+    if not GROQ_API_KEY:
+        print("❌ Нет GROQ_API_KEY")
         return None
     
-    # Собираем последние 40 сообщений
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    data = {
+        "model": "qwen/qwen3-32b",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1000,
+        "temperature": 0.8
+    }
+    try:
+        print("🤖 Отправляю запрос к Groq API...")
+        response = requests.post(url, headers=headers, json=data, timeout=45)
+        if response.status_code == 200:
+            answer = response.json()["choices"][0]["message"]["content"]
+            print(f"✅ Получен ответ, длина: {len(answer)}")
+            return answer.strip()
+        else:
+            print(f"❌ Ошибка API: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"❌ Исключение: {e}")
+        return None
+
+def generate_ai_summary(chat_id, style="normal"):
+    """Генерирует ИИ-сводку дня для чата"""
+    print(f"🤖 Генерация ИИ-сводки для чата {chat_id}, стиль: {style}")
+    
+    today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
+    print(f"📊 Найдено сообщений: {len(today_messages)}")
+    
+    if len(today_messages) < 5:
+        print(f"⚠️ Недостаточно сообщений: {len(today_messages)} < 5")
+        return None
+    
     recent_messages = today_messages[-40:]
     
-    # Формируем текст для анализа
     chat_log = []
     for msg in recent_messages:
         author = msg.get('author_name', 'Участник')
@@ -465,26 +470,28 @@ def generate_ai_summary(chat_id, style="normal"):
         if text and len(text) < 200:
             chat_log.append(f"{author}: {text}")
     
+    print(f"📝 Сформировано {len(chat_log)} строк для анализа")
+    
     if not chat_log:
         return None
     
     conversation = "\n".join(chat_log)
     
     if style == "troll":
-        prompt = f"""Ты — тролль-журналист. Напиши юмористическую сводку по этому чату, как ChatNorrisBot.
+        prompt = f"""Ты — тролль-журналист. Напиши юмористическую сводку по этому чату.
 Используй эмодзи, подкалывай участников, будь остроумным и язвительным.
 Формат: разбей на 4-6 тем с эмодзи и заголовками.
 
 Вот диалог в чате:
 {conversation}
 
-Напиши сводку в стиле ChatNorrisBot:
+Напиши сводку:
 - Выдели 4-6 тем
-- К каждой теме подбери подходящий эмодзи (🌼, 🍻, 💍, 🐍, 🔞 и т.д.)
+- К каждой теме подбери подходящий эмодзи
 - Добавь хештег в конце #summary
-- Не используй статистику (цифры)
+- Не используй статистику
 - Будь смешным, но не слишком оскорбительным
-- Не упоминай, что это ИИ"""
+- Пиши на русском"""
     else:
         prompt = f"""Ты — журналист. Напиши краткую информативную сводку по этому чату.
 Разбей на 4-6 тем с эмодзи и заголовками. Будь нейтральным и объективным.
@@ -496,15 +503,16 @@ def generate_ai_summary(chat_id, style="normal"):
 - Выдели 4-6 тем
 - К каждой теме подбери эмодзи
 - Добавь хештег в конце #summary
-- Без статистики, только о чём говорили"""
+- Без статистики, только о чём говорили
+- Пиши на русском"""
     
-    try:
-        response = ask_groq_for_summary(prompt)
-        if response and "Ошибка" not in response:
-            return response
-        else:
-            return generate_fallback_summary(chat_id, style)
-    except:
+    response = ask_groq_for_summary(prompt)
+    
+    if response and "Ошибка" not in response:
+        print(f"✅ ИИ-сводка получена")
+        return response
+    else:
+        print(f"❌ Ошибка, используем резервную сводку")
         return generate_fallback_summary(chat_id, style)
 
 def generate_fallback_summary(chat_id, style="normal"):
@@ -517,7 +525,7 @@ def generate_fallback_summary(chat_id, style="normal"):
     users_count = len(set(m.get('author') for m in today_messages))
     
     if style == "troll":
-        return f"🤪 *ИИ временно недоступен*\n\nВ чате сегодня было {total_msgs} сообщений от {users_count} участников.\n\nПопробуй ещё раз через минуту или напиши /summary обычно. #summary"
+        return f"🤪 *ИИ временно недоступен*\n\nВ чате сегодня было {total_msgs} сообщений от {users_count} участников.\n\nПопробуй ещё раз через минуту. #summary"
     else:
         return f"📋 *ИИ временно недоступен*\n\nСегодня в чате {total_msgs} сообщений от {users_count} участников. Попробуй позже. #summary"
 
@@ -576,8 +584,8 @@ def start_command(message):
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
-            "📋 *Сводка дня:* `/summary` — обычная\n`/summary тролль` — ИИ-сводка с юмором\n`/summary ии` — ИИ-сводка обычная\n`/summary_on` `/summary_off` `/summary_time` `/summary_style` `/summary_length` `/summary_settings`\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить, кончить, выебать и другие\n\n"
+            "📋 *Сводка дня:* `/summary` — обычная\n`/summary тролль` — ИИ-сводка с юмором\n`/summary_on` `/summary_off` `/summary_time` `/summary_style` `/summary_length` `/summary_settings`\n\n"
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить и другие\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
             "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`",
             parse_mode="Markdown")
@@ -721,7 +729,7 @@ def quote_command(message):
     if quote_text:
         bot.reply_to(message, quote_text, parse_mode="Markdown")
 
-# === КОМАНДЫ САММАРИ ===
+# === КОМАНДЫ САММАРИ (ИСПРАВЛЕННЫЕ) ===
 
 @bot.message_handler(commands=['summary'])
 def summary_command(message):
@@ -729,7 +737,6 @@ def summary_command(message):
     parts = message.text.split(maxsplit=2)
     param1 = parts[1].lower() if len(parts) > 1 else ""
     
-    # Проверяем, хочет ли пользователь ИИ-сводку
     use_ai = param1 in ["ии", "ai", "умная", "умный", "тролль", "troll"]
     style = "troll" if param1 in ["тролль", "troll"] else "normal"
     
@@ -738,13 +745,11 @@ def summary_command(message):
         if summary:
             bot.reply_to(message, summary, parse_mode="Markdown")
         else:
-            bot.reply_to(message, "🤖 Не удалось сгенерировать ИИ-сводку. Попробуй позже или используй /summary обычный", parse_mode="Markdown")
+            bot.reply_to(message, "🤖 Не удалось сгенерировать ИИ-сводку. Попробуй позже или используй /summary без параметров", parse_mode="Markdown")
     else:
-        # Обычная сводка
         settings = get_chat_summary_settings(message.chat.id)
         length = settings["length"]
         
-        # Если указана длина в команде
         if param1 in ["мини", "mini"]:
             length = "mini"
         elif param1 in ["кратко", "short"]:
@@ -1178,7 +1183,7 @@ def get_gender(user):
         return 'female'
     return 'male'
 
-# ========== РЕАКЦИИ НА ДЕЙСТВИЯ (ПОЛНЫЙ СПИСОК) ==========
+# ========== РЕАКЦИИ НА ДЕЙСТВИЯ ==========
 def handle_actions(message):
     if not message.reply_to_message:
         return False
