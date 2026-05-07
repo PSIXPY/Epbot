@@ -250,7 +250,7 @@ def ask_groq(user_id, prompt):
     user_histories[user_id].append({"role": "user", "content": prompt})
     if len(user_histories[user_id]) > MAX_HISTORY:
         user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
-    messages = [{"role": "system", "content": "Отвечай кратко."}, *user_histories[user_id]]
+    messages = [{"role": "system", "content": "Отвечай кратко. НЕ используй теги <think> и рассуждения в ответе."}, *user_histories[user_id]]
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     data = {"model": "qwen/qwen3-32b", "messages": messages, "max_tokens": 800, "temperature": 0.2}
@@ -258,7 +258,14 @@ def ask_groq(user_id, prompt):
         response = requests.post(url, headers=headers, json=data, timeout=30)
         if response.status_code == 200:
             answer = response.json()["choices"][0]["message"]["content"]
-            answer = re.sub(r'<think>.*?</think>|/think', '', answer, flags=re.DOTALL).strip()
+            # Агрессивная очистка от тегов размышлений
+            answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL | re.IGNORECASE)
+            answer = re.sub(r'\[think\].*?\[/think\]', '', answer, flags=re.DOTALL | re.IGNORECASE)
+            answer = re.sub(r'/\s*think', '', answer, flags=re.IGNORECASE)
+            answer = re.sub(r'размышление:.*?(?=\n|$)', '', answer, flags=re.IGNORECASE)
+            answer = answer.strip()
+            if not answer:
+                answer = "⚠️ Не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
             user_histories[user_id].append({"role": "assistant", "content": answer})
             ai_cache[cache_key] = (time.time(), answer)
             return answer
@@ -389,7 +396,11 @@ def ask_groq_for_summary(prompt):
         response = requests.post(url, headers=headers, json=data, timeout=45)
         if response.status_code == 200:
             answer = response.json()["choices"][0]["message"]["content"]
-            return answer.strip()
+            # Очистка от тегов размышлений
+            answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL | re.IGNORECASE)
+            answer = re.sub(r'\[think\].*?\[/think\]', '', answer, flags=re.DOTALL | re.IGNORECASE)
+            answer = answer.strip()
+            return answer
         else:
             return None
     except:
@@ -424,6 +435,7 @@ def generate_ai_summary(chat_id, style="troll"):
         prompt = f"""Ты — тролль-журналист. Напиши юмористическую сводку по этому чату.
 Используй эмодзи, подкалывай участников, будь остроумным и язвительным.
 Формат: разбей на темы с эмодзи и заголовками. БЕЗ СТАТИСТИКИ.
+НЕ ИСПОЛЬЗУЙ теги <think> и рассуждения в ответе.
 
 Вот диалог в чате:
 {conversation}
@@ -438,6 +450,7 @@ def generate_ai_summary(chat_id, style="troll"):
     else:
         prompt = f"""Ты — журналист. Напиши краткую информативную сводку по этому чату.
 Разбей на темы с эмодзи и заголовками. Будь нейтральным и объективным. БЕЗ СТАТИСТИКИ.
+НЕ ИСПОЛЬЗУЙ теги <think> и рассуждения в ответе.
 
 Вот диалог в чате:
 {conversation}
@@ -681,7 +694,18 @@ def quote_command(message):
     if quote_text:
         bot.reply_to(message, quote_text, parse_mode="Markdown")
 
-# === КОМАНДЫ САММАРИ ===
+# ========== ФУНКЦИЯ ПРОВЕРКИ ПРАВ АДМИНА ЧАТА ==========
+
+def is_chat_admin(chat_id, user_id):
+    """Проверяет, является ли пользователь администратором чата или группы"""
+    try:
+        chat_member = bot.get_chat_member(chat_id, user_id)
+        return chat_member.status in ['administrator', 'creator']
+    except Exception as e:
+        print(f"⚠️ Ошибка проверки прав: {e}")
+        return False
+
+# ========== КОМАНДЫ САММАРИ (С ПРОВЕРКОЙ ПРАВ) ==========
 
 @bot.message_handler(commands=['summary'])
 def summary_command(message):
@@ -711,31 +735,40 @@ def summary_command(message):
 
 @bot.message_handler(commands=['summary_on'])
 def summary_on_command(message):
-    """Включить авто-сводку"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
+    """Включить авто-сводку (только для админов чата)"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    if not is_chat_admin(chat_id, user_id):
+        bot.reply_to(message, "❌ Только администраторы чата могут включать сводку!")
         return
     
-    update_chat_summary_settings(message.chat.id, "enabled", True)
-    settings = get_chat_summary_settings(message.chat.id)
+    update_chat_summary_settings(chat_id, "enabled", True)
+    settings = get_chat_summary_settings(chat_id)
     mode_text = "ИИ" if settings["mode"] == "ai" else "обычная"
     bot.reply_to(message, f"✅ *Авто-сводка включена!*\n\n📋 Режим: {mode_text}\n🕐 Время: {settings['time']}\n\nИзменить: /summary_settings", parse_mode="Markdown")
 
 @bot.message_handler(commands=['summary_off'])
 def summary_off_command(message):
-    """Выключить авто-сводку"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
+    """Выключить авто-сводку (только для админов чата)"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    if not is_chat_admin(chat_id, user_id):
+        bot.reply_to(message, "❌ Только администраторы чата могут выключать сводку!")
         return
     
-    update_chat_summary_settings(message.chat.id, "enabled", False)
+    update_chat_summary_settings(chat_id, "enabled", False)
     bot.reply_to(message, "✅ *Авто-сводка выключена!*\n\nВы можете вызвать сводку вручную: /summary", parse_mode="Markdown")
 
 @bot.message_handler(commands=['summary_mode'])
 def summary_mode_command(message):
-    """Установить режим сводки (ai / normal)"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
+    """Установить режим сводки (ai / normal) - только для админов чата"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    if not is_chat_admin(chat_id, user_id):
+        bot.reply_to(message, "❌ Только администраторы чата могут менять режим!")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -745,19 +778,22 @@ def summary_mode_command(message):
     
     mode = parts[1].strip().lower()
     if mode in ["ai", "ии"]:
-        update_chat_summary_settings(message.chat.id, "mode", "ai")
+        update_chat_summary_settings(chat_id, "mode", "ai")
         bot.reply_to(message, "✅ Режим сводки установлен на *ИИ* (умная сводка)", parse_mode="Markdown")
     elif mode in ["normal", "обычный", "обычная"]:
-        update_chat_summary_settings(message.chat.id, "mode", "normal")
+        update_chat_summary_settings(chat_id, "mode", "normal")
         bot.reply_to(message, "✅ Режим сводки установлен на *обычный* (статистика)", parse_mode="Markdown")
     else:
         bot.reply_to(message, "❌ Доступные режимы: ai, normal")
 
 @bot.message_handler(commands=['summary_style'])
 def summary_style_command(message):
-    """Установить стиль ИИ-сводки (тролль / обычный)"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
+    """Установить стиль ИИ-сводки (тролль / обычный) - только для админов чата"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    if not is_chat_admin(chat_id, user_id):
+        bot.reply_to(message, "❌ Только администраторы чата могут менять стиль!")
         return
     
     parts = message.text.split(maxsplit=1)
@@ -767,19 +803,22 @@ def summary_style_command(message):
     
     style = parts[1].strip().lower()
     if style in ["тролль", "troll"]:
-        update_chat_summary_settings(message.chat.id, "ai_style", "troll")
+        update_chat_summary_settings(chat_id, "ai_style", "troll")
         bot.reply_to(message, "✅ Стиль ИИ-сводки установлен на *тролль* (язвительный)", parse_mode="Markdown")
     elif style in ["обычный", "обычная", "normal"]:
-        update_chat_summary_settings(message.chat.id, "ai_style", "normal")
+        update_chat_summary_settings(chat_id, "ai_style", "normal")
         bot.reply_to(message, "✅ Стиль ИИ-сводки установлен на *обычный*", parse_mode="Markdown")
     else:
         bot.reply_to(message, "❌ Доступные стили: тролль, обычный")
 
 @bot.message_handler(commands=['summary_time'])
 def summary_time_command(message):
-    """Установить время отправки сводки"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
+    """Установить время отправки сводки - только для админов чата"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    if not is_chat_admin(chat_id, user_id):
+        bot.reply_to(message, "❌ Только администраторы чата могут менять время!")
         return
     
     parts = message.text.split(maxsplit=1)
