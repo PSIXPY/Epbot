@@ -24,7 +24,7 @@ bot = TeleBot(BOT_TOKEN)
 secret_messages = {}
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
-print("🤖 БОТ ЗАПУЩЕН - ВЕРСИЯ С ИИ-СВОДКОЙ")
+print("🤖 БОТ ЗАПУЩЕН")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
@@ -534,15 +534,10 @@ def start_command(message):
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
             "📋 *Сводка дня:*\n"
-            "`/summary` — показать сводку\n"
+            "`/summary` — показать\n"
             "`/summary on` — включить авто\n"
-            "`/summary off` — выключить авто\n"
-            "`/summary_mode ai` — ИИ-сводка\n"
-            "`/summary_mode normal` — обычная сводка\n"
-            "`/summary_style тролль` — стиль ИИ\n"
-            "`/summary_time 20:00` — время\n"
-            "`/summary_settings` — настройки\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить\n"
+            "`/summary off` — выключить авто\n\n"
+            "🎭 *РП команды:* Ответь на сообщение и напиши действие\n"
             "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
             "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore`",
@@ -552,8 +547,8 @@ def start_command(message):
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
-            "📋 *Сводка дня:* `/summary`\n`/summary on/off` — включить/выключить\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить\n"
+            "📋 *Сводка дня:* `/summary`\n\n"
+            "🎭 *РП команды:* Ответь на сообщение и напиши действие\n"
             "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`",
             parse_mode="Markdown")
@@ -899,14 +894,22 @@ def show_users(message):
         return
     total = len(chat_users)
     bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
+    
     text = "📋 *Список пользователей:*\n\n"
-    for uid, user in list(chat_users.items())[:50]:
+    for uid, user in chat_users.items():
         username = user.get('username', 'нет')
         name = user.get('first_name', 'Без имени')
-        text += f"• `{uid}` | @{username} | {name}\n"
-    bot.send_message(message.chat.id, text, parse_mode="Markdown")
-    if len(chat_users) > 50:
-        bot.send_message(message.chat.id, f"📊 и ещё {len(chat_users)-50} пользователей...")
+        if username and username != 'нет':
+            text += f"• `{uid}` | @{username} | {name}\n"
+        else:
+            text += f"• `{uid}` | {name}\n"
+    
+    if len(text) > 4000:
+        parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for part in parts:
+            bot.send_message(message.chat.id, part, parse_mode="Markdown")
+    else:
+        bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
@@ -1160,10 +1163,18 @@ def decline_single_name(name, preposition=""):
         else:
             return name + 'е'
     
+    if preposition in ["в", "на", "за", "про"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'у'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'ю'
+        else:
+            return name
+    
     if name_lower.endswith('а'):
-        return name[:-1] + 'е'
+        return name[:-1] + 'у'
     elif name_lower.endswith('я'):
-        return name[:-1] + 'е'
+        return name[:-1] + 'ю'
     elif name_lower.endswith('й'):
         return name[:-1] + 'ю'
     elif name_lower.endswith('ь'):
@@ -1172,15 +1183,26 @@ def decline_single_name(name, preposition=""):
         return name + 'у'
 
 def get_gender(user):
-    name = (user.first_name or "").lower()
+    name = (user.first_name or user.username or "").lower()
+    
+    male_names = ['владимир', 'вова', 'володя', 'александр', 'саша', 'саня', 'дмитрий', 'дима', 'николай', 'коля', 'сергей', 'андрей', 'алексей', 'иван', 'михаил', 'максим', 'никита', 'кирилл', 'павел', 'артём', 'егор', 'даниил']
+    female_names = ['анна', 'аня', 'мария', 'маша', 'елена', 'лена', 'ольга', 'оля', 'татьяна', 'наталья', 'наташа', 'екатерина', 'катя', 'юлия', 'юля', 'ирина', 'ира', 'светлана', 'света', 'виктория', 'вика', 'арина', 'алина', 'александра', 'кристина', 'дарья', 'даша', 'полина', 'валерия', 'лера']
+    
+    if name in male_names:
+        return 'male'
+    if name in female_names:
+        return 'female'
+    
     female_endings = ('а', 'я', 'ия', 'ья')
     male_exceptions = ('никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья')
+    
     if name.endswith(female_endings) and name not in male_exceptions:
         return 'female'
     return 'male'
 
 # ========== РЕАКЦИИ НА ДЕЙСТВИЯ ==========
 def handle_actions(message):
+    # Команды "на всех" (без ответа)
     if not message.reply_to_message:
         full_text = message.text.strip().lower()
         
@@ -1188,6 +1210,10 @@ def handle_actions(message):
             "кончить на всех": ("💦", "кончил на всех", "кончила на всех"),
             "сквиртануть на всех": ("💦💦", "сквиртанул на всех", "сквиртанула на всех"),
             "кончить всем в лицо": ("💦", "кончил всем в лицо", "кончила всем в лицо"),
+            "сесть на лицо": ("🍑", "хочет сесть на лицо", "хочет сесть на лицо"),
+            "вылизать": ("👅", "хочет вылизать всех", "хочет вылизать всех"),
+            "унизить": ("😢", "унижает всех", "унижает всех"),
+            "опустить": ("😢", "опускает всех", "опускает всех"),
         }
         
         if full_text in global_actions:
@@ -1195,7 +1221,11 @@ def handle_actions(message):
             sender = message.from_user
             sender_name = sender.first_name or sender.username or "Кто-то"
             sender_gender = get_gender(sender)
-            action = male_action if sender_gender == 'male' else female_action
+            
+            if female_action == male_action:
+                action = male_action
+            else:
+                action = male_action if sender_gender == 'male' else female_action
             
             response = f"{emoji} {sender_name} {action}"
             thread_id = message.message_thread_id if message.message_thread_id else None
@@ -1208,6 +1238,18 @@ def handle_actions(message):
         return False
     
     full_text = message.text.strip().lower()
+    
+    # Многословные команды
+    multiline_commands = ["сесть на лицо", "дать пять", "пожать руку", "послать нахуй"]
+    search_key = None
+    
+    for cmd in multiline_commands:
+        if full_text == cmd:
+            search_key = cmd
+            break
+    
+    if not search_key:
+        search_key = full_text.replace(" ", "")
     
     actions_map = {
         "обнять": ("🤗", "обнял", "обняла", ""),
@@ -1226,11 +1268,11 @@ def handle_actions(message):
         "похвалить": ("👍", "похвалил", "похвалила", ""),
         "поздравить": ("🎉", "поздравил", "поздравила", "с"),
         "извиниться": ("🙏", "извинился", "извинилась", "перед"),
-        "пожать руку": ("🤝", "пожал руку", "пожала руку", ""),
+        "пожатьруку": ("🤝", "пожал руку", "пожала руку", ""),
         "шлепнуть": ("🖐️", "шлепнул", "шлепнула", ""),
         "ущипнуть": ("🤏", "ущипнул", "ущипнула", ""),
         "покормить": ("🍕", "покормил", "покормила", ""),
-        "дать пять": ("🙏", "дал пять", "дала пять", ""),
+        "датьпять": ("🙏", "дал пять", "дала пять", ""),
         "понюхать": ("👃", "понюхал", "понюхала", ""),
         "испугать": ("😱", "испугал", "испугала", ""),
         "рассмешить": ("😂", "рассмешил", "рассмешила", ""),
@@ -1244,7 +1286,7 @@ def handle_actions(message):
         "расстрелять": ("🔫", "расстрелял", "расстреляла", ""),
         "шмальнуть": ("🔫", "шмальнул", "шмальнула", "в"),
         "задушить": ("🪢", "задушил", "задушила", ""),
-        "послать нахуй": ("🖕", "послал нахуй", "послала нахуй", ""),
+        "послатьнахуй": ("🖕", "послал нахуй", "послала нахуй", ""),
         "наорать": ("📢", "наорал", "наорала", "на"),
         "унизить": ("😢", "унизил", "унизила", ""),
         "арестовать": ("🚔", "арестовал", "арестовала", ""),
@@ -1276,15 +1318,20 @@ def handle_actions(message):
         "отсосать": ("👅", "отсосал", "отсосала", ""),
         "кончить": ("💦", "кончил", "кончила", "в"),
         "сквиртануть": ("💦💦", "сквиртанул", "сквиртанула", "на"),
-        "сесть на лицо": ("🍑", "сел на лицо", "села на лицо", "на"),
+        "сестьналицо": ("🍑", "сел на лицо", "села на лицо", "на"),
         "сосать": ("👅", "сосал", "сосала", ""),
         "лечь": ("😴", "лёг", "леглá", "на"),
         "спать": ("😴", "лёг спать", "леглá спать", ""),
         "уснуть": ("😴", "уснул", "уснула", ""),
         "пить": ("🍺", "выпил", "выпила", ""),
+        "вылизать": ("👅", "вылизал", "вылизала", ""),
+        "вылизывать": ("👅", "вылизывал", "вылизывала", ""),
+        "засосать": ("🫦", "засосал", "засосала", ""),
+        "опустить": ("😢", "опустил", "опустила", ""),
+        "привсех": ("👥", "опустил при всех", "опустила при всех", ""),
+        "публично": ("👥", "опустил публично", "опустила публично", ""),
     }
     
-    search_key = full_text.replace(" ", "")
     emoji = None
     past_action_male = None
     past_action_female = None
@@ -1312,7 +1359,10 @@ def handle_actions(message):
     
     if preposition:
         declined_target = decline_name(target_name, preposition)
-        target_with_preposition = f"{preposition} {declined_target}"
+        if preposition in ["в", "на", "за", "про"]:
+            target_with_preposition = f"{preposition} {declined_target}"
+        else:
+            target_with_preposition = f"{preposition} {declined_target}"
     else:
         target_with_preposition = decline_name(target_name, "")
     
@@ -1351,8 +1401,29 @@ def main_handler(message):
         if text_lower in ["доброе утро", "доброго утра"]:
             bot.reply_to(message, f"🌅 Доброе утро, {user_name}!")
             return
+        if text_lower in ["добрый вечер", "доброго вечера"]:
+            bot.reply_to(message, f"🌆 Добрый вечер, {user_name}!")
+            return
         if text_lower in ["спокойной ночи", "доброй ночи"]:
             bot.reply_to(message, f"🌙 Спокойной ночи, {user_name}!")
+            return
+        if text_lower in ["грустно", "печально"]:
+            bot.reply_to(message, f"😢 Обнимаю, {user_name}, всё будет хорошо!")
+            return
+        if text_lower in ["скучаю", "соскучился", "соскучилась"]:
+            bot.reply_to(message, f"🥺 Я тоже по тебе скучаю, {user_name}!")
+            return
+        if text_lower in ["ты лучший", "молодец", "умница"]:
+            bot.reply_to(message, f"😊 Спасибо, {user_name}! Ты тоже!")
+            return
+        if text_lower in ["0+", "0плюс"]:
+            bot.reply_to(message, f"📚 Для всех возрастов, {user_name}!")
+            return
+        if text_lower in ["13+", "13плюс"]:
+            bot.reply_to(message, f"🔞 Для подростков 13+, {user_name}!")
+            return
+        if text_lower in ["18+", "18плюс"]:
+            bot.reply_to(message, f"🔞 Только для взрослых 18+, {user_name}!")
             return
     
     if message.text and not message.text.startswith('/'):
