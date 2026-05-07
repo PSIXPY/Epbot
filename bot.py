@@ -543,14 +543,15 @@ def start_command(message):
             "📜 *Цитаты:* `/quote`\n\n"
             "📋 *Сводка дня:*\n"
             "`/summary` — показать сводку\n"
-            "`/summary_on` — включить авто\n"
-            "`/summary_off` — выключить авто\n"
+            "`/summary on` — включить авто\n"
+            "`/summary off` — выключить авто\n"
             "`/summary_mode ai` — ИИ-сводка\n"
             "`/summary_mode normal` — обычная сводка\n"
             "`/summary_style тролль` — стиль ИИ\n"
             "`/summary_time 20:00` — время\n"
             "`/summary_settings` — настройки\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить и другие\n\n"
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить\n"
+            "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
             "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/userinfo`",
             parse_mode="Markdown")
@@ -559,8 +560,9 @@ def start_command(message):
             "🤖 *ИИ:* `/ai вопрос`\n\n"
             "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
             "📜 *Цитаты:* `/quote`\n\n"
-            "📋 *Сводка дня:* `/summary`\n`/summary тролль` — ИИ-сводка\n\n"
-            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить и другие\n\n"
+            "📋 *Сводка дня:* `/summary`\n`/summary on/off` — включить/выключить\n\n"
+            "🎭 *Действия:* Ответь на сообщение и напиши: обнять, поцеловать, ударить\n"
+            "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
             "📨 *Скрытые сообщения:* `@бот username текст`",
             parse_mode="Markdown")
 
@@ -705,28 +707,66 @@ def is_chat_admin(chat_id, user_id):
         print(f"⚠️ Ошибка проверки прав: {e}")
         return False
 
-# ========== КОМАНДЫ САММАРИ (С ПРОВЕРКОЙ ПРАВ) ==========
+# ========== КОМАНДЫ САММАРИ ==========
 
 @bot.message_handler(commands=['summary'])
 def summary_command(message):
-    """Показать сводку сейчас"""
-    parts = message.text.split(maxsplit=2)
-    param1 = parts[1].lower() if len(parts) > 1 else ""
+    """Показать сводку сейчас или включить/выключить"""
+    parts = message.text.split(maxsplit=1)
     
+    # Обработка подкоманд
+    if len(parts) > 1:
+        subcmd = parts[1].lower()
+        
+        if subcmd == "on":
+            # Включаем авто-сводку
+            user_id = message.from_user.id
+            chat_id = message.chat.id
+            
+            if not is_chat_admin(chat_id, user_id):
+                bot.reply_to(message, "❌ Только администраторы чата могут включать сводку!")
+                return
+            
+            update_chat_summary_settings(chat_id, "enabled", True)
+            settings = get_chat_summary_settings(chat_id)
+            mode_text = "ИИ" if settings["mode"] == "ai" else "обычная"
+            bot.reply_to(message, f"✅ *Авто-сводка включена!*\n\n📋 Режим: {mode_text}\n🕐 Время: {settings['time']}", parse_mode="Markdown")
+            return
+            
+        elif subcmd == "off":
+            # Выключаем авто-сводку
+            user_id = message.from_user.id            chat_id = message.chat.id
+            
+            if not is_chat_admin(chat_id, user_id):
+                bot.reply_to(message, "❌ Только администраторы чата могут выключать сводку!")
+                return
+            
+            update_chat_summary_settings(chat_id, "enabled", False)
+            bot.reply_to(message, "✅ *Авто-сводка выключена!*", parse_mode="Markdown")
+            return
+        
+        elif subcmd in ["тролль", "troll"]:
+            summary = generate_ai_summary(message.chat.id, "troll")
+            if summary:
+                bot.reply_to(message, summary, parse_mode="Markdown")
+            else:
+                bot.reply_to(message, "📭 Недостаточно сообщений для ИИ-сводки (нужно минимум 5)")
+            return
+            
+        elif subcmd in ["обычный", "normal"]:
+            summary = generate_regular_summary(message.chat.id)
+            if summary:
+                bot.reply_to(message, summary, parse_mode="Markdown")
+            else:
+                bot.reply_to(message, "📭 Недостаточно сообщений для сводки (нужно минимум 3)")
+            return
+    
+    # Если нет подкоманды - показываем сводку с текущими настройками
     settings = get_chat_summary_settings(message.chat.id)
-    
-    # Временное переопределение режима из команды
-    if param1 in ["тролль", "troll"]:
-        summary = generate_ai_summary(message.chat.id, "troll")
-    elif param1 in ["обычный", "normal"]:
-        summary = generate_ai_summary(message.chat.id, "normal")
-    elif param1 in ["ии", "ai"]:
+    if settings.get("mode") == "ai":
         summary = generate_ai_summary(message.chat.id, settings.get("ai_style", "troll"))
     else:
-        if settings.get("mode") == "ai":
-            summary = generate_ai_summary(message.chat.id, settings.get("ai_style", "troll"))
-        else:
-            summary = generate_regular_summary(message.chat.id)
+        summary = generate_regular_summary(message.chat.id)
     
     if summary:
         bot.reply_to(message, summary, parse_mode="Markdown")
@@ -862,8 +902,8 @@ def summary_settings_command(message):
         text += f"🎭 Стиль ИИ: *{style_text}*\n"
     text += f"\n📋 *Команды:*\n"
     text += f"• `/summary` — показать сейчас\n"
-    text += f"• `/summary_on` — включить авто\n"
-    text += f"• `/summary_off` — выключить авто\n"
+    text += f"• `/summary on` — включить авто\n"
+    text += f"• `/summary off` — выключить авто\n"
     text += f"• `/summary_mode ai` — ИИ-режим\n"
     text += f"• `/summary_mode normal` — обычный\n"
     text += f"• `/summary_style тролль` — стиль ИИ\n"
@@ -1170,9 +1210,35 @@ def get_gender(user):
 
 # ========== РЕАКЦИИ НА ДЕЙСТВИЯ ==========
 def handle_actions(message):
+    # Проверяем на команды "на всех" (без ответа)
     if not message.reply_to_message:
+        full_text = message.text.strip().lower()
+        
+        # Команды на всех
+        global_actions = {
+            "кончить на всех": ("💦", "кончил на всех", "кончила на всех"),
+            "сквиртануть на всех": ("💦💦", "сквиртанул на всех", "сквиртанула на всех"),
+            "кончить всем в лицо": ("💦", "кончил всем в лицо", "кончила всем в лицо"),
+        }
+        
+        if full_text in global_actions:
+            emoji, male_action, female_action = global_actions[full_text]
+            sender = message.from_user
+            sender_name = sender.first_name or sender.username or "Кто-то"
+            sender_gender = get_gender(sender)
+            action = male_action if sender_gender == 'male' else female_action
+            
+            response = f"{emoji} {sender_name} {action}"
+            thread_id = message.message_thread_id if message.message_thread_id else None
+            try:
+                bot.send_message(message.chat.id, response, message_thread_id=thread_id)
+                return True
+            except Exception as e:
+                print(f"❌ Ошибка: {e}")
+                return False
         return False
     
+    # Обычные действия с ответом на сообщение
     full_text = message.text.strip().lower()
     
     actions_map = {
@@ -1325,8 +1391,8 @@ def main_handler(message):
             bot.reply_to(message, f"🌙 Спокойной ночи, {user_name}!")
             return
     
-    # 2. Действия при ответе на сообщение
-    if message.text and not message.text.startswith('/') and message.reply_to_message:
+    # 2. Действия (с ответом или без)
+    if message.text and not message.text.startswith('/'):
         if handle_actions(message):
             return
     
