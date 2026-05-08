@@ -110,7 +110,6 @@ def add_chat_to_active(message):
         active_chats.add(unique_id)
 
 def add_chat_from_reminder(chat_id, user_id):
-    """Добавляет чат в active_chats если там есть напоминание пользователя"""
     unique_id = f"{chat_id}_0"
     if unique_id not in active_chats:
         active_chats.add(unique_id)
@@ -532,7 +531,6 @@ def schedule_chat_summaries():
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    """Открывает меню в ЛС"""
     user_id = message.from_user.id
     
     if message.chat.id != user_id:
@@ -544,7 +542,6 @@ def start_command(message):
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
-    """Показывает текстовую справку"""
     print(f"📢 /help от {message.from_user.id}")
     
     if message.from_user.id == ADMIN_ID:
@@ -632,7 +629,6 @@ def add_reminder(message):
     save_reminders(reminders)
     schedule_reminder(reminder)
     
-    # Добавляем чат в активные (чтобы отображался в меню)
     add_chat_from_reminder(chat_id, message.from_user.id)
     
     msg = bot.send_message(chat_id, f"✅ Напоминание #{reminder_counter} создано!\n⏰ {hours:02d}:{minutes:02d}", message_thread_id=thread_id)
@@ -719,7 +715,6 @@ def quote_command(message):
 
 @bot.message_handler(commands=['check_reminders'])
 def check_all_reminders(message):
-    """Проверка всех напоминаний в боте (только для главного админа)"""
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Только для главного администратора!")
         return
@@ -732,12 +727,10 @@ def check_all_reminders(message):
         bot.send_message(message.chat.id, "📭 Нет ни одного напоминания в боте")
         return
     
-    # Собираем статистику
     total = len(reminders)
     daily_count = len([r for r in reminders if r.get("daily")])
     regular_count = total - daily_count
     
-    # Группируем по чатам
     chats_stats = {}
     for r in reminders:
         chat_id = r.get("chat_id")
@@ -747,9 +740,8 @@ def check_all_reminders(message):
                 chat_title = chat.title or f"Чат {chat_id}"
             except:
                 chat_title = f"Чат {chat_id}"
-            chats_stats[chat_id] = {"title": chat_title, "count": 0, "reminders": []}
+            chats_stats[chat_id] = {"title": chat_title, "count": 0}
         chats_stats[chat_id]["count"] += 1
-        chats_stats[chat_id]["reminders"].append(r)
     
     text = f"📊 *Статистика напоминаний*\n\n"
     text += f"📝 Всего: {total}\n"
@@ -772,7 +764,6 @@ def check_all_reminders(message):
     bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=markup)
 
 def show_admin_chat_reminders(user_id, chat_id, message_id=None):
-    """Показывает все напоминания в выбранном чате для админа"""
     chat_reminders = [r for r in reminders if r.get("chat_id") == chat_id]
     
     try:
@@ -1527,7 +1518,6 @@ def main_handler(message):
 # ========== ЛС-МЕНЮ С КНОПКАМИ ==========
 
 def send_main_menu(user_id):
-    """Отправляет главное меню"""
     text = "⚙️ *Главное меню бота*\n\n"
     text += "Выберите раздел для управления:"
     
@@ -1544,7 +1534,6 @@ def send_main_menu(user_id):
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 def add_bot_to_chat_menu(user_id, message_id=None):
-    """Показывает инструкцию по добавлению бота в чат"""
     bot_username = bot.get_me().username
     
     text = "🤖 *Как добавить бота в чат:*\n\n"
@@ -1573,46 +1562,44 @@ def add_bot_to_chat_menu(user_id, message_id=None):
         bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
 
 def get_user_chats_list(user_id):
-    """Возвращает список чатов, где есть пользователь (по сообщениям ИЛИ напоминаниям)"""
-    user_chats_dict = {}
+    """Возвращает список всех чатов, где есть бот и пользователь"""
+    user_chats_list = []
+    seen_chats = set()
     
-    # Добавляем чаты из сообщений
+    # 1. Чаты из active_chats
     for unique_id in active_chats:
         parts = unique_id.split("_")
         chat_id = int(parts[0])
-        
-        user_messages = [m for m in daily_messages 
-                        if m.get('chat_id') == chat_id 
-                        and m.get('author') == user_id]
-        
-        if user_messages:
-            user_chats_dict[chat_id] = True
-    
-    # Добавляем чаты из напоминаний
-    for r in reminders:
-        if r.get('user_id') == user_id:
-            chat_id = r.get('chat_id')
-            if chat_id:
-                user_chats_dict[chat_id] = True
-    
-    # Преобразуем в список с названиями чатов
-    user_chats_list = []
-    for chat_id in user_chats_dict.keys():
+        if chat_id in seen_chats:
+            continue
         try:
             chat = bot.get_chat(chat_id)
-            chat_title = chat.title or f"Чат {chat_id}"
+            try:
+                member = bot.get_chat_member(chat_id, user_id)
+                if member.status in ['member', 'administrator', 'creator', 'restricted']:
+                    seen_chats.add(chat_id)
+                    user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
+            except:
+                seen_chats.add(chat_id)
+                user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
         except:
-            chat_title = f"Чат {chat_id}"
-        
-        user_chats_list.append({
-            "id": chat_id,
-            "title": chat_title
-        })
+            continue
+    
+    # 2. Чаты из напоминаний
+    for r in reminders:
+        if r.get("user_id") == user_id:
+            chat_id = r.get("chat_id")
+            if chat_id and chat_id not in seen_chats:
+                try:
+                    chat = bot.get_chat(chat_id)
+                    user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
+                except:
+                    user_chats_list.append({"id": chat_id, "title": f"Чат {chat_id}"})
+                seen_chats.add(chat_id)
     
     return user_chats_list
 
 def show_chats_for_summary(user_id, message_id=None):
-    """Показывает список чатов для настройки сводки"""
     chats = get_user_chats_list(user_id)
     
     if not chats:
@@ -1632,7 +1619,6 @@ def show_chats_for_summary(user_id, message_id=None):
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 def show_summary_settings(user_id, chat_id):
-    """Показывает настройки сводки для выбранного чата"""
     settings = get_chat_summary_settings(chat_id)
     
     try:
@@ -1660,7 +1646,7 @@ def show_summary_settings(user_id, chat_id):
     )
     markup.add(
         InlineKeyboardButton("🤖 ИИ режим", callback_data=f"summary_action_ai_{chat_id}"),
-        InlineKeyboardButton("📊 Обычный", callback_data=f"summary_action_normal_{chat_id}")
+        InlineKeyboardButton("📊 Обычный режим", callback_data=f"summary_action_normal_{chat_id}")
     )
     if settings["mode"] == "ai":
         markup.add(
@@ -1673,7 +1659,6 @@ def show_summary_settings(user_id, chat_id):
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 def show_chats_for_reminders(user_id, message_id=None):
-    """Показывает список чатов для управления напоминаниями"""
     chats = get_user_chats_list(user_id)
     
     if not chats:
@@ -1695,7 +1680,6 @@ def show_chats_for_reminders(user_id, message_id=None):
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 def show_reminders_for_chat(user_id, chat_id, message_id=None):
-    """Показывает список напоминаний пользователя в выбранном чате"""
     user_reminders = [r for r in reminders 
                       if r.get("chat_id") == chat_id 
                       and r.get("user_id") == user_id]
@@ -1732,7 +1716,6 @@ def show_reminders_for_chat(user_id, chat_id, message_id=None):
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 def show_delete_reminders_list(user_id, chat_id, message_id=None):
-    """Показывает список напоминаний для удаления"""
     user_reminders = [r for r in reminders 
                       if r.get("chat_id") == chat_id 
                       and r.get("user_id") == user_id]
@@ -1890,7 +1873,6 @@ def handle_menu_callback(call):
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
     
-    # ===== АДМИН-КОМАНДЫ В МЕНЮ =====
     elif call.data == "admin_back_to_list":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -1905,7 +1887,6 @@ def handle_menu_callback(call):
         chat_id = int(call.data.split("_")[3])
         bot.answer_callback_query(call.id)
         
-        # Удаляем все напоминания в этом чате
         to_delete = []
         for i, r in enumerate(reminders):
             if r.get("chat_id") == chat_id:
@@ -1925,7 +1906,6 @@ def handle_menu_callback(call):
         
     elif call.data == "admin_delete_all_reminders":
         bot.answer_callback_query(call.id)
-        # Отменяем все таймеры
         for r in reminders:
             if "_timer" in r:
                 try:
