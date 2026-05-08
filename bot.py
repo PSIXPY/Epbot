@@ -38,29 +38,6 @@ daily_messages = []
 daily_quote_times = [9, 12, 15, 18, 21]
 active_chats = set()
 
-# === КЭШ ПОСЛЕДНИХ СООБЩЕНИЙ ДЛЯ РП КОМАНД ===
-last_message_cache = {}
-
-def get_last_message_sender(chat_id, thread_id=0):
-    """Получает отправителя последнего сообщения в чате"""
-    unique_id = f"{chat_id}_{thread_id}"
-    if unique_id in last_message_cache:
-        return last_message_cache[unique_id]
-    return None
-
-def update_last_message_cache(message):
-    """Обновляет кэш последнего сообщения"""
-    if message.from_user and not message.from_user.is_bot:
-        thread_id = message.message_thread_id if message.message_thread_id else 0
-        unique_id = f"{message.chat.id}_{thread_id}"
-        last_message_cache[unique_id] = {
-            'user_id': message.from_user.id,
-            'user_name': message.from_user.first_name or message.from_user.username or "Участник",
-            'username': message.from_user.username,
-            'text': message.text,
-            'time': datetime.now(MOSCOW_TZ).isoformat()
-        }
-
 def load_daily_quotes():
     global daily_messages
     if os.path.exists(QUOTES_CACHE_FILE):
@@ -123,9 +100,6 @@ def add_message_to_quotes(message):
     if len(daily_messages) > 1000:
         daily_messages = daily_messages[-1000:]
     save_daily_quotes()
-    
-    # Обновляем кэш последнего сообщения
-    update_last_message_cache(message)
 
 def add_chat_to_active(message):
     if message.text and message.text.startswith('/'):
@@ -286,8 +260,6 @@ def ask_groq(user_id, prompt):
             answer = response.json()["choices"][0]["message"]["content"]
             answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL | re.IGNORECASE)
             answer = re.sub(r'\[think\].*?\[/think\]', '', answer, flags=re.DOTALL | re.IGNORECASE)
-            answer = re.sub(r'/\s*think', '', answer, flags=re.IGNORECASE)
-            answer = re.sub(r'размышление:.*?(?=\n|$)', '', answer, flags=re.IGNORECASE)
             answer = answer.strip()
             if not answer:
                 answer = "⚠️ Не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
@@ -551,33 +523,51 @@ def schedule_chat_summaries():
 
 # ========== КОМАНДЫ ==========
 
-@bot.message_handler(commands=['start', 'help'])
+@bot.message_handler(commands=['start'])
 def start_command(message):
-    print(f"📢 /start от {message.from_user.id}")
-    if message.from_user.id == ADMIN_ID:
-        bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
-            "🤖 *ИИ:* `/ai вопрос`\n\n"
-            "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
-            "📜 *Цитаты:* `/quote`\n\n"
-            "📋 *Сводка дня:*\n"
-            "`/summary` — показать\n"
-            "`/summary on` — включить авто\n"
-            "`/summary off` — выключить авто\n\n"
-            "🎭 *РП команды:* Просто напиши: кончить, сесть на лицо, обнять, поцеловать, ударить\n"
-            "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
-            "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-            "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore`",
-            parse_mode="Markdown")
+    """Открывает меню в ЛС"""
+    user_id = message.from_user.id
+    
+    if message.chat.id != user_id:
+        bot.send_message(user_id, "⚙️ Отправляю меню в личные сообщения...")
+        bot.delete_message(message.chat.id, message.message_id)
+        send_main_menu(user_id)
     else:
-        bot.send_message(message.chat.id, "✅ *Бот работает!*\n\n"
-            "🤖 *ИИ:* `/ai вопрос`\n\n"
-            "⏰ *Напоминания:* `/remind 15:30 текст`\n`/reminds`\n`/delremind ID`\n\n"
-            "📜 *Цитаты:* `/quote`\n\n"
-            "📋 *Сводка дня:* `/summary`\n\n"
-            "🎭 *РП команды:* Просто напиши: кончить, сесть на лицо, обнять, поцеловать, ударить\n"
-            "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
-            "📨 *Скрытые сообщения:* `@бот username текст`",
-            parse_mode="Markdown")
+        send_main_menu(user_id)
+
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    """Показывает текстовую справку"""
+    print(f"📢 /help от {message.from_user.id}")
+    
+    if message.from_user.id == ADMIN_ID:
+        text = "✅ *Бот работает!*\n\n"
+        text += "🤖 *ИИ:* `/ai вопрос`\n\n"
+        text += "⏰ *Напоминания:* `/remind 15:30 текст`\n"
+        text += "`/reminds` — мои напоминания\n"
+        text += "`/delremind ID` — удалить\n\n"
+        text += "📜 *Цитаты:* `/quote`\n\n"
+        text += "📋 *Сводка дня:* `/summary`\n"
+        text += "`/summary on/off` — вкл/выкл авто\n\n"
+        text += "🎭 *РП команды:* Ответь на сообщение и напиши действие\n"
+        text += "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
+        text += "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
+        text += "⚙️ *Меню:* `/start` — открыть в ЛС\n\n"
+        text += "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore`"
+    else:
+        text = "✅ *Бот работает!*\n\n"
+        text += "🤖 *ИИ:* `/ai вопрос`\n\n"
+        text += "⏰ *Напоминания:* `/remind 15:30 текст`\n"
+        text += "`/reminds` — мои напоминания\n"
+        text += "`/delremind ID` — удалить\n\n"
+        text += "📜 *Цитаты:* `/quote`\n\n"
+        text += "📋 *Сводка дня:* `/summary`\n\n"
+        text += "🎭 *РП команды:* Ответь на сообщение и напиши действие\n"
+        text += "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
+        text += "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
+        text += "⚙️ *Меню:* `/start` — открыть в ЛС"
+    
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
@@ -718,6 +708,44 @@ def is_chat_admin(chat_id, user_id):
     except Exception as e:
         print(f"⚠️ Ошибка проверки прав: {e}")
         return False
+
+# ========== ИСПРАВЛЕННАЯ КОМАНДА USERS ==========
+
+@bot.message_handler(commands=['users'])
+def show_users(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав!")
+        return
+    if message.chat.type != 'private':
+        bot.reply_to(message, "❌ Только в ЛС!")
+        return
+    
+    if not chat_users:
+        bot.send_message(message.chat.id, "📭 Нет пользователей")
+        return
+    
+    total = len(chat_users)
+    bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
+    
+    user_lines = []
+    for uid, user in chat_users.items():
+        username = user.get('username', '')
+        first_name = user.get('first_name', 'Без имени')
+        
+        if username and username != 'None':
+            user_lines.append(f"• `{uid}` | @{username} | {first_name}")
+        else:
+            user_lines.append(f"• `{uid}` | {first_name}")
+    
+    chunk_size = 50
+    total_chunks = (len(user_lines) + chunk_size - 1) // chunk_size
+    
+    for i in range(0, len(user_lines), chunk_size):
+        chunk = user_lines[i:i+chunk_size]
+        chunk_num = (i // chunk_size) + 1
+        text = f"📋 *Список пользователей* (часть {chunk_num}/{total_chunks}):\n\n"
+        text += "\n".join(chunk)
+        bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 # ========== КОМАНДЫ САММАРИ ==========
 
@@ -907,36 +935,6 @@ def summary_settings_command(message):
 
 # === АДМИН-КОМАНДЫ ===
 
-@bot.message_handler(commands=['users'])
-def show_users(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
-        return
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Только в ЛС!")
-        return
-    if not chat_users:
-        bot.send_message(message.chat.id, "📭 Нет пользователей")
-        return
-    total = len(chat_users)
-    bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
-    
-    text = "📋 *Список пользователей:*\n\n"
-    for uid, user in chat_users.items():
-        username = user.get('username', 'нет')
-        name = user.get('first_name', 'Без имени')
-        if username and username != 'нет':
-            text += f"• `{uid}` | @{username} | {name}\n"
-        else:
-            text += f"• `{uid}` | {name}\n"
-    
-    if len(text) > 4000:
-        parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
-        for part in parts:
-            bot.send_message(message.chat.id, part, parse_mode="Markdown")
-    else:
-        bot.send_message(message.chat.id, text, parse_mode="Markdown")
-
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
     global chat_users
@@ -1011,7 +1009,8 @@ def backup_command(message):
             "version": "2.0",
             "date": str(datetime.now()),
             "reminders": clean_reminders,
-            "chat_users": chat_users
+            "chat_users": chat_users,
+            "summary_settings": summary_settings
         }
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(filename, 'w', encoding='utf-8') as f:
@@ -1035,7 +1034,7 @@ def restore_command(message):
 
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
-    global chat_users, reminder_counter, reminders
+    global chat_users, reminder_counter, reminders, summary_settings
     if message.from_user.id != ADMIN_ID:
         return
     if message.chat.type != 'private':
@@ -1063,6 +1062,9 @@ def handle_restore_file(message):
         if "chat_users" in data:
             chat_users = data["chat_users"]
             user_cache.save_users(chat_users)
+        if "summary_settings" in data:
+            summary_settings = data["summary_settings"]
+            save_summary_settings()
         bot.edit_message_text(f"✅ Восстановлено!\n👥 {len(chat_users)} пользователей\n⏰ {len(reminders)} напоминаний", message.chat.id, status.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, status.message_id)
@@ -1163,20 +1165,15 @@ def decline_name(name, preposition=""):
 def decline_single_name(name, preposition=""):
     name_lower = name.lower()
     
-    # Правила склонения для разных предлогов
-    if preposition in ["у", "без", "до", "из", "от", "для"]:
-        # Родительный падеж: у кого? без кого?
+    if preposition in ["у", "без", "до", "из", "от", "para"]:
         if name_lower.endswith('а'):
             return name[:-1] + 'ы'
         elif name_lower.endswith('я'):
             return name[:-1] + 'и'
-        elif name_lower.endswith('й'):
-            return name[:-1] + 'я'
         else:
             return name + 'а'
     
-    if preposition in ["с", "со", "над", "под", "перед", "за"]:
-        # Творительный падеж: с кем? над кем?
+    if preposition in ["с", "над", "под", "перед"]:
         if name_lower.endswith('а'):
             return name[:-1] + 'ой'
         elif name_lower.endswith('я'):
@@ -1186,28 +1183,14 @@ def decline_single_name(name, preposition=""):
         else:
             return name + 'ом'
     
-    if preposition in ["о", "об", "при", "в", "во", "на", "за", "про", "через"]:
-        # Предложный или винительный падеж
-        if preposition in ["в", "на", "за", "про"]:
-            # Винительный: в кого? на кого?
-            if name_lower.endswith('а'):
-                return name[:-1] + 'у'
-            elif name_lower.endswith('я'):
-                return name[:-1] + 'ю'
-            elif name_lower.endswith('й'):
-                return name[:-1] + 'я'
-            else:
-                return name + 'а'
+    if preposition in ["о", "об", "при"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'е'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'е'
         else:
-            # Предложный: о ком? при ком?
-            if name_lower.endswith('а'):
-                return name[:-1] + 'е'
-            elif name_lower.endswith('я'):
-                return name[:-1] + 'е'
-            else:
-                return name + 'е'
+            return name + 'е'
     
-    # По умолчанию дательный падеж (кому?)
     if name_lower.endswith('а'):
         return name[:-1] + 'е'
     elif name_lower.endswith('я'):
@@ -1220,89 +1203,18 @@ def decline_single_name(name, preposition=""):
         return name + 'у'
 
 def get_gender(user):
-    name = (user.first_name or user.username or "").lower()
-    
-    male_names = ['владимир', 'вова', 'володя', 'александр', 'саша', 'саня', 'дмитрий', 'дима', 'николай', 'коля', 'сергей', 'андрей', 'алексей', 'иван', 'михаил', 'максим', 'никита', 'кирилл', 'павел', 'артём', 'егор', 'даниил', 'олег', 'виталий']
-    female_names = ['анна', 'аня', 'мария', 'маша', 'елена', 'лена', 'ольга', 'оля', 'татьяна', 'наталья', 'наташа', 'екатерина', 'катя', 'юлия', 'юля', 'ирина', 'ира', 'светлана', 'света', 'виктория', 'вика', 'арина', 'алина', 'александра', 'кристина', 'дарья', 'даша', 'полина', 'валерия', 'лера']
-    
-    if name in male_names:
-        return 'male'
-    if name in female_names:
-        return 'female'
-    
-    # Определение по окончанию
+    name = (user.first_name or "").lower()
     female_endings = ('а', 'я', 'ия', 'ья')
     male_exceptions = ('никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья')
-    
     if name.endswith(female_endings) and name not in male_exceptions:
         return 'female'
     return 'male'
 
 # ========== РЕАКЦИИ НА ДЕЙСТВИЯ ==========
 def handle_actions(message):
-    full_text = message.text.strip().lower()
-    
-    # Команды без ответа (на последнее сообщение в чате)
-    no_reply_actions = {
-        "кончить": ("💦", "кончил на", "кончила на"),
-        "кончил": ("💦", "кончил на", "кончила на"),
-        "кончила": ("💦", "кончил на", "кончила на"),
-        "сесть на лицо": ("🍑", "сел на лицо", "села на лицо"),
-        "на лицо": ("🍑", "сел на лицо", "села на лицо"),
-        "обнять": ("🤗", "обнял", "обняла"),
-        "обнял": ("🤗", "обнял", "обняла"),
-        "обняла": ("🤗", "обнял", "обняла"),
-        "поцеловать": ("😘", "поцеловал", "поцеловала"),
-        "поцеловал": ("😘", "поцеловал", "поцеловала"),
-        "поцеловала": ("😘", "поцеловал", "поцеловала"),
-        "ударить": ("👊", "ударил", "ударила"),
-        "ударил": ("👊", "ударил", "ударила"),
-        "ударила": ("👊", "ударил", "ударила"),
-    }
-    
-    # Если команда без ответа И нет ответа на сообщение
-    if full_text in no_reply_actions and not message.reply_to_message:
-        emoji, male_action, female_action = no_reply_actions[full_text]
-        sender = message.from_user
-        sender_name = sender.first_name or sender.username or "Кто-то"
-        sender_gender = get_gender(sender)
-        
-        # Определяем действие в нужном роде
-        if male_action == female_action:
-            action = male_action
-        else:
-            action = male_action if sender_gender == 'male' else female_action
-        
-        # Ищем последнее сообщение в чате
-        target_name = "кого-то"
-        try:
-            unique_id = f"{message.chat.id}_{message.message_thread_id or 0}"
-            if unique_id in last_message_cache:
-                last = last_message_cache[unique_id]
-                target_name = last['user_name']
-        except:
-            pass
-        
-        # Склоняем имя цели
-        declined_target = decline_name(target_name, "на" if "на" in action else "в")
-        
-        if "на лицо" in action:
-            response = f"{emoji} {sender_name} {action} {declined_target}"
-        elif "на" in action:
-            response = f"{emoji} {sender_name} {action} {declined_target}"
-        else:
-            response = f"{emoji} {sender_name} {action} {declined_target}"
-        
-        thread_id = message.message_thread_id if message.message_thread_id else None
-        try:
-            bot.send_message(message.chat.id, response, message_thread_id=thread_id)
-            return True
-        except Exception as e:
-            print(f"❌ Ошибка: {e}")
-            return False
-    
-    # Команды "на всех" (без ответа)
     if not message.reply_to_message:
+        full_text = message.text.strip().lower()
+        
         global_actions = {
             "кончить на всех": ("💦", "кончил на всех", "кончила на всех"),
             "сквиртануть на всех": ("💦💦", "сквиртанул на всех", "сквиртанула на всех"),
@@ -1326,10 +1238,8 @@ def handle_actions(message):
                 return False
         return False
     
-    # Обычные команды с ответом на сообщение
     full_text = message.text.strip().lower()
     
-    # Многословные команды
     multiline_commands = ["сесть на лицо", "дать пять", "пожать руку", "послать нахуй"]
     search_key = None
     
@@ -1358,11 +1268,11 @@ def handle_actions(message):
         "похвалить": ("👍", "похвалил", "похвалила", ""),
         "поздравить": ("🎉", "поздравил", "поздравила", "с"),
         "извиниться": ("🙏", "извинился", "извинилась", "перед"),
-        "пожатьруку": ("🤝", "пожал руку", "пожала руку", ""),
+        "пожать руку": ("🤝", "пожал руку", "пожала руку", ""),
         "шлепнуть": ("🖐️", "шлепнул", "шлепнула", ""),
         "ущипнуть": ("🤏", "ущипнул", "ущипнула", ""),
         "покормить": ("🍕", "покормил", "покормила", ""),
-        "датьпять": ("🙏", "дал пять", "дала пять", ""),
+        "дать пять": ("🙏", "дал пять", "дала пять", ""),
         "понюхать": ("👃", "понюхал", "понюхала", ""),
         "испугать": ("😱", "испугал", "испугала", ""),
         "рассмешить": ("😂", "рассмешил", "рассмешила", ""),
@@ -1376,7 +1286,7 @@ def handle_actions(message):
         "расстрелять": ("🔫", "расстрелял", "расстреляла", ""),
         "шмальнуть": ("🔫", "шмальнул", "шмальнула", "в"),
         "задушить": ("🪢", "задушил", "задушила", ""),
-        "послатьнахуй": ("🖕", "послал нахуй", "послала нахуй", ""),
+        "послать нахуй": ("🖕", "послал нахуй", "послала нахуй", ""),
         "наорать": ("📢", "наорал", "наорала", "на"),
         "унизить": ("😢", "унизил", "унизила", ""),
         "арестовать": ("🚔", "арестовал", "арестовала", ""),
@@ -1408,7 +1318,7 @@ def handle_actions(message):
         "отсосать": ("👅", "отсосал", "отсосала", ""),
         "кончить": ("💦", "кончил", "кончила", "в"),
         "сквиртануть": ("💦💦", "сквиртанул", "сквиртанула", "на"),
-        "сестьналицо": ("🍑", "сел на лицо", "села на лицо", "на"),
+        "сесть на лицо": ("🍑", "сел на лицо", "села на лицо", "на"),
         "сосать": ("👅", "сосал", "сосала", ""),
         "лечь": ("😴", "лёг", "леглá", "на"),
         "спать": ("😴", "лёг спать", "леглá спать", ""),
@@ -1463,9 +1373,6 @@ def handle_actions(message):
 # ========== ОСНОВНОЙ ОБРАБОТЧИК ==========
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
-    # Обновляем кэш последнего сообщения
-    update_last_message_cache(message)
-    
     if message.text and not message.text.startswith('/') and not message.reply_to_message:
         text_lower = message.text.lower().strip()
         user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
@@ -1485,29 +1392,8 @@ def main_handler(message):
         if text_lower in ["доброе утро", "доброго утра"]:
             bot.reply_to(message, f"🌅 Доброе утро, {user_name}!")
             return
-        if text_lower in ["добрый вечер", "доброго вечера"]:
-            bot.reply_to(message, f"🌆 Добрый вечер, {user_name}!")
-            return
         if text_lower in ["спокойной ночи", "доброй ночи"]:
             bot.reply_to(message, f"🌙 Спокойной ночи, {user_name}!")
-            return
-        if text_lower in ["грустно", "печально"]:
-            bot.reply_to(message, f"😢 Обнимаю, {user_name}, всё будет хорошо!")
-            return
-        if text_lower in ["скучаю", "соскучился", "соскучилась"]:
-            bot.reply_to(message, f"🥺 Я тоже по тебе скучаю, {user_name}!")
-            return
-        if text_lower in ["ты лучший", "молодец", "умница"]:
-            bot.reply_to(message, f"😊 Спасибо, {user_name}! Ты тоже!")
-            return
-        if text_lower in ["0+", "0плюс"]:
-            bot.reply_to(message, f"📚 Для всех возрастов, {user_name}!")
-            return
-        if text_lower in ["13+", "13плюс"]:
-            bot.reply_to(message, f"🔞 Для подростков 13+, {user_name}!")
-            return
-        if text_lower in ["18+", "18плюс"]:
-            bot.reply_to(message, f"🔞 Только для взрослых 18+, {user_name}!")
             return
     
     if message.text and not message.text.startswith('/'):
@@ -1524,6 +1410,346 @@ def main_handler(message):
         add_chat_to_active(message)
         get_chat_summary_settings(message.chat.id)
         add_message_to_quotes(message)
+
+# ========== ЛС-МЕНЮ С КНОПКАМИ ==========
+
+def send_main_menu(user_id):
+    """Отправляет главное меню"""
+    text = "⚙️ *Главное меню бота*\n\n"
+    text += "Выберите раздел для управления:"
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("📊 Сводка дня", callback_data="menu_summary"),
+        InlineKeyboardButton("⏰ Напоминания", callback_data="menu_reminders")
+    )
+    markup.add(InlineKeyboardButton("❌ Закрыть", callback_data="close_menu"))
+    
+    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
+
+def get_user_chats_list(user_id):
+    """Возвращает список чатов, где есть пользователь"""
+    user_chats_list = []
+    
+    for unique_id in active_chats:
+        parts = unique_id.split("_")
+        chat_id = int(parts[0])
+        
+        user_messages = [m for m in daily_messages 
+                        if m.get('chat_id') == chat_id 
+                        and m.get('author') == user_id]
+        
+        if user_messages:
+            try:
+                chat = bot.get_chat(chat_id)
+                chat_title = chat.title or f"Чат {chat_id}"
+            except:
+                chat_title = f"Чат {chat_id}"
+            
+            user_chats_list.append({
+                "id": chat_id,
+                "title": chat_title
+            })
+    
+    return user_chats_list
+
+def show_chats_for_summary(user_id, msg_id):
+    """Показывает список чатов для настройки сводки"""
+    chats = get_user_chats_list(user_id)
+    
+    if not chats:
+        bot.edit_message_text(
+            "📭 Вы ещё не написали ни в одном чате, где есть я.\n\n"
+            "Напишите что-нибудь в группе, и я вас запомню!",
+            user_id, msg_id,
+            parse_mode="Markdown"
+        )
+        return
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    for chat in chats:
+        markup.add(InlineKeyboardButton(
+            f"📊 {chat['title'][:40]}",
+            callback_data=f"select_chat_summary_{chat['id']}"
+        ))
+    markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_to_main"))
+    
+    bot.edit_message_text(
+        "📊 *Выберите чат для настройки сводки:*",
+        user_id, msg_id,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+
+def show_summary_settings(user_id, chat_id):
+    """Показывает настройки сводки для выбранного чата"""
+    settings = get_chat_summary_settings(chat_id)
+    
+    try:
+        chat = bot.get_chat(chat_id)
+        chat_title = chat.title or f"Чат {chat_id}"
+    except:
+        chat_title = f"Чат {chat_id}"
+    
+    status_text = "✅ Включена" if settings.get("enabled", True) else "❌ Выключена"
+    mode_text = "🤖 ИИ" if settings["mode"] == "ai" else "📊 Обычная"
+    style_text = "🎭 Тролль" if settings.get("ai_style") == "troll" else "📝 Обычный"
+    
+    text = f"📊 *Настройки сводки*\n"
+    text += f"`{chat_title}`\n\n"
+    text += f"🟢 Статус: {status_text}\n"
+    text += f"🤖 Режим: {mode_text}\n"
+    if settings["mode"] == "ai":
+        text += f"🎭 Стиль: {style_text}\n"
+    text += f"🕐 Время: {settings['time']}\n"
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("✅ Включить", callback_data=f"summary_action_enable_{chat_id}"),
+        InlineKeyboardButton("❌ Выключить", callback_data=f"summary_action_disable_{chat_id}")
+    )
+    markup.add(
+        InlineKeyboardButton("🤖 ИИ режим", callback_data=f"summary_action_ai_{chat_id}"),
+        InlineKeyboardButton("📊 Обычный", callback_data=f"summary_action_normal_{chat_id}")
+    )
+    if settings["mode"] == "ai":
+        markup.add(
+            InlineKeyboardButton("🎭 Стиль Тролль", callback_data=f"summary_action_troll_{chat_id}"),
+            InlineKeyboardButton("📝 Обычный стиль", callback_data=f"summary_action_normal_style_{chat_id}")
+        )
+    markup.add(InlineKeyboardButton("📋 Показать сводку", callback_data=f"summary_action_show_{chat_id}"))
+    markup.add(InlineKeyboardButton("◀ Назад к чатам", callback_data="back_to_summary_chats"))
+    
+    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
+
+def show_chats_for_reminders(user_id, msg_id):
+    """Показывает список чатов для управления напоминаниями"""
+    chats = get_user_chats_list(user_id)
+    
+    if not chats:
+        bot.edit_message_text(
+            "📭 Вы ещё не создали напоминаний.\n\n"
+            "Создать: `/remind 15:30 текст`\n"
+            "Или используйте кнопки ниже после выбора чата.",
+            user_id, msg_id,
+            parse_mode="Markdown"
+        )
+        return
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    for chat in chats:
+        markup.add(InlineKeyboardButton(
+            f"⏰ {chat['title'][:40]}",
+            callback_data=f"select_chat_reminder_{chat['id']}"
+        ))
+    markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_to_main"))
+    
+    bot.edit_message_text(
+        "⏰ *Выберите чат для управления напоминаниями:*",
+        user_id, msg_id,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+
+def show_reminders_for_chat(user_id, chat_id, msg_id):
+    """Показывает список напоминаний пользователя в выбранном чате"""
+    user_reminders = [r for r in reminders 
+                      if r.get("chat_id") == chat_id 
+                      and r.get("user_id") == user_id]
+    
+    try:
+        chat = bot.get_chat(chat_id)
+        chat_title = chat.title or f"Чат {chat_id}"
+    except:
+        chat_title = f"Чат {chat_id}"
+    
+    if not user_reminders:
+        text = f"⏰ *Напоминания*\n`{chat_title}`\n\n"
+        text += "📭 У вас нет напоминаний в этом чате.\n\n"
+        text += "Создать: `/remind 15:30 текст`"
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("◀ Назад к чатам", callback_data="back_to_reminder_chats"))
+        
+        bot.edit_message_text(
+            text,
+            user_id, msg_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        return
+    
+    text = f"⏰ *Ваши напоминания*\n`{chat_title}`\n\n"
+    for r in user_reminders[:15]:
+        period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}" if r.get("daily") else f"{r['hours']:02d}:{r['minutes']:02d}"
+        text += f"🆔 `{r['id']}` • {period}\n   📝 {r['text'][:50]}\n\n"
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("➕ Создать", callback_data=f"create_remind_{chat_id}"),
+        InlineKeyboardButton("🗑️ Удалить", callback_data=f"delete_remind_list_{chat_id}")
+    )
+    markup.add(InlineKeyboardButton("◀ Назад к чатам", callback_data="back_to_reminder_chats"))
+    
+    bot.edit_message_text(
+        text,
+        user_id, msg_id,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+
+def show_delete_reminders_list(user_id, chat_id, msg_id):
+    """Показывает список напоминаний для удаления"""
+    user_reminders = [r for r in reminders 
+                      if r.get("chat_id") == chat_id 
+                      and r.get("user_id") == user_id]
+    
+    if not user_reminders:
+        bot.send_message(user_id, "❌ Нет напоминаний для удаления")
+        return
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    for r in user_reminders:
+        period = f"{r['hours']:02d}:{r['minutes']:02d}"
+        if r.get("daily"):
+            period += " (ежедневно)"
+        markup.add(InlineKeyboardButton(
+            f"🗑️ [{r['id']}] {period} — {r['text'][:30]}",
+            callback_data=f"del_remind_{r['id']}_{chat_id}"
+        ))
+    
+    markup.add(InlineKeyboardButton("◀ Назад", callback_data=f"select_chat_reminder_{chat_id}"))
+    
+    bot.edit_message_text(
+        "🗑️ *Выберите напоминание для удаления:*",
+        user_id, msg_id,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+
+# ========== CALLBACK ОБРАБОТЧИКИ ==========
+
+@bot.callback_query_handler(func=lambda call: True)
+def handle_menu_callback(call):
+    user_id = call.from_user.id
+    
+    if call.data == "menu_summary":
+        bot.answer_callback_query(call.id)
+        show_chats_for_summary(user_id, call.message.message_id)
+        
+    elif call.data == "menu_reminders":
+        bot.answer_callback_query(call.id)
+        show_chats_for_reminders(user_id, call.message.message_id)
+        
+    elif call.data == "back_to_main":
+        bot.answer_callback_query(call.id)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        send_main_menu(user_id)
+        
+    elif call.data == "back_to_summary_chats":
+        bot.answer_callback_query(call.id)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_chats_for_summary(user_id, call.message.message_id)
+        
+    elif call.data == "back_to_reminder_chats":
+        bot.answer_callback_query(call.id)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_chats_for_reminders(user_id, call.message.message_id)
+        
+    elif call.data.startswith("select_chat_summary_"):
+        chat_id = int(call.data.split("_")[3])
+        bot.answer_callback_query(call.id)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_summary_settings(user_id, chat_id)
+        
+    elif call.data.startswith("select_chat_reminder_"):
+        chat_id = int(call.data.split("_")[3])
+        bot.answer_callback_query(call.id)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_reminders_for_chat(user_id, chat_id, call.message.message_id)
+        
+    elif call.data.startswith("summary_action_"):
+        parts = call.data.split("_")
+        action = parts[2]
+        chat_id = int(parts[3])
+        
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Вы не администратор этого чата!", show_alert=True)
+            return
+        
+        if action == "enable":
+            update_chat_summary_settings(chat_id, "enabled", True)
+            bot.answer_callback_query(call.id, "✅ Авто-сводка включена!")
+        elif action == "disable":
+            update_chat_summary_settings(chat_id, "enabled", False)
+            bot.answer_callback_query(call.id, "❌ Авто-сводка выключена!")
+        elif action == "ai":
+            update_chat_summary_settings(chat_id, "mode", "ai")
+            bot.answer_callback_query(call.id, "🤖 Режим: ИИ")
+        elif action == "normal":
+            update_chat_summary_settings(chat_id, "mode", "normal")
+            bot.answer_callback_query(call.id, "📊 Режим: обычный")
+        elif action == "troll":
+            update_chat_summary_settings(chat_id, "ai_style", "troll")
+            bot.answer_callback_query(call.id, "🎭 Стиль: Тролль")
+        elif action == "normal_style":
+            update_chat_summary_settings(chat_id, "ai_style", "normal")
+            bot.answer_callback_query(call.id, "📝 Стиль: обычный")
+        elif action == "show":
+            bot.answer_callback_query(call.id, "📋 Генерирую сводку...")
+            settings = get_chat_summary_settings(chat_id)
+            if settings.get("mode") == "ai":
+                summary = generate_ai_summary(chat_id, settings.get("ai_style", "troll"))
+            else:
+                summary = generate_regular_summary(chat_id)
+            if summary:
+                bot.send_message(user_id, summary, parse_mode="Markdown")
+            else:
+                bot.send_message(user_id, "📭 Недостаточно сообщений для сводки")
+            return
+        
+        show_summary_settings(user_id, chat_id)
+        
+    elif call.data.startswith("create_remind_"):
+        chat_id = int(call.data.split("_")[2])
+        bot.answer_callback_query(call.id, "✏️ Используйте /remind в чате для создания")
+        bot.send_message(
+            user_id,
+            f"✏️ Чтобы создать напоминание в этом чате,\n"
+            f"напишите команду в самом чате:\n"
+            f"`/remind 15:30 ваш текст`\n\n"
+            f"Для ежедневного: `/remind 9:00 ежедневно текст`",
+            parse_mode="Markdown"
+        )
+        
+    elif call.data.startswith("delete_remind_list_"):
+        chat_id = int(call.data.split("_")[3])
+        bot.answer_callback_query(call.id)
+        show_delete_reminders_list(user_id, chat_id, call.message.message_id)
+        
+    elif call.data.startswith("del_remind_"):
+        parts = call.data.split("_")
+        reminder_id = int(parts[2])
+        chat_id = int(parts[3])
+        
+        for i, r in enumerate(reminders):
+            if r["id"] == reminder_id and r.get("user_id") == user_id:
+                if "_timer" in r:
+                    try:
+                        r["_timer"].cancel()
+                    except:
+                        pass
+                reminders.pop(i)
+                save_reminders(reminders)
+                bot.answer_callback_query(call.id, "✅ Напоминание удалено!")
+                show_reminders_for_chat(user_id, chat_id, call.message.message_id)
+                return
+        
+        bot.answer_callback_query(call.id, "❌ Напоминание не найдено")
+        
+    elif call.data == "close_menu":
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id)
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
