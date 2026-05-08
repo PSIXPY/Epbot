@@ -617,7 +617,8 @@ def add_reminder(message):
         "text": reminder_text,
         "hours": hours,
         "minutes": minutes,
-        "daily": daily
+        "daily": daily,
+        "created_at": datetime.now(MOSCOW_TZ).isoformat()
     }
     reminders.append(reminder)
     save_reminders(reminders)
@@ -633,20 +634,20 @@ def list_reminders(message):
         bot.delete_message(chat_id, message.message_id)
     except:
         pass
-    user_reminders = [r for r in reminders if r.get("chat_id") == chat_id]
+    user_reminders = [r for r in reminders if r.get("chat_id") == chat_id and r.get("user_id") == message.from_user.id]
     if thread_id:
         user_reminders = [r for r in user_reminders if r.get("thread_id") == thread_id]
     if not user_reminders:
         msg = bot.send_message(chat_id, "📭 Нет напоминаний", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 15)
         return
-    response = "📋 *Напоминания:*\n\n"
+    response = "📋 *Ваши напоминания:*\n\n"
     for r in user_reminders:
         if r.get("daily"):
             period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}"
         else:
             period = f"{r['hours']:02d}:{r['minutes']:02d}"
-        response += f"🆔 {r['id']} - {period}\n   {r['text'][:40]}\n\n"
+        response += f"🆔 {r['id']} - {period}\n   📝 {r['text'][:40]}\n\n"
     msg = bot.send_message(chat_id, response, parse_mode="Markdown", message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 30)
 
@@ -671,6 +672,9 @@ def delete_reminder(message):
                 if r.get("chat_id") != chat_id:
                     return
                 if r.get("thread_id") != thread_id:
+                    return
+                if r.get("user_id") != message.from_user.id:
+                    bot.reply_to(message, "❌ Это не ваше напоминание!")
                     return
                 if "_timer" in r:
                     try:
@@ -1006,7 +1010,7 @@ def backup_command(message):
                     r_copy[k] = v
             clean_reminders.append(r_copy)
         data = {
-            "version": "2.0",
+            "version": "2.1",
             "date": str(datetime.now()),
             "reminders": clean_reminders,
             "chat_users": chat_users,
@@ -1428,9 +1432,10 @@ def send_main_menu(user_id):
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 def get_user_chats_list(user_id):
-    """Возвращает список чатов, где есть пользователь"""
-    user_chats_list = []
+    """Возвращает список чатов, где есть пользователь (по сообщениям ИЛИ напоминаниям)"""
+    user_chats_dict = {}
     
+    # Добавляем чаты из сообщений
     for unique_id in active_chats:
         parts = unique_id.split("_")
         chat_id = int(parts[0])
@@ -1440,30 +1445,38 @@ def get_user_chats_list(user_id):
                         and m.get('author') == user_id]
         
         if user_messages:
-            try:
-                chat = bot.get_chat(chat_id)
-                chat_title = chat.title or f"Чат {chat_id}"
-            except:
-                chat_title = f"Чат {chat_id}"
-            
-            user_chats_list.append({
-                "id": chat_id,
-                "title": chat_title
-            })
+            user_chats_dict[chat_id] = True
+    
+    # Добавляем чаты из напоминаний
+    for r in reminders:
+        if r.get('user_id') == user_id:
+            chat_id = r.get('chat_id')
+            if chat_id:
+                user_chats_dict[chat_id] = True
+    
+    # Преобразуем в список с названиями чатов
+    user_chats_list = []
+    for chat_id in user_chats_dict.keys():
+        try:
+            chat = bot.get_chat(chat_id)
+            chat_title = chat.title or f"Чат {chat_id}"
+        except:
+            chat_title = f"Чат {chat_id}"
+        
+        user_chats_list.append({
+            "id": chat_id,
+            "title": chat_title
+        })
     
     return user_chats_list
 
-def show_chats_for_summary(user_id, msg_id):
+def show_chats_for_summary(user_id, message_id=None):
     """Показывает список чатов для настройки сводки"""
     chats = get_user_chats_list(user_id)
     
     if not chats:
-        bot.edit_message_text(
-            "📭 Вы ещё не написали ни в одном чате, где есть я.\n\n"
-            "Напишите что-нибудь в группе, и я вас запомню!",
-            user_id, msg_id,
-            parse_mode="Markdown"
-        )
+        text = "📭 Вы ещё не написали ни в одном чате, где есть я.\n\nНапишите что-нибудь в группе, и я вас запомню!"
+        bot.send_message(user_id, text, parse_mode="Markdown")
         return
     
     markup = InlineKeyboardMarkup(row_width=1)
@@ -1472,14 +1485,10 @@ def show_chats_for_summary(user_id, msg_id):
             f"📊 {chat['title'][:40]}",
             callback_data=f"select_chat_summary_{chat['id']}"
         ))
-    markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_to_main"))
+    markup.add(InlineKeyboardButton("◀ Назад в главное меню", callback_data="back_to_main"))
     
-    bot.edit_message_text(
-        "📊 *Выберите чат для настройки сводки:*",
-        user_id, msg_id,
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
+    text = "📊 *Выберите чат для настройки сводки:*"
+    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 def show_summary_settings(user_id, chat_id):
     """Показывает настройки сводки для выбранного чата"""
@@ -1515,43 +1524,37 @@ def show_summary_settings(user_id, chat_id):
     if settings["mode"] == "ai":
         markup.add(
             InlineKeyboardButton("🎭 Стиль Тролль", callback_data=f"summary_action_troll_{chat_id}"),
-            InlineKeyboardButton("📝 Обычный стиль", callback_data=f"summary_action_normal_style_{chat_id}")
+            InlineKeyboardButton("📝 Обычный стиль", callback_data=f"summary_action_normalstyle_{chat_id}")
         )
     markup.add(InlineKeyboardButton("📋 Показать сводку", callback_data=f"summary_action_show_{chat_id}"))
-    markup.add(InlineKeyboardButton("◀ Назад к чатам", callback_data="back_to_summary_chats"))
+    markup.add(InlineKeyboardButton("◀ Назад к списку чатов", callback_data="back_to_summary_chats"))
     
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
-def show_chats_for_reminders(user_id, msg_id):
+def show_chats_for_reminders(user_id, message_id=None):
     """Показывает список чатов для управления напоминаниями"""
     chats = get_user_chats_list(user_id)
     
     if not chats:
-        bot.edit_message_text(
-            "📭 Вы ещё не создали напоминаний.\n\n"
-            "Создать: `/remind 15:30 текст`\n"
-            "Или используйте кнопки ниже после выбора чата.",
-            user_id, msg_id,
-            parse_mode="Markdown"
-        )
+        text = "📭 У вас нет чатов с напоминаниями.\n\nСоздать: `/remind 15:30 текст` в нужном чате"
+        bot.send_message(user_id, text, parse_mode="Markdown")
         return
     
     markup = InlineKeyboardMarkup(row_width=1)
     for chat in chats:
+        # Считаем количество напоминаний в этом чате
+        reminders_count = len([r for r in reminders if r.get('chat_id') == chat['id'] and r.get('user_id') == user_id])
+        badge = f" ({reminders_count})" if reminders_count > 0 else ""
         markup.add(InlineKeyboardButton(
-            f"⏰ {chat['title'][:40]}",
+            f"⏰ {chat['title'][:35]}{badge}",
             callback_data=f"select_chat_reminder_{chat['id']}"
         ))
-    markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_to_main"))
+    markup.add(InlineKeyboardButton("◀ Назад в главное меню", callback_data="back_to_main"))
     
-    bot.edit_message_text(
-        "⏰ *Выберите чат для управления напоминаниями:*",
-        user_id, msg_id,
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
+    text = "⏰ *Выберите чат для управления напоминаниями:*"
+    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
-def show_reminders_for_chat(user_id, chat_id, msg_id):
+def show_reminders_for_chat(user_id, chat_id, message_id=None):
     """Показывает список напоминаний пользователя в выбранном чате"""
     user_reminders = [r for r in reminders 
                       if r.get("chat_id") == chat_id 
@@ -1566,17 +1569,12 @@ def show_reminders_for_chat(user_id, chat_id, msg_id):
     if not user_reminders:
         text = f"⏰ *Напоминания*\n`{chat_title}`\n\n"
         text += "📭 У вас нет напоминаний в этом чате.\n\n"
-        text += "Создать: `/remind 15:30 текст`"
+        text += "Создать: `/remind 15:30 текст` в этом чате"
         
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("◀ Назад к чатам", callback_data="back_to_reminder_chats"))
         
-        bot.edit_message_text(
-            text,
-            user_id, msg_id,
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
+        bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
         return
     
     text = f"⏰ *Ваши напоминания*\n`{chat_title}`\n\n"
@@ -1591,14 +1589,9 @@ def show_reminders_for_chat(user_id, chat_id, msg_id):
     )
     markup.add(InlineKeyboardButton("◀ Назад к чатам", callback_data="back_to_reminder_chats"))
     
-    bot.edit_message_text(
-        text,
-        user_id, msg_id,
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
+    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
-def show_delete_reminders_list(user_id, chat_id, msg_id):
+def show_delete_reminders_list(user_id, chat_id, message_id=None):
     """Показывает список напоминаний для удаления"""
     user_reminders = [r for r in reminders 
                       if r.get("chat_id") == chat_id 
@@ -1620,12 +1613,7 @@ def show_delete_reminders_list(user_id, chat_id, msg_id):
     
     markup.add(InlineKeyboardButton("◀ Назад", callback_data=f"select_chat_reminder_{chat_id}"))
     
-    bot.edit_message_text(
-        "🗑️ *Выберите напоминание для удаления:*",
-        user_id, msg_id,
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
+    bot.send_message(user_id, "🗑️ *Выберите напоминание для удаления:*", parse_mode="Markdown", reply_markup=markup)
 
 # ========== CALLBACK ОБРАБОТЧИКИ ==========
 
@@ -1635,11 +1623,13 @@ def handle_menu_callback(call):
     
     if call.data == "menu_summary":
         bot.answer_callback_query(call.id)
-        show_chats_for_summary(user_id, call.message.message_id)
+        show_chats_for_summary(user_id)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         
     elif call.data == "menu_reminders":
         bot.answer_callback_query(call.id)
-        show_chats_for_reminders(user_id, call.message.message_id)
+        show_chats_for_reminders(user_id)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         
     elif call.data == "back_to_main":
         bot.answer_callback_query(call.id)
@@ -1649,12 +1639,12 @@ def handle_menu_callback(call):
     elif call.data == "back_to_summary_chats":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_chats_for_summary(user_id, call.message.message_id)
+        show_chats_for_summary(user_id)
         
     elif call.data == "back_to_reminder_chats":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_chats_for_reminders(user_id, call.message.message_id)
+        show_chats_for_reminders(user_id)
         
     elif call.data.startswith("select_chat_summary_"):
         chat_id = int(call.data.split("_")[3])
@@ -1666,16 +1656,18 @@ def handle_menu_callback(call):
         chat_id = int(call.data.split("_")[3])
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_reminders_for_chat(user_id, chat_id, call.message.message_id)
+        show_reminders_for_chat(user_id, chat_id)
         
     elif call.data.startswith("summary_action_"):
         parts = call.data.split("_")
         action = parts[2]
         chat_id = int(parts[3])
         
-        if not is_chat_admin(chat_id, user_id):
-            bot.answer_callback_query(call.id, "❌ Вы не администратор этого чата!", show_alert=True)
-            return
+        # Пропускаем проверку для show (не требует админ-прав)
+        if action != "show":
+            if not is_chat_admin(chat_id, user_id):
+                bot.answer_callback_query(call.id, "❌ Вы не администратор этого чата!", show_alert=True)
+                return
         
         if action == "enable":
             update_chat_summary_settings(chat_id, "enabled", True)
@@ -1692,7 +1684,7 @@ def handle_menu_callback(call):
         elif action == "troll":
             update_chat_summary_settings(chat_id, "ai_style", "troll")
             bot.answer_callback_query(call.id, "🎭 Стиль: Тролль")
-        elif action == "normal_style":
+        elif action == "normalstyle":
             update_chat_summary_settings(chat_id, "ai_style", "normal")
             bot.answer_callback_query(call.id, "📝 Стиль: обычный")
         elif action == "show":
@@ -1708,6 +1700,8 @@ def handle_menu_callback(call):
                 bot.send_message(user_id, "📭 Недостаточно сообщений для сводки")
             return
         
+        # Обновляем меню
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         show_summary_settings(user_id, chat_id)
         
     elif call.data.startswith("create_remind_"):
@@ -1725,7 +1719,8 @@ def handle_menu_callback(call):
     elif call.data.startswith("delete_remind_list_"):
         chat_id = int(call.data.split("_")[3])
         bot.answer_callback_query(call.id)
-        show_delete_reminders_list(user_id, chat_id, call.message.message_id)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_delete_reminders_list(user_id, chat_id)
         
     elif call.data.startswith("del_remind_"):
         parts = call.data.split("_")
@@ -1742,7 +1737,8 @@ def handle_menu_callback(call):
                 reminders.pop(i)
                 save_reminders(reminders)
                 bot.answer_callback_query(call.id, "✅ Напоминание удалено!")
-                show_reminders_for_chat(user_id, chat_id, call.message.message_id)
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+                show_reminders_for_chat(user_id, chat_id)
                 return
         
         bot.answer_callback_query(call.id, "❌ Напоминание не найдено")
