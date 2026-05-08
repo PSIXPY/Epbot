@@ -1561,41 +1561,49 @@ def add_bot_to_chat_menu(user_id, message_id=None):
     else:
         bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
 
+# ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ - ИЩЕТ ЧАТЫ ПО НАПОМИНАНИЯМ ==========
+
 def get_user_chats_list(user_id):
-    """Возвращает список всех чатов, где есть бот и пользователь"""
-    user_chats_list = []
-    seen_chats = set()
+    """Возвращает список чатов, где у пользователя есть напоминания"""
+    user_chats_dict = {}
     
-    # 1. Чаты из active_chats
-    for unique_id in active_chats:
-        parts = unique_id.split("_")
-        chat_id = int(parts[0])
-        if chat_id in seen_chats:
-            continue
-        try:
-            chat = bot.get_chat(chat_id)
-            try:
-                member = bot.get_chat_member(chat_id, user_id)
-                if member.status in ['member', 'administrator', 'creator', 'restricted']:
-                    seen_chats.add(chat_id)
-                    user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
-            except:
-                seen_chats.add(chat_id)
-                user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
-        except:
-            continue
-    
-    # 2. Чаты из напоминаний
+    # Ищем чаты по напоминаниям пользователя (это самый надёжный способ)
     for r in reminders:
         if r.get("user_id") == user_id:
             chat_id = r.get("chat_id")
-            if chat_id and chat_id not in seen_chats:
+            if chat_id and chat_id not in user_chats_dict:
                 try:
                     chat = bot.get_chat(chat_id)
-                    user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
-                except:
-                    user_chats_list.append({"id": chat_id, "title": f"Чат {chat_id}"})
-                seen_chats.add(chat_id)
+                    chat_title = chat.title or f"Чат {chat_id}"
+                    user_chats_dict[chat_id] = chat_title
+                    print(f"📌 Чат {chat_id} добавлен из напоминаний пользователя {user_id}")
+                except Exception as e:
+                    user_chats_dict[chat_id] = f"Чат {chat_id}"
+                    print(f"⚠️ Ошибка получения чата {chat_id}: {e}")
+    
+    # Если нет напоминаний, проверяем активные чаты
+    if not user_chats_dict:
+        for unique_id in active_chats:
+            parts = unique_id.split("_")
+            chat_id = int(parts[0])
+            if chat_id in user_chats_dict:
+                continue
+            try:
+                member = bot.get_chat_member(chat_id, user_id)
+                if member.status in ['member', 'administrator', 'creator', 'restricted']:
+                    chat = bot.get_chat(chat_id)
+                    chat_title = chat.title or f"Чат {chat_id}"
+                    user_chats_dict[chat_id] = chat_title
+                    print(f"📌 Чат {chat_id} добавлен из active_chats")
+            except:
+                continue
+    
+    user_chats_list = []
+    for chat_id, chat_title in user_chats_dict.items():
+        user_chats_list.append({
+            "id": chat_id,
+            "title": chat_title
+        })
     
     return user_chats_list
 
@@ -1603,19 +1611,26 @@ def show_chats_for_summary(user_id, message_id=None):
     chats = get_user_chats_list(user_id)
     
     if not chats:
-        text = "📭 Вы ещё не написали ни в одном чате, где есть я.\n\nНапишите что-нибудь в группе, и я вас запомню!"
+        text = "📭 У вас нет чатов с напоминаниями.\n\n"
+        text += "Чтобы чат появился в меню, создайте в нём напоминание:\n"
+        text += "`/remind 15:30 текст`\n\n"
+        text += "Или напишите любое сообщение в чате, где есть бот."
         bot.send_message(user_id, text, parse_mode="Markdown")
         return
     
     markup = InlineKeyboardMarkup(row_width=1)
     for chat in chats:
+        # Считаем количество напоминаний в этом чате
+        reminders_count = len([r for r in reminders if r.get('chat_id') == chat['id'] and r.get('user_id') == user_id])
+        badge = f" ({reminders_count})" if reminders_count > 0 else ""
         markup.add(InlineKeyboardButton(
-            f"📊 {chat['title'][:40]}",
+            f"📊 {chat['title'][:35]}{badge}",
             callback_data=f"select_chat_summary_{chat['id']}"
         ))
     markup.add(InlineKeyboardButton("◀ Назад в главное меню", callback_data="back_to_main"))
     
-    text = "📊 *Выберите чат для настройки сводки:*"
+    text = "📊 *Выберите чат для настройки сводки:*\n\n"
+    text += "ℹ️ Чаты отображаются по вашим напоминаниям."
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 def show_summary_settings(user_id, chat_id):
@@ -1662,7 +1677,9 @@ def show_chats_for_reminders(user_id, message_id=None):
     chats = get_user_chats_list(user_id)
     
     if not chats:
-        text = "📭 У вас нет чатов с напоминаниями.\n\nСоздать: `/remind 15:30 текст` в нужном чате"
+        text = "📭 У вас нет чатов с напоминаниями.\n\n"
+        text += "Создать напоминание:\n"
+        text += "`/remind 15:30 текст` в нужном чате"
         bot.send_message(user_id, text, parse_mode="Markdown")
         return
     
