@@ -278,6 +278,31 @@ def ask_groq(user_id, prompt):
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
 
+def ask_groq_for_summary(prompt):
+    if not GROQ_API_KEY:
+        return None
+    
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    data = {
+        "model": "qwen/qwen3-32b",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1000,
+        "temperature": 0.8
+    }
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=45)
+        if response.status_code == 200:
+            answer = response.json()["choices"][0]["message"]["content"]
+            answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL | re.IGNORECASE)
+            answer = re.sub(r'\[think\].*?\[/think\]', '', answer, flags=re.DOTALL | re.IGNORECASE)
+            answer = answer.strip()
+            return answer
+        else:
+            return None
+    except:
+        return None
+
 def set_reaction(chat_id, message_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
@@ -381,32 +406,10 @@ def generate_regular_summary(chat_id):
     
     return text
 
-def ask_groq_for_summary(prompt):
-    if not GROQ_API_KEY:
-        return None
-    
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "qwen/qwen3-32b",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1000,
-        "temperature": 0.8
-    }
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=45)
-        if response.status_code == 200:
-            answer = response.json()["choices"][0]["message"]["content"]
-            answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL | re.IGNORECASE)
-            answer = re.sub(r'\[think\].*?\[/think\]', '', answer, flags=re.DOTALL | re.IGNORECASE)
-            answer = answer.strip()
-            return answer
-        else:
-            return None
-    except:
-        return None
+# ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ generate_ai_summary ==========
 
 def generate_ai_summary(chat_id, style="troll"):
+    """Генерирует ИИ-сводку дня для чата"""
     print(f"🤖 Генерация ИИ-сводки для чата {chat_id}, стиль: {style}")
     
     today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
@@ -464,7 +467,7 @@ def generate_ai_summary(chat_id, style="troll"):
     response = ask_groq_for_summary(prompt)
     
     if response:
-        return response
+        return f"📝 *Что обсуждали участники чата?*\n\n{response}"
     else:
         return None
 
@@ -804,7 +807,6 @@ def show_admin_chat_reminders(user_id, chat_id, message_id=None):
 
 @bot.my_chat_member_handler(func=lambda message: True)
 def on_bot_added_to_chat(message):
-    """Когда бота добавляют в чат - запоминаем кто добавил"""
     try:
         chat = message.chat
         chat_id = chat.id
@@ -839,7 +841,6 @@ def on_bot_added_to_chat(message):
                 inviter_id,
                 f"✅ Бот успешно добавлен в чат *{chat_title}*!\n\n"
                 f"Теперь этот чат появится в вашем меню.\n\n"
-                f"📊 Для настройки сводки нажмите кнопку ниже.\n\n"
                 f"⚙️ Открыть меню: `/start`",
                 parse_mode="Markdown"
             )
@@ -1608,65 +1609,32 @@ def add_bot_to_chat_menu(user_id, message_id=None):
         bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
 
 def get_user_chats_list(user_id):
-    """Возвращает список чатов, где есть бот (по напоминаниям, активным чатам и сообщениям)"""
+    """Возвращает список чатов, куда пользователь добавил бота"""
     user_chats_dict = {}
     
-    # Чаты из напоминаний пользователя
-    for r in reminders:
-        if r.get("user_id") == user_id:
-            chat_id = r.get("chat_id")
-            if chat_id and chat_id not in user_chats_dict:
-                try:
-                    chat = bot.get_chat(chat_id)
-                    chat_title = chat.title or f"Чат {chat_id}"
-                    user_chats_dict[chat_id] = chat_title
-                except:
-                    user_chats_dict[chat_id] = f"Чат {chat_id}"
-    
-    # Чаты из active_chats (куда добавили бота)
     for unique_id in active_chats:
         parts = unique_id.split("_")
         chat_id = int(parts[0])
         
-        if chat_id in user_chats_dict:
-            continue
-            
         try:
             member = bot.get_chat_member(chat_id, user_id)
-            if member.status in ['member', 'administrator', 'creator', 'restricted']:
+            if member.status in ['member', 'administrator', 'creator']:
                 chat = bot.get_chat(chat_id)
                 chat_title = chat.title or f"Чат {chat_id}"
                 user_chats_dict[chat_id] = chat_title
+                print(f"📌 Чат {chat_id} добавлен для пользователя {user_id}")
         except:
-            try:
-                chat = bot.get_chat(chat_id)
-                user_chats_dict[chat_id] = chat.title or f"Чат {chat_id}"
-            except:
-                pass
-    
-    # Чаты из сообщений пользователя
-    for msg in daily_messages:
-        if msg.get('author') == user_id:
-            chat_id = msg.get('chat_id')
-            if chat_id and chat_id not in user_chats_dict:
-                try:
-                    chat = bot.get_chat(chat_id)
-                    chat_title = chat.title or f"Чат {chat_id}"
-                    user_chats_dict[chat_id] = chat_title
-                except:
-                    user_chats_dict[chat_id] = f"Чат {chat_id}"
+            continue
     
     return [{"id": chat_id, "title": title} for chat_id, title in user_chats_dict.items()]
 
 def show_chats_for_summary(user_id, message_id=None):
-    """Показывает список чатов для настройки сводки (без отображения количества напоминаний)"""
     chats = get_user_chats_list(user_id)
     
     if not chats:
         text = "📭 *У вас нет доступных чатов*\n\n"
         text += "Чтобы чат появился в меню:\n"
-        text += "• Добавьте бота в чат и сделайте его администратором\n"
-        text += "• Или создайте напоминание: `/remind 15:30 текст`"
+        text += "• Добавьте бота в чат и сделайте его администратором"
         bot.send_message(user_id, text, parse_mode="Markdown")
         return
     
@@ -1722,7 +1690,6 @@ def show_summary_settings(user_id, chat_id):
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 def show_chats_for_reminders(user_id, message_id=None):
-    """Показывает список чатов для управления напоминаниями (с отображением количества)"""
     chats = get_user_chats_list(user_id)
     
     if not chats:
