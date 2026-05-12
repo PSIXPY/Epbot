@@ -12,6 +12,9 @@ from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pytz
 import user_cache
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+import textwrap
 
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -32,15 +35,114 @@ print(f"👑 ADMIN: {ADMIN_ID}")
 chat_users = user_cache.load_users()
 print(f"👥 Загружено {len(chat_users)} пользователей")
 
+# === НАСТРОЙКИ ДЛЯ КАРТИНОК С ЦИТАТАМИ ===
+IMAGE_WIDTH = 1080
+IMAGE_HEIGHT = 1080
+BACKGROUND_COLOR = (0, 0, 0)
+TEXT_COLOR = (255, 255, 255)
+FONT_SIZE = 48
+TEXT_PADDING = 50
+
+FONT_PATHS = [
+    "DejaVuSans.ttf",
+    "arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/System/Library/Fonts/Arial.ttf"
+]
+FONT_PATH = None
+for path in FONT_PATHS:
+    if os.path.exists(path):
+        FONT_PATH = path
+        break
+
 # === ДЛЯ ЦИТАТ ===
 QUOTES_CACHE_FILE = "daily_quotes.json"
 daily_messages = []
-daily_quote_times = [9, 12, 15, 18, 21]
 active_chats = set()
 
-# === Глобальные переменные для хранения таймеров ===
-quote_timers = []  # Для таймеров цитат
-summary_timers = {}  # Для таймеров сводок
+# === НАСТРОЙКИ ЦИТАТ ===
+quotes_settings = {}
+QUOTES_SETTINGS_FILE = "quotes_settings.json"
+
+def load_quotes_settings():
+    global quotes_settings
+    if os.path.exists(QUOTES_SETTINGS_FILE):
+        try:
+            with open(QUOTES_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                quotes_settings = json.load(f)
+                print(f"📜 Загружено {len(quotes_settings)} настроек цитат")
+        except:
+            pass
+
+def save_quotes_settings():
+    try:
+        with open(QUOTES_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(quotes_settings, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+
+def get_chat_quotes_settings(chat_id):
+    chat_id_str = str(chat_id)
+    if chat_id_str not in quotes_settings:
+        quotes_settings[chat_id_str] = {"enabled": True, "interval_hours": 2}
+        save_quotes_settings()
+    return quotes_settings[chat_id_str]
+
+def update_chat_quotes_settings(chat_id, key, value):
+    chat_id_str = str(chat_id)
+    if chat_id_str not in quotes_settings:
+        quotes_settings[chat_id_str] = {"enabled": True, "interval_hours": 2}
+    quotes_settings[chat_id_str][key] = value
+    save_quotes_settings()
+
+# === Глобальные переменные для таймеров ===
+quote_timers = {}
+summary_timers = {}
+
+def create_quote_image(quote_text, author_name):
+    global FONT_PATH
+    try:
+        image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), color=BACKGROUND_COLOR)
+        draw = ImageDraw.Draw(image)
+        
+        if FONT_PATH and os.path.exists(FONT_PATH):
+            font = ImageFont.truetype(FONT_PATH, size=FONT_SIZE)
+        else:
+            font = ImageFont.load_default()
+        
+        full_text = f"« {quote_text} »\n\n— {author_name}"
+        chars_per_line = (IMAGE_WIDTH - 2 * TEXT_PADDING) // (FONT_SIZE // 2)
+        wrapped_lines = textwrap.wrap(full_text, width=chars_per_line)
+        
+        text_height = 0
+        for line in wrapped_lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            text_height += bbox[3] - bbox[1]
+        
+        y = (IMAGE_HEIGHT - text_height) // 2
+        
+        for line in wrapped_lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            line_width = bbox[2] - bbox[0]
+            x = (IMAGE_WIDTH - line_width) // 2
+            draw.text((x, y), line, font=font, fill=TEXT_COLOR)
+            y += bbox[3] - bbox[1]
+        
+        draw.rectangle([5, 5, IMAGE_WIDTH-5, IMAGE_HEIGHT-5], outline=(255, 255, 255), width=3)
+        return image
+    except Exception as e:
+        print(f"❌ Ошибка создания картинки: {e}")
+        return None
+
+def send_quote_as_image(chat_id, quote_text, author_name, thread_id=None):
+    image = create_quote_image(quote_text, author_name)
+    if image:
+        with BytesIO() as bio:
+            image.save(bio, format='JPEG')
+            bio.seek(0)
+            bot.send_photo(chat_id, bio, caption=f"📜 *Цитата дня*", parse_mode="Markdown", message_thread_id=thread_id)
+        return True
+    return False
 
 def load_daily_quotes():
     global daily_messages
@@ -64,7 +166,6 @@ def save_daily_quotes():
         }
         with open(QUOTES_CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"💾 Сохранено {len(daily_messages)} сообщений")
     except Exception as e:
         print(f"❌ Ошибка: {e}")
 
@@ -123,7 +224,7 @@ def get_random_quote(chat_id, thread_id=0):
     if len(chat_messages) < 2:
         return None
     quote = random.choice(chat_messages)
-    return f"📜 *Цитата дня*\n\n« {quote['text']} »"
+    return f"📜 *Цитата дня*\n\n« {quote['text']} »\n\n— {quote.get('author_name', 'Участник')}"
 
 def clean_inactive_chats():
     global active_chats
@@ -137,78 +238,78 @@ def clean_inactive_chats():
     for item in to_remove:
         active_chats.discard(item)
 
-def schedule_daily_quotes():
-    """Планирует отправку цитат на каждый час"""
-    global quote_timers
-    
-    # Отменяем старые таймеры
-    for timer in quote_timers:
+def cancel_quote_timer(chat_id):
+    if chat_id in quote_timers:
         try:
-            timer.cancel()
+            quote_timers[chat_id].cancel()
         except:
             pass
-    quote_timers.clear()
-    
-    now_moscow = datetime.now(MOSCOW_TZ)
-    
-    for hour in daily_quote_times:
-        target = now_moscow.replace(hour=hour, minute=0, second=0, microsecond=0)
-        if target <= now_moscow:
-            target += timedelta(days=1)
-        delay = (target - now_moscow).total_seconds()
-        timer = threading.Timer(delay, send_random_quote_to_all_chats)
-        timer.daemon = True
-        timer.start()
-        quote_timers.append(timer)
-        print(f"📜 Цитата запланирована на {target.strftime('%H:%M')}")
-    
-    # Очистка кэша в полночь
-    midnight = now_moscow.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    midnight_delay = (midnight - now_moscow).total_seconds()
-    midnight_timer = threading.Timer(midnight_delay, clear_daily_quotes)
-    midnight_timer.daemon = True
-    midnight_timer.start()
-    quote_timers.append(midnight_timer)
-    print(f"🗑️ Очистка кэша цитат запланирована на полночь")
+        del quote_timers[chat_id]
 
-def send_random_quote_to_all_chats():
-    """Отправляет цитаты во все активные чаты, где есть сообщения"""
-    clean_inactive_chats()
+def schedule_quote_for_chat(chat_id, thread_id=0):
+    settings = get_chat_quotes_settings(chat_id)
+    if not settings.get("enabled", True):
+        return
     
-    print(f"📜 Отправка цитат во все чаты. Всего чатов: {len(active_chats)}")
+    interval_hours = settings.get("interval_hours", 2)
+    delay_seconds = interval_hours * 3600 + random.randint(-1800, 1800)
+    if delay_seconds < 1800:
+        delay_seconds = 1800
     
+    timer = threading.Timer(delay_seconds, lambda: send_quote_to_chat(chat_id, thread_id))
+    timer.daemon = True
+    timer.start()
+    quote_timers[chat_id] = timer
+    print(f"📜 Цитата для чата {chat_id} через {delay_seconds/3600:.1f}ч")
+
+def send_quote_to_chat(chat_id, thread_id=0):
+    settings = get_chat_quotes_settings(chat_id)
+    if not settings.get("enabled", True):
+        cancel_quote_timer(chat_id)
+        return
+    
+    unique_id_full = f"{chat_id}_{thread_id}"
+    chat_messages = [m for m in daily_messages if m.get('unique_id') == unique_id_full]
+    
+    if len(chat_messages) < 2:
+        schedule_quote_for_chat(chat_id, thread_id)
+        return
+    
+    quote = random.choice(chat_messages)
+    author_name = quote.get('author_name', 'Участник')
+    quote_text = quote.get('text', '')
+    
+    send_as_image = random.random() < 0.3 and FONT_PATH
+    
+    try:
+        if send_as_image:
+            success = send_quote_as_image(chat_id, quote_text, author_name, thread_id if thread_id else None)
+            if not success:
+                text = f"📜 *Цитата дня*\n\n« {quote_text} »\n\n— {author_name}"
+                bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
+        else:
+            text = f"📜 *Цитата дня*\n\n« {quote_text} »\n\n— {author_name}"
+            bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
+        print(f"✅ Цитата отправлена в чат {chat_id}")
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+    
+    schedule_quote_for_chat(chat_id, thread_id)
+
+def schedule_all_chat_quotes():
     for unique_id in list(active_chats):
         parts = unique_id.split("_")
         chat_id = int(parts[0])
         thread_id = int(parts[1]) if len(parts) > 1 else 0
-        
-        # Получаем сообщения для этого чата
-        unique_id_full = f"{chat_id}_{thread_id}"
-        chat_messages = [m for m in daily_messages if m.get('unique_id') == unique_id_full]
-        
-        # Проверяем, достаточно ли сообщений
-        if len(chat_messages) < 2:
-            print(f"⏩ В чате {chat_id} (thread={thread_id}) недостаточно сообщений: {len(chat_messages)}")
-            continue
-        
-        # Выбираем случайную цитату
-        quote = random.choice(chat_messages)
-        author_name = quote.get('author_name', 'Участник')
-        quote_text = quote.get('text', '')
-        
-        text = f"📜 *Цитата дня*\n\n« {quote_text} »\n\n— {author_name}"
-        
-        try:
-            bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
-            print(f"✅ Цитата отправлена в чат {chat_id} (thread={thread_id})")
-        except Exception as e:
-            print(f"❌ Ошибка отправки цитаты в чат {chat_id}: {e}")
+        schedule_quote_for_chat(chat_id, thread_id)
 
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
 # === НАПОМИНАНИЯ ===
 REMINDERS_FILE = "reminders.json"
+reminders = []
+reminder_counter = 0
 
 def load_reminders():
     global reminders, reminder_counter
@@ -218,18 +319,13 @@ def load_reminders():
                 reminders = json.load(f)
                 reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
                 print(f"⏰ Загружено {len(reminders)} напоминаний")
-                return reminders
         except:
-            return []
-    return []
+            reminders = []
 
-def save_reminders(reminders):
+def save_reminders():
     to_save = []
     for r in reminders:
-        copy = {}
-        for k, v in r.items():
-            if k not in ["timer", "_timer"]:
-                copy[k] = v
+        copy = {k: v for k, v in r.items() if k not in ["timer", "_timer"]}
         to_save.append(copy)
     try:
         with open(REMINDERS_FILE, 'w', encoding='utf-8') as f:
@@ -237,15 +333,12 @@ def save_reminders(reminders):
     except Exception as e:
         print(f"Ошибка: {e}")
 
-reminders = load_reminders()
-reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
-
 def send_reminder(reminder):
     try:
         bot.send_message(reminder["chat_id"], f"⏰ НАПОМИНАНИЕ!\n\n{reminder['text']}", message_thread_id=reminder.get("thread_id"))
-        print(f"✅ Напоминание {reminder['id']} отправлено в чат {reminder['chat_id']}")
+        print(f"✅ Напоминание {reminder['id']} отправлено")
     except Exception as e:
-        print(f"❌ Ошибка отправки: {e}")
+        print(f"❌ Ошибка: {e}")
 
 def schedule_reminder(reminder):
     now_moscow = datetime.now(MOSCOW_TZ)
@@ -257,7 +350,7 @@ def schedule_reminder(reminder):
     timer.daemon = True
     timer.start()
     reminder["_timer"] = timer
-    print(f"⏰ Напоминание {reminder['id']} на {target.strftime('%Y-%m-%d %H:%M')} в чат {reminder['chat_id']}")
+    print(f"⏰ Напоминание {reminder['id']} на {target.strftime('%H:%M')}")
 
 def execute_reminder(reminder):
     send_reminder(reminder)
@@ -267,7 +360,6 @@ def execute_reminder(reminder):
 def start_all_reminders():
     for r in reminders:
         schedule_reminder(r)
-        print(f"🔄 Перезапущено напоминание {r['id']} в чат {r['chat_id']}")
 
 # === ИИ ===
 ai_cache = {}
@@ -288,7 +380,7 @@ def ask_groq(user_id, prompt):
     user_histories[user_id].append({"role": "user", "content": prompt})
     if len(user_histories[user_id]) > MAX_HISTORY:
         user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
-    messages = [{"role": "system", "content": "Отвечай кратко. НЕ используй теги <think> и рассуждения в ответе."}, *user_histories[user_id]]
+    messages = [{"role": "system", "content": "Отвечай кратко. НЕ используй теги <think>."}, *user_histories[user_id]]
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     data = {"model": "qwen/qwen3-32b", "messages": messages, "max_tokens": 800, "temperature": 0.2}
@@ -296,11 +388,9 @@ def ask_groq(user_id, prompt):
         response = requests.post(url, headers=headers, json=data, timeout=30)
         if response.status_code == 200:
             answer = response.json()["choices"][0]["message"]["content"]
-            answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL | re.IGNORECASE)
-            answer = re.sub(r'\[think\].*?\[/think\]', '', answer, flags=re.DOTALL | re.IGNORECASE)
-            answer = answer.strip()
+            answer = re.sub(r'<think>.*?</think>|\[think\].*?\[/think\]', '', answer, flags=re.DOTALL | re.IGNORECASE).strip()
             if not answer:
-                answer = "⚠️ Не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
+                answer = "⚠️ Не удалось сгенерировать ответ."
             user_histories[user_id].append({"role": "assistant", "content": answer})
             ai_cache[cache_key] = (time.time(), answer)
             return answer
@@ -313,25 +403,14 @@ def ask_groq(user_id, prompt):
 def ask_groq_for_summary(prompt):
     if not GROQ_API_KEY:
         return None
-    
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "qwen/qwen3-32b",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1000,
-        "temperature": 0.8
-    }
+    data = {"model": "qwen/qwen3-32b", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1000, "temperature": 0.8}
     try:
         response = requests.post(url, headers=headers, json=data, timeout=45)
         if response.status_code == 200:
             answer = response.json()["choices"][0]["message"]["content"]
-            answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL | re.IGNORECASE)
-            answer = re.sub(r'\[think\].*?\[/think\]', '', answer, flags=re.DOTALL | re.IGNORECASE)
-            answer = answer.strip()
-            return answer
-        else:
-            return None
+            return re.sub(r'<think>.*?</think>|\[think\].*?\[/think\]', '', answer, flags=re.DOTALL | re.IGNORECASE).strip()
     except:
         return None
 
@@ -339,15 +418,11 @@ def set_reaction(chat_id, message_id):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
     data = {"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": "🔥"}]}
     try:
-        response = requests.post(url, json=data, timeout=5)
-        result = response.json()
-        if result.get("ok"):
-            print(f"🔥 Реакция на {message_id} в канале {chat_id}")
+        requests.post(url, json=data, timeout=5)
     except:
         pass
 
-# ========== НАСТРАИВАЕМОЕ САММАРИ ЧАТА ==========
-
+# ========== НАСТРОЙКИ СВОДКИ ==========
 summary_settings = {}
 SUMMARY_FILE = "summary_settings.json"
 
@@ -357,7 +432,7 @@ def load_summary_settings():
         try:
             with open(SUMMARY_FILE, 'r', encoding='utf-8') as f:
                 summary_settings = json.load(f)
-                print(f"📋 Загружено {len(summary_settings)} настроек саммари")
+                print(f"📋 Загружено {len(summary_settings)} настроек")
         except:
             pass
 
@@ -365,75 +440,55 @@ def save_summary_settings():
     try:
         with open(SUMMARY_FILE, 'w', encoding='utf-8') as f:
             json.dump(summary_settings, f, ensure_ascii=False, indent=2)
-        print(f"💾 Сохранены настройки саммари")
     except Exception as e:
         print(f"❌ Ошибка: {e}")
 
 def get_chat_summary_settings(chat_id):
     chat_id_str = str(chat_id)
     if chat_id_str not in summary_settings:
-        summary_settings[chat_id_str] = {
-            "enabled": True,
-            "time": "22:00",
-            "mode": "normal",
-            "ai_style": "troll",
-            "regular_length": "full"
-        }
+        summary_settings[chat_id_str] = {"enabled": True, "time": "22:00", "mode": "normal", "ai_style": "troll"}
         save_summary_settings()
     return summary_settings[chat_id_str]
 
 def update_chat_summary_settings(chat_id, key, value):
     chat_id_str = str(chat_id)
     if chat_id_str not in summary_settings:
-        summary_settings[chat_id_str] = {"enabled": True, "time": "22:00", "mode": "normal", "ai_style": "troll", "regular_length": "full"}
+        summary_settings[chat_id_str] = {"enabled": True, "time": "22:00", "mode": "normal", "ai_style": "troll"}
     summary_settings[chat_id_str][key] = value
     save_summary_settings()
-    
-    # Обновляем планировщик для этого чата
     reschedule_summary_for_chat(chat_id)
 
 def cancel_summary_timer(chat_id):
-    """Отменяет существующий таймер сводки для чата"""
     if chat_id in summary_timers:
         try:
             summary_timers[chat_id].cancel()
-            print(f"⏹️ Отменён таймер сводки для чата {chat_id}")
         except:
             pass
         del summary_timers[chat_id]
 
 def schedule_summary_for_chat(chat_id, thread_id=0):
-    """Планирует сводку для конкретного чата"""
     settings = get_chat_summary_settings(chat_id)
-    
     if not settings.get("enabled", True):
-        print(f"⏩ Сводка для чата {chat_id} отключена, не планируем")
         return
     
     now_moscow = datetime.now(MOSCOW_TZ)
     time_str = settings["time"]
-    
     try:
         target_hour, target_minute = map(int, time_str.split(":"))
         target = now_moscow.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         if target <= now_moscow:
             target += timedelta(days=1)
         delay = (target - now_moscow).total_seconds()
-        
-        # Отменяем старый таймер
         cancel_summary_timer(chat_id)
-        
-        # Создаём новый таймер
         timer = threading.Timer(delay, lambda: send_scheduled_summary(chat_id, thread_id))
         timer.daemon = True
         timer.start()
         summary_timers[chat_id] = timer
-        print(f"📋 Сводка для чата {chat_id} запланирована на {target.strftime('%Y-%m-%d %H:%M')} (режим: {settings['mode']})")
+        print(f"📋 Сводка для чата {chat_id} на {target.strftime('%H:%M')}")
     except Exception as e:
-        print(f"❌ Ошибка планирования сводки для чата {chat_id}: {e}")
+        print(f"❌ Ошибка: {e}")
 
 def reschedule_summary_for_chat(chat_id):
-    """Переназначает сводку для чата (при изменении настроек)"""
     thread_id = 0
     for unique_id in active_chats:
         parts = unique_id.split("_")
@@ -443,159 +498,64 @@ def reschedule_summary_for_chat(chat_id):
     schedule_summary_for_chat(chat_id, thread_id)
 
 def generate_regular_summary(chat_id):
-    """Обычная сводка (без ИИ) - полная версия"""
     today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
-    
     if len(today_messages) < 3:
         return None
-    
     total_msgs = len(today_messages)
     users_count = len(set(m.get('author') for m in today_messages))
-    
     user_activity = {}
     for msg in today_messages:
         author = msg.get('author_name', 'Участник')
         user_activity[author] = user_activity.get(author, 0) + 1
-    top_users = sorted(user_activity.items(), key=lambda x: x[1], reverse=True)[:5]
-    
-    stop_words = {'и', 'в', 'на', 'не', 'а', 'но', 'за', 'по', 'с', 'у', 'к', 'из', 'от', 'до', 'о', 'об', 'же', 'ли', 'бы', 'это', 'что', 'как', 'так', 'все', 'меня', 'мне', 'тебя', 'тебе', 'его', 'её', 'нас', 'вас', 'их', 'мой', 'твой', 'наш', 'ваш'}
-    
-    word_count = {}
-    for msg in today_messages:
-        words = msg.get('text', '').lower().split()
-        for word in words:
-            word_clean = word.strip('.,!?;:()[]{}"\'')
-            if len(word_clean) > 3 and word_clean not in stop_words and not word_clean.startswith('/'):
-                word_count[word_clean] = word_count.get(word_clean, 0) + 1
-    
-    top_words = sorted(word_count.items(), key=lambda x: x[1], reverse=True)[:5]
-    random_quote = random.choice(today_messages) if today_messages else None
-    
-    text = f"📋 *Сводка дня*\n\n"
-    text += f"📊 *Статистика:*\n"
-    text += f"• Сообщений: {total_msgs}\n"
-    text += f"• Участников: {users_count}\n\n"
-    
+    top_users = sorted(user_activity.items(), key=lambda x: x[1], reverse=True)[:3]
+    text = f"📋 *Сводка дня*\n\n📊 *Статистика:*\n• Сообщений: {total_msgs}\n• Участников: {users_count}\n\n"
     if top_users:
         text += f"🏆 *Самые активные:*\n"
-        for name, count in top_users[:3]:
+        for name, count in top_users:
             text += f"• {name} — {count}\n"
-        text += "\n"
-    
-    if top_words:
-        text += f"📝 *Часто обсуждали:* {', '.join([f'\"{word}\" ({count})' for word, count in top_words[:3]])}\n\n"
-    
-    if random_quote:
-        text += f"💬 *Цитата дня:*\n« {random_quote['text'][:100]} »\n— {random_quote['author_name']}"
-        if random_quote.get('time'):
-            text += f"  •  {random_quote['time']}"
-    
     return text
 
 def generate_ai_summary(chat_id, style="troll"):
-    """Генерирует ИИ-сводку дня для чата"""
-    print(f"🤖 Генерация ИИ-сводки для чата {chat_id}, стиль: {style}")
-    
     today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
-    print(f"📊 Найдено сообщений: {len(today_messages)}")
-    
     if len(today_messages) < 5:
-        print(f"⚠️ Недостаточно сообщений: {len(today_messages)} < 5")
         return None
-    
     recent_messages = today_messages[-40:]
-    
     chat_log = []
     for msg in recent_messages:
         author = msg.get('author_name', 'Участник')
         text = msg.get('text', '')
         if text and len(text) < 200:
             chat_log.append(f"{author}: {text}")
-    
     if not chat_log:
         return None
-    
     conversation = "\n".join(chat_log)
-    
-    if style == "troll":
-        prompt = f"""Ты — тролль-журналист. Напиши юмористическую сводку по этому чату.
-Используй эмодзи, подкалывай участников, будь остроумным и язвительным.
-Формат: разбей на темы с эмодзи и заголовками. БЕЗ СТАТИСТИКИ.
-НЕ ИСПОЛЬЗУЙ теги <think> и рассуждения в ответе.
-
-Вот диалог в чате:
-{conversation}
-
-Напиши сводку:
-- Выдели 4-6 тем
-- К каждой теме подбери подходящий эмодзи
-- Добавь хештег в конце #summary
-- Будь смешным, но не слишком оскорбительным
-- Пиши на русском
-- НЕ используй цифры и статистику"""
-    else:
-        prompt = f"""Ты — журналист. Напиши краткую информативную сводку по этому чату.
-Разбей на темы с эмодзи и заголовками. Будь нейтральным и объективным. БЕЗ СТАТИСТИКИ.
-НЕ ИСПОЛЬЗУЙ теги <think> и рассуждения в ответе.
-
-Вот диалог в чате:
-{conversation}
-
-Напиши сводку:
-- Выдели 4-6 тем
-- К каждой теме подбери эмодзи
-- Добавь хештег в конце #summary
-- Пиши на русском
-- НЕ используй цифры и статистику"""
-    
+    style_text = "юмористическую" if style == "troll" else "информативную"
+    prompt = f"""Ты — журналист. Напиши {style_text} сводку по этому чату.
+Разбей на 4-6 тем с эмодзи. НЕ ИСПОЛЬЗУЙ теги <think>.
+Вот диалог:
+{conversation}"""
     response = ask_groq_for_summary(prompt)
-    
     if response:
         return f"📝 *Что обсуждали участники чата?*\n\n{response}"
-    else:
-        return None
-
-def generate_fallback_summary(chat_id):
-    today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
-    if len(today_messages) < 3:
-        return None
-    
-    total_msgs = len(today_messages)
-    users_count = len(set(m.get('author') for m in today_messages))
-    
-    return f"🤖 *ИИ временно недоступен*\n\nСегодня в чате {total_msgs} сообщений от {users_count} участников.\n\nПопробуй ещё раз через минуту. #summary"
+    return None
 
 def send_scheduled_summary(chat_id, thread_id=0):
-    """Отправляет запланированную сводку"""
     settings = get_chat_summary_settings(chat_id)
-    
     if not settings.get("enabled", True):
-        print(f"⏩ Авто-сводка в чате {chat_id} отключена")
         return
-    
     if settings.get("mode") == "ai":
         summary = generate_ai_summary(chat_id, settings.get("ai_style", "troll"))
-        if not summary:
-            summary = generate_fallback_summary(chat_id)
     else:
         summary = generate_regular_summary(chat_id)
-    
     if summary:
         try:
-            bot.send_message(chat_id, summary, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
+            bot.send_message(chat_id, summary, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
             print(f"📋 Отправлена сводка в чат {chat_id}")
-            
-            # Планируем следующую сводку
-            schedule_summary_for_chat(chat_id, thread_id)
-            
         except Exception as e:
             print(f"❌ Ошибка: {e}")
-    else:
-        print(f"⏩ Недостаточно сообщений для сводки в чате {chat_id}")
-        schedule_summary_for_chat(chat_id, thread_id)
+    schedule_summary_for_chat(chat_id, thread_id)
 
 def schedule_all_chat_summaries():
-    """Запускает планировщик сводок для всех чатов"""
     for unique_chat in list(active_chats):
         parts = unique_chat.split("_")
         chat_id = int(parts[0])
@@ -607,9 +567,8 @@ def schedule_all_chat_summaries():
 @bot.message_handler(commands=['start'])
 def start_command(message):
     user_id = message.from_user.id
-    
     if message.chat.id != user_id:
-        bot.send_message(user_id, "⚙️ Отправляю меню в личные сообщения...")
+        bot.send_message(user_id, "⚙️ Отправляю меню...")
         bot.delete_message(message.chat.id, message.message_id)
         send_main_menu(user_id)
     else:
@@ -617,37 +576,9 @@ def start_command(message):
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
-    print(f"📢 /help от {message.from_user.id}")
-    
+    text = "✅ *Бот работает!*\n\n🤖 *ИИ:* `/ai вопрос`\n\n⏰ *Напоминания:* `/remind 15:30 текст`\n📜 *Цитаты:* `/quote`\n📋 *Сводка:* `/summary`\n\n📜 *Управление цитатами:*\n• `/quotes_on` — включить\n• `/quotes_off` — выключить\n• `/quotes_interval 2` — часы\n\n⚙️ *Меню:* `/start`"
     if message.from_user.id == ADMIN_ID:
-        text = "✅ *Бот работает!*\n\n"
-        text += "🤖 *ИИ:* `/ai вопрос`\n\n"
-        text += "⏰ *Напоминания:* `/remind 15:30 текст`\n"
-        text += "`/reminds` — мои напоминания\n"
-        text += "`/delremind ID` — удалить\n\n"
-        text += "📜 *Цитаты:* `/quote`\n\n"
-        text += "📋 *Сводка дня:* `/summary`\n"
-        text += "`/summary on/off` — вкл/выкл авто\n\n"
-        text += "🎭 *РП команды:* Ответь на сообщение и напиши действие\n"
-        text += "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
-        text += "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-        text += "⚙️ *Меню:* `/start` — открыть в ЛС\n\n"
-        text += "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore`\n"
-        text += "🔍 `/check_reminders` — проверить все напоминания\n"
-        text += "🔍 `/check_quotes` — проверить статус цитат"
-    else:
-        text = "✅ *Бот работает!*\n\n"
-        text += "🤖 *ИИ:* `/ai вопрос`\n\n"
-        text += "⏰ *Напоминания:* `/remind 15:30 текст`\n"
-        text += "`/reminds` — мои напоминания\n"
-        text += "`/delremind ID` — удалить\n\n"
-        text += "📜 *Цитаты:* `/quote`\n\n"
-        text += "📋 *Сводка дня:* `/summary`\n\n"
-        text += "🎭 *РП команды:* Ответь на сообщение и напиши действие\n"
-        text += "🎭 *На всех:* кончить на всех, сквиртануть на всех\n\n"
-        text += "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
-        text += "⚙️ *Меню:* `/start` — открыть в ЛС"
-    
+        text += "\n\n👑 *Админ-команды:* `/users` `/backup` `/restore`"
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
@@ -659,6 +590,123 @@ def ai_command(message):
     msg = bot.reply_to(message, "🤖 Думаю...")
     answer = ask_groq(message.from_user.id, prompt)
     bot.edit_message_text(answer, message.chat.id, msg.message_id)
+
+@bot.message_handler(commands=['quote'])
+def quote_command(message):
+    thread_id = message.message_thread_id or 0
+    count = get_chat_messages_count(message.chat.id, thread_id)
+    if count < 2:
+        bot.reply_to(message, "📭 Нет сообщений для цитаты")
+        return
+    quote_text = get_random_quote(message.chat.id, thread_id)
+    if quote_text:
+        bot.reply_to(message, quote_text, parse_mode="Markdown")
+
+@bot.message_handler(commands=['quote_img'])
+def quote_image_command(message):
+    thread_id = message.message_thread_id or 0
+    unique_id = f"{message.chat.id}_{thread_id}"
+    chat_messages = [m for m in daily_messages if m.get('unique_id') == unique_id]
+    if len(chat_messages) < 2:
+        bot.reply_to(message, "📭 Нет сообщений для цитаты")
+        return
+    quote = random.choice(chat_messages)
+    msg = bot.reply_to(message, "🖼️ Создаю картинку...")
+    success = send_quote_as_image(message.chat.id, quote['text'], quote.get('author_name', 'Участник'), thread_id if thread_id else None)
+    if success:
+        bot.delete_message(message.chat.id, msg.message_id)
+    else:
+        bot.edit_message_text("❌ Ошибка создания картинки", message.chat.id, msg.message_id)
+
+@bot.message_handler(commands=['quotes_on'])
+def quotes_on_command(message):
+    chat_id = message.chat.id
+    if not is_chat_admin(chat_id, message.from_user.id):
+        bot.reply_to(message, "❌ Только админы!")
+        return
+    update_chat_quotes_settings(chat_id, "enabled", True)
+    thread_id = 0
+    for unique_id in active_chats:
+        parts = unique_id.split("_")
+        if int(parts[0]) == chat_id:
+            thread_id = int(parts[1]) if len(parts) > 1 else 0
+            break
+    schedule_quote_for_chat(chat_id, thread_id)
+    bot.reply_to(message, "✅ Цитаты включены!")
+
+@bot.message_handler(commands=['quotes_off'])
+def quotes_off_command(message):
+    chat_id = message.chat.id
+    if not is_chat_admin(chat_id, message.from_user.id):
+        bot.reply_to(message, "❌ Только админы!")
+        return
+    update_chat_quotes_settings(chat_id, "enabled", False)
+    cancel_quote_timer(chat_id)
+    bot.reply_to(message, "❌ Цитаты выключены!")
+
+@bot.message_handler(commands=['quotes_interval'])
+def quotes_interval_command(message):
+    chat_id = message.chat.id
+    if not is_chat_admin(chat_id, message.from_user.id):
+        bot.reply_to(message, "❌ Только админы!")
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.reply_to(message, "ℹ️ /quotes_interval 2")
+        return
+    try:
+        interval = int(parts[1])
+        if interval < 1 or interval > 6:
+            bot.reply_to(message, "❌ От 1 до 6 часов")
+            return
+    except:
+        bot.reply_to(message, "❌ Неверный формат")
+        return
+    update_chat_quotes_settings(chat_id, "interval_hours", interval)
+    if get_chat_quotes_settings(chat_id).get("enabled", True):
+        cancel_quote_timer(chat_id)
+        thread_id = 0
+        for unique_id in active_chats:
+            parts = unique_id.split("_")
+            if int(parts[0]) == chat_id:
+                thread_id = int(parts[1]) if len(parts) > 1 else 0
+                break
+        schedule_quote_for_chat(chat_id, thread_id)
+    bot.reply_to(message, f"✅ Интервал {interval} часа")
+
+@bot.message_handler(commands=['summary'])
+def summary_command(message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) > 1:
+        subcmd = parts[1].lower()
+        if subcmd == "on":
+            if not is_chat_admin(message.chat.id, message.from_user.id):
+                bot.reply_to(message, "❌ Только админы!")
+                return
+            update_chat_summary_settings(message.chat.id, "enabled", True)
+            bot.reply_to(message, "✅ Сводка включена!")
+            return
+        elif subcmd == "off":
+            if not is_chat_admin(message.chat.id, message.from_user.id):
+                bot.reply_to(message, "❌ Только админы!")
+                return
+            update_chat_summary_settings(message.chat.id, "enabled", False)
+            bot.reply_to(message, "❌ Сводка выключена!")
+            return
+        elif subcmd in ["тролль", "troll"]:
+            summary = generate_ai_summary(message.chat.id, "troll")
+            bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений")
+            return
+        elif subcmd in ["обычный", "normal"]:
+            summary = generate_regular_summary(message.chat.id)
+            bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений")
+            return
+    settings = get_chat_summary_settings(message.chat.id)
+    if settings.get("mode") == "ai":
+        summary = generate_ai_summary(message.chat.id, settings.get("ai_style", "troll"))
+    else:
+        summary = generate_regular_summary(message.chat.id)
+    bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений")
 
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
@@ -702,7 +750,7 @@ def add_reminder(message):
         "created_at": datetime.now(MOSCOW_TZ).isoformat()
     }
     reminders.append(reminder)
-    save_reminders(reminders)
+    save_reminders()
     schedule_reminder(reminder)
     msg = bot.send_message(chat_id, f"✅ Напоминание #{reminder_counter} создано!\n⏰ {hours:02d}:{minutes:02d}", message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 10)
@@ -724,10 +772,7 @@ def list_reminders(message):
         return
     response = "📋 *Ваши напоминания:*\n\n"
     for r in user_reminders:
-        if r.get("daily"):
-            period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}"
-        else:
-            period = f"{r['hours']:02d}:{r['minutes']:02d}"
+        period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}" if r.get("daily") else f"{r['hours']:02d}:{r['minutes']:02d}"
         response += f"🆔 {r['id']} - {period}\n   📝 {r['text'][:40]}\n\n"
     msg = bot.send_message(chat_id, response, parse_mode="Markdown", message_thread_id=thread_id)
     delete_after_delay(chat_id, msg.message_id, 30)
@@ -750,12 +795,10 @@ def delete_reminder(message):
         rid = int(parts[1])
         for i, r in enumerate(reminders):
             if r["id"] == rid:
-                if r.get("chat_id") != chat_id:
-                    return
-                if r.get("thread_id") != thread_id:
+                if r.get("chat_id") != chat_id or r.get("thread_id") != thread_id:
                     return
                 if r.get("user_id") != message.from_user.id:
-                    bot.reply_to(message, "❌ Это не ваше напоминание!")
+                    bot.reply_to(message, "❌ Не ваше напоминание!")
                     return
                 if "_timer" in r:
                     try:
@@ -763,7 +806,7 @@ def delete_reminder(message):
                     except:
                         pass
                 reminders.pop(i)
-                save_reminders(reminders)
+                save_reminders()
                 msg = bot.send_message(chat_id, f"✅ Напоминание {rid} удалено", message_thread_id=thread_id)
                 delete_after_delay(chat_id, msg.message_id, 10)
                 return
@@ -773,381 +816,44 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
 
-@bot.message_handler(commands=['quote'])
-def quote_command(message):
-    thread_id = message.message_thread_id if message.message_thread_id else 0
-    count = get_chat_messages_count(message.chat.id, thread_id)
-    if count < 2:
-        bot.reply_to(message, "📭 Пока нет сообщений для цитаты. Напишите что-нибудь!")
-        return
-    quote_text = get_random_quote(message.chat.id, thread_id)
-    if quote_text:
-        bot.reply_to(message, quote_text, parse_mode="Markdown")
-
-@bot.message_handler(commands=['check_quotes'])
-def check_quotes_command(message):
-    """Проверка статуса цитат (только для админа)"""
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
-        return
-    
-    text = f"📊 *Статус цитат*\n\n"
-    text += f"📝 Всего чатов: {len(active_chats)}\n"
-    text += f"📜 Запланировано таймеров: {len(quote_timers)}\n"
-    text += f"💬 Сообщений в кэше: {len(daily_messages)}\n\n"
-    text += f"*Чаты с сообщениями:*\n"
-    
-    unique_chats = set()
-    for msg in daily_messages:
-        unique_chats.add(msg.get('chat_id'))
-    
-    for chat_id in unique_chats:
-        try:
-            chat = bot.get_chat(chat_id)
-            chat_title = chat.title or f"Чат {chat_id}"
-            msg_count = len([m for m in daily_messages if m.get('chat_id') == chat_id])
-            text += f"• {chat_title[:30]} — {msg_count} сообщ.\n"
-        except:
-            text += f"• Чат {chat_id} — {msg_count} сообщ.\n"
-    
-    bot.send_message(message.chat.id, text, parse_mode="Markdown")
-
-# ========== АДМИН-КОМАНДА: ПРОВЕРКА ВСЕХ НАПОМИНАНИЙ ==========
-
-@bot.message_handler(commands=['check_reminders'])
-def check_all_reminders(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Только для главного администратора!")
-        return
-    
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Только в ЛС!")
-        return
-    
-    if not reminders:
-        bot.send_message(message.chat.id, "📭 Нет ни одного напоминания в боте")
-        return
-    
-    total = len(reminders)
-    daily_count = len([r for r in reminders if r.get("daily")])
-    regular_count = total - daily_count
-    
-    chats_stats = {}
-    for r in reminders:
-        chat_id = r.get("chat_id")
-        if chat_id not in chats_stats:
-            try:
-                chat = bot.get_chat(chat_id)
-                chat_title = chat.title or f"Чат {chat_id}"
-            except:
-                chat_title = f"Чат {chat_id}"
-            chats_stats[chat_id] = {"title": chat_title, "count": 0}
-        chats_stats[chat_id]["count"] += 1
-    
-    text = f"📊 *Статистика напоминаний*\n\n"
-    text += f"📝 Всего: {total}\n"
-    text += f"🔄 Ежедневных: {daily_count}\n"
-    text += f"⏰ Обычных: {regular_count}\n"
-    text += f"💬 Чатов с напоминаниями: {len(chats_stats)}\n\n"
-    text += f"*Список чатов:*\n"
-    
-    markup = InlineKeyboardMarkup(row_width=1)
-    for chat_id, data in chats_stats.items():
-        text += f"• {data['title'][:30]} — {data['count']} нап.\n"
-        markup.add(InlineKeyboardButton(
-            f"📋 {data['title'][:35]} ({data['count']})",
-            callback_data=f"admin_check_chat_{chat_id}"
-        ))
-    
-    markup.add(InlineKeyboardButton("🗑️ Удалить ВСЕ напоминания", callback_data="admin_delete_all_reminders"))
-    markup.add(InlineKeyboardButton("❌ Закрыть", callback_data="close_menu"))
-    
-    bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=markup)
-
-def show_admin_chat_reminders(user_id, chat_id, message_id=None):
-    chat_reminders = [r for r in reminders if r.get("chat_id") == chat_id]
-    
-    try:
-        chat = bot.get_chat(chat_id)
-        chat_title = chat.title or f"Чат {chat_id}"
-    except:
-        chat_title = f"Чат {chat_id}"
-    
-    text = f"📋 *Напоминания в чате*\n`{chat_title}`\n\n"
-    
-    for r in chat_reminders:
-        user_name = "Неизвестный"
-        if r.get("user_id"):
-            try:
-                user = bot.get_chat_member(chat_id, r.get("user_id"))
-                user_name = user.user.first_name or str(r.get("user_id"))
-            except:
-                user_name = str(r.get("user_id"))
-        
-        period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}" if r.get("daily") else f"{r['hours']:02d}:{r['minutes']:02d}"
-        text += f"🆔 `{r['id']}` • {period}\n"
-        text += f"   👤 {user_name}\n"
-        text += f"   📝 {r['text'][:50]}\n\n"
-    
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("🗑️ Удалить все в чате", callback_data=f"admin_delete_chat_{chat_id}"),
-        InlineKeyboardButton("◀ Назад", callback_data="admin_back_to_list")
-    )
-    markup.add(InlineKeyboardButton("❌ Закрыть", callback_data="close_menu"))
-    
-    if message_id:
-        try:
-            bot.edit_message_text(text, user_id, message_id, parse_mode="Markdown", reply_markup=markup)
-        except:
-            bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
-    else:
-        bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
-
-# ========== ФУНКЦИЯ ПРОВЕРКИ ПРАВ АДМИНА ЧАТА ==========
+# ========== АДМИН-КОМАНДЫ ==========
 
 def is_chat_admin(chat_id, user_id):
     try:
         chat_member = bot.get_chat_member(chat_id, user_id)
         return chat_member.status in ['administrator', 'creator']
-    except Exception as e:
-        print(f"⚠️ Ошибка проверки прав: {e}")
+    except:
         return False
-
-# ========== ИСПРАВЛЕННАЯ КОМАНДА USERS ==========
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Только в ЛС!")
-        return
-    
     if not chat_users:
         bot.send_message(message.chat.id, "📭 Нет пользователей")
         return
-    
     total = len(chat_users)
     bot.send_message(message.chat.id, f"📊 *Всего пользователей:* {total}", parse_mode="Markdown")
-    
     user_lines = []
     for uid, user in chat_users.items():
         username = user.get('username', '')
-        first_name = user.get('first_name', 'Без имени')
-        
+        name = user.get('first_name', 'Без имени')
         if username and username != 'None':
-            user_lines.append(f"• `{uid}` | @{username} | {first_name}")
+            user_lines.append(f"• `{uid}` | @{username} | {name}")
         else:
-            user_lines.append(f"• `{uid}` | {first_name}")
-    
+            user_lines.append(f"• `{uid}` | {name}")
     chunk_size = 50
-    total_chunks = (len(user_lines) + chunk_size - 1) // chunk_size
-    
     for i in range(0, len(user_lines), chunk_size):
         chunk = user_lines[i:i+chunk_size]
-        chunk_num = (i // chunk_size) + 1
-        text = f"📋 *Список пользователей* (часть {chunk_num}/{total_chunks}):\n\n"
-        text += "\n".join(chunk)
+        text = "📋 *Список пользователей:*\n\n" + "\n".join(chunk)
         bot.send_message(message.chat.id, text, parse_mode="Markdown")
-
-# ========== КОМАНДЫ САММАРИ ==========
-
-@bot.message_handler(commands=['summary'])
-def summary_command(message):
-    parts = message.text.split(maxsplit=1)
-    
-    if len(parts) > 1:
-        subcmd = parts[1].lower()
-        
-        if subcmd == "on":
-            user_id = message.from_user.id
-            chat_id = message.chat.id
-            
-            if not is_chat_admin(chat_id, user_id):
-                bot.reply_to(message, "❌ Только администраторы чата могут включать сводку!")
-                return
-            
-            update_chat_summary_settings(chat_id, "enabled", True)
-            settings = get_chat_summary_settings(chat_id)
-            mode_text = "ИИ" if settings["mode"] == "ai" else "обычная"
-            bot.reply_to(message, f"✅ *Авто-сводка включена!*\n\n📋 Режим: {mode_text}\n🕐 Время: {settings['time']}", parse_mode="Markdown")
-            return
-            
-        elif subcmd == "off":
-            user_id = message.from_user.id
-            chat_id = message.chat.id
-            
-            if not is_chat_admin(chat_id, user_id):
-                bot.reply_to(message, "❌ Только администраторы чата могут выключать сводку!")
-                return
-            
-            update_chat_summary_settings(chat_id, "enabled", False)
-            bot.reply_to(message, "✅ *Авто-сводка выключена!*", parse_mode="Markdown")
-            return
-        
-        elif subcmd in ["тролль", "troll"]:
-            summary = generate_ai_summary(message.chat.id, "troll")
-            if summary:
-                bot.reply_to(message, summary, parse_mode="Markdown")
-            else:
-                bot.reply_to(message, "📭 Недостаточно сообщений для ИИ-сводки (нужно минимум 5)")
-            return
-            
-        elif subcmd in ["обычный", "normal"]:
-            summary = generate_regular_summary(message.chat.id)
-            if summary:
-                bot.reply_to(message, summary, parse_mode="Markdown")
-            else:
-                bot.reply_to(message, "📭 Недостаточно сообщений для сводки (нужно минимум 3)")
-            return
-    
-    settings = get_chat_summary_settings(message.chat.id)
-    if settings.get("mode") == "ai":
-        summary = generate_ai_summary(message.chat.id, settings.get("ai_style", "troll"))
-    else:
-        summary = generate_regular_summary(message.chat.id)
-    
-    if summary:
-        bot.reply_to(message, summary, parse_mode="Markdown")
-    else:
-        bot.reply_to(message, "📭 Недостаточно сообщений для сводки (нужно минимум 3 для обычной, 5 для ИИ)")
-
-@bot.message_handler(commands=['summary_on'])
-def summary_on_command(message):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    
-    if not is_chat_admin(chat_id, user_id):
-        bot.reply_to(message, "❌ Только администраторы чата могут включать сводку!")
-        return
-    
-    update_chat_summary_settings(chat_id, "enabled", True)
-    settings = get_chat_summary_settings(chat_id)
-    mode_text = "ИИ" if settings["mode"] == "ai" else "обычная"
-    bot.reply_to(message, f"✅ *Авто-сводка включена!*\n\n📋 Режим: {mode_text}\n🕐 Время: {settings['time']}", parse_mode="Markdown")
-
-@bot.message_handler(commands=['summary_off'])
-def summary_off_command(message):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    
-    if not is_chat_admin(chat_id, user_id):
-        bot.reply_to(message, "❌ Только администраторы чата могут выключать сводку!")
-        return
-    
-    update_chat_summary_settings(chat_id, "enabled", False)
-    bot.reply_to(message, "✅ *Авто-сводка выключена!*", parse_mode="Markdown")
-
-@bot.message_handler(commands=['summary_mode'])
-def summary_mode_command(message):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    
-    if not is_chat_admin(chat_id, user_id):
-        bot.reply_to(message, "❌ Только администраторы чата могут менять режим!")
-        return
-    
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ `/summary_mode ai` или `/summary_mode normal`", parse_mode="Markdown")
-        return
-    
-    mode = parts[1].strip().lower()
-    if mode in ["ai", "ии"]:
-        update_chat_summary_settings(chat_id, "mode", "ai")
-        bot.reply_to(message, "✅ Режим сводки установлен на *ИИ*", parse_mode="Markdown")
-    elif mode in ["normal", "обычный", "обычная"]:
-        update_chat_summary_settings(chat_id, "mode", "normal")
-        bot.reply_to(message, "✅ Режим сводки установлен на *обычный*", parse_mode="Markdown")
-    else:
-        bot.reply_to(message, "❌ Доступные режимы: ai, normal")
-
-@bot.message_handler(commands=['summary_style'])
-def summary_style_command(message):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    
-    if not is_chat_admin(chat_id, user_id):
-        bot.reply_to(message, "❌ Только администраторы чата могут менять стиль!")
-        return
-    
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ `/summary_style тролль` или `/summary_style обычный`", parse_mode="Markdown")
-        return
-    
-    style = parts[1].strip().lower()
-    if style in ["тролль", "troll"]:
-        update_chat_summary_settings(chat_id, "ai_style", "troll")
-        bot.reply_to(message, "✅ Стиль ИИ-сводки установлен на *тролль*", parse_mode="Markdown")
-    elif style in ["обычный", "обычная", "normal"]:
-        update_chat_summary_settings(chat_id, "ai_style", "normal")
-        bot.reply_to(message, "✅ Стиль ИИ-сводки установлен на *обычный*", parse_mode="Markdown")
-    else:
-        bot.reply_to(message, "❌ Доступные стили: тролль, обычный")
-
-@bot.message_handler(commands=['summary_time'])
-def summary_time_command(message):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    
-    if not is_chat_admin(chat_id, user_id):
-        bot.reply_to(message, "❌ Только администраторы чата могут менять время!")
-        return
-    
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ `/summary_time 20:00`", parse_mode="Markdown")
-        return
-    
-    time_str = parts[1].strip()
-    try:
-        if ":" in time_str:
-            hours, minutes = map(int, time_str.split(":"))
-        else:
-            hours = int(time_str)
-            minutes = 0
-        if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
-            raise ValueError
-    except:
-        bot.reply_to(message, "❌ Неверный формат времени. Используйте ЧЧ:ММ (МСК)")
-        return
-    
-    update_chat_summary_settings(message.chat.id, "time", time_str)
-    bot.reply_to(message, f"✅ Время сводки установлено на {hours:02d}:{minutes:02d} МСК")
-
-@bot.message_handler(commands=['summary_settings'])
-def summary_settings_command(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
-        return
-    
-    settings = get_chat_summary_settings(message.chat.id)
-    status_text = "✅ Включена" if settings.get("enabled", True) else "❌ Выключена"
-    mode_text = "ИИ (умная)" if settings["mode"] == "ai" else "Обычная (статистика)"
-    style_text = "тролль (язвительный)" if settings.get("ai_style") == "troll" else "обычный"
-    
-    text = f"⚙️ *Настройки сводки в этом чате*\n\n"
-    text += f"🟢 Статус: {status_text}\n"
-    text += f"🕐 Время отправки: `{settings['time']}` МСК\n"
-    text += f"🤖 Режим: *{mode_text}*\n"
-    if settings["mode"] == "ai":
-        text += f"🎭 Стиль ИИ: *{style_text}*\n"
-    
-    bot.reply_to(message, text, parse_mode="Markdown")
-
-# === АДМИН-КОМАНДЫ ===
 
 @bot.message_handler(commands=['adduser'])
 def add_user_manually(message):
     global chat_users
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
-        return
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Только в ЛС!")
         return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
@@ -1172,9 +878,6 @@ def delete_user(message):
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Только в ЛС!")
-        return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         bot.reply_to(message, "ℹ️ /deluser @username")
@@ -1192,30 +895,21 @@ def delete_user(message):
     else:
         bot.reply_to(message, f"❌ @{target} не найден")
 
-# === БЕКАП ===
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Только в ЛС!")
-        return
     status = bot.reply_to(message, "🔄 Создаю бекап...")
     try:
-        clean_reminders = []
-        for r in reminders:
-            r_copy = {}
-            for k, v in r.items():
-                if k not in ["timer", "_timer"]:
-                    r_copy[k] = v
-            clean_reminders.append(r_copy)
+        clean_reminders = [{k: v for k, v in r.items() if k not in ["timer", "_timer"]} for r in reminders]
         data = {
             "version": "2.1",
             "date": str(datetime.now()),
             "reminders": clean_reminders,
             "chat_users": chat_users,
-            "summary_settings": summary_settings
+            "summary_settings": summary_settings,
+            "quotes_settings": quotes_settings
         }
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(filename, 'w', encoding='utf-8') as f:
@@ -1232,17 +926,12 @@ def restore_command(message):
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ Нет прав!")
         return
-    if message.chat.type != 'private':
-        bot.reply_to(message, "❌ Только в ЛС!")
-        return
     bot.send_message(message.chat.id, "📥 Отправьте JSON файл бекапа")
 
 @bot.message_handler(content_types=['document'])
 def handle_restore_file(message):
-    global chat_users, reminder_counter, reminders, summary_settings
+    global chat_users, reminder_counter, reminders, summary_settings, quotes_settings
     if message.from_user.id != ADMIN_ID:
-        return
-    if message.chat.type != 'private':
         return
     status = bot.reply_to(message, "🔄 Восстанавливаю...")
     try:
@@ -1262,7 +951,7 @@ def handle_restore_file(message):
                 reminders.append(r)
                 if r.get("id", 0) > reminder_counter:
                     reminder_counter = r.get("id", 0)
-            save_reminders(reminders)
+            save_reminders()
             start_all_reminders()
         if "chat_users" in data:
             chat_users = data["chat_users"]
@@ -1271,152 +960,16 @@ def handle_restore_file(message):
             summary_settings = data["summary_settings"]
             save_summary_settings()
             schedule_all_chat_summaries()
+        if "quotes_settings" in data:
+            quotes_settings = data["quotes_settings"]
+            save_quotes_settings()
+            schedule_all_chat_quotes()
         bot.edit_message_text(f"✅ Восстановлено!\n👥 {len(chat_users)} пользователей\n⏰ {len(reminders)} напоминаний", message.chat.id, status.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, status.message_id)
 
-# ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
-@bot.inline_handler(func=lambda query: True)
-def inline_query(query):
-    try:
-        text = query.query.strip()
-        if not text or len(text.split(maxsplit=1)) < 2:
-            return
-        target_raw, content = text.split(maxsplit=1)
-        target_raw = target_raw.lstrip("@")
-        target_id = None
-        target_name = target_raw
-        for uid, user in chat_users.items():
-            username = user.get('username')
-            if username and username.lower() == target_raw.lower():
-                target_id = uid
-                target_name = user.get('first_name', target_raw)
-                break
-        if not target_id and target_raw.isdigit():
-            target_id = target_raw
-        if not target_id:
-            markup = InlineKeyboardMarkup()
-            markup.add(InlineKeyboardButton("❓ Как узнать ID", url="https://t.me/userinfobot"))
-            result = types.InlineQueryResultArticle(
-                id="error",
-                title="❌ Пользователь не найден",
-                description=f"@{target_raw}",
-                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден"),
-                reply_markup=markup
-            )
-            bot.answer_inline_query(query.id, [result], cache_time=0)
-            return
-        msg_id = f"sec_{int(time.time())}_{query.from_user.id}_{random.randint(1000, 9999)}"
-        secret_messages[msg_id] = {
-            "target_id": target_id,
-            "target_name": target_name,
-            "content": content,
-            "sender_name": query.from_user.first_name,
-            "sender_id": query.from_user.id,
-            "expires": time.time() + 3600
-        }
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"secret_read_{msg_id}"))
-        result = types.InlineQueryResultArticle(
-            id=msg_id,
-            title=f"📨 Для {target_name}",
-            description=content[:50],
-            input_message_content=types.InputTextMessageContent(
-                f"🔐 *Скрытое сообщение*\nОт: {query.from_user.first_name}\nКому: {target_name}",
-                parse_mode="Markdown"
-            ),
-            reply_markup=markup
-        )
-        bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
-    except Exception as e:
-        print(f"Инлайн ошибка: {e}")
+# ========== РП ДЕЙСТВИЯ ==========
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("secret_read_"))
-def handle_secret_read(call):
-    msg_id = call.data.replace("secret_read_", "")
-    if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
-        return
-    data = secret_messages[msg_id]
-    if str(call.from_user.id) != str(data["target_id"]):
-        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
-        return
-    if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Истекло", show_alert=True)
-        del secret_messages[msg_id]
-        return
-    bot.answer_callback_query(call.id, f"📩 От {data['sender_name']}:\n\n{data['content']}", show_alert=True)
-
-def clean_old_secrets():
-    while True:
-        time.sleep(3600)
-        now = time.time()
-        to_delete = [mid for mid, d in secret_messages.items() if d.get("expires", 0) < now]
-        for mid in to_delete:
-            del secret_messages[mid]
-
-threading.Thread(target=clean_old_secrets, daemon=True).start()
-
-# ========== ФУНКЦИИ ДЛЯ СКЛОНЕНИЯ ИМЁН ==========
-def decline_name(name, preposition=""):
-    preposition = preposition.lower()
-    if name in ["кому-то", "пользователь", "участник", "кто-то", "кого-то"]:
-        return name
-    parts = name.split()
-    declined_parts = []
-    for part in parts:
-        declined_parts.append(decline_single_name(part, preposition))
-    return " ".join(declined_parts)
-
-def decline_single_name(name, preposition=""):
-    name_lower = name.lower()
-    
-    if preposition in ["у", "без", "до", "из", "от", "para"]:
-        if name_lower.endswith('а'):
-            return name[:-1] + 'ы'
-        elif name_lower.endswith('я'):
-            return name[:-1] + 'и'
-        else:
-            return name + 'а'
-    
-    if preposition in ["с", "над", "под", "перед"]:
-        if name_lower.endswith('а'):
-            return name[:-1] + 'ой'
-        elif name_lower.endswith('я'):
-            return name[:-1] + 'ей'
-        elif name_lower.endswith('й'):
-            return name[:-1] + 'ем'
-        else:
-            return name + 'ом'
-    
-    if preposition in ["о", "об", "при"]:
-        if name_lower.endswith('а'):
-            return name[:-1] + 'е'
-        elif name_lower.endswith('я'):
-            return name[:-1] + 'е'
-        else:
-            return name + 'е'
-    
-    if name_lower.endswith('а'):
-        return name[:-1] + 'е'
-    elif name_lower.endswith('я'):
-        return name[:-1] + 'е'
-    elif name_lower.endswith('й'):
-        return name[:-1] + 'ю'
-    elif name_lower.endswith('ь'):
-        return name[:-1] + 'ю'
-    else:
-        return name + 'у'
-
-def get_gender(user):
-    name = (user.first_name or "").lower()
-    female_endings = ('а', 'я', 'ия', 'ья')
-    male_exceptions = ('никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья')
-    if name.endswith(female_endings) and name not in male_exceptions:
-        return 'female'
-    return 'male'
-
-# ========== РЕАКЦИИ НА ДЕЙСТВИЯ ==========
 def handle_actions(message):
     if not message.reply_to_message:
         full_text = message.text.strip().lower()
@@ -1429,7 +982,6 @@ def handle_actions(message):
             "сквиртануть": ("💦💦", "сквиртанул", "сквиртанула"),
         }
         
-        # Проверяем точное совпадение
         if full_text in global_actions:
             emoji, male_action, female_action = global_actions[full_text]
             sender = message.from_user
@@ -1437,7 +989,6 @@ def handle_actions(message):
             sender_gender = get_gender(sender)
             action = male_action if sender_gender == 'male' else female_action
             
-            # Ищем последнее сообщение в чате
             chat_id = message.chat.id
             thread_id = message.message_thread_id or 0
             chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id and m.get('thread_id') == thread_id]
@@ -1589,6 +1140,66 @@ def handle_actions(message):
         print(f"❌ Ошибка: {e}")
         return False
 
+# ========== ФУНКЦИИ ДЛЯ СКЛОНЕНИЯ ==========
+
+def decline_name(name, preposition=""):
+    preposition = preposition.lower()
+    if name in ["кому-то", "пользователь", "участник", "кто-то", "кого-то"]:
+        return name
+    parts = name.split()
+    declined_parts = []
+    for part in parts:
+        declined_parts.append(decline_single_name(part, preposition))
+    return " ".join(declined_parts)
+
+def decline_single_name(name, preposition=""):
+    name_lower = name.lower()
+    
+    if preposition in ["у", "без", "до", "из", "от", "para"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'ы'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'и'
+        else:
+            return name + 'а'
+    
+    if preposition in ["с", "над", "под", "перед"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'ой'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'ей'
+        elif name_lower.endswith('й'):
+            return name[:-1] + 'ем'
+        else:
+            return name + 'ом'
+    
+    if preposition in ["о", "об", "при"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'е'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'е'
+        else:
+            return name + 'е'
+    
+    if name_lower.endswith('а'):
+        return name[:-1] + 'е'
+    elif name_lower.endswith('я'):
+        return name[:-1] + 'е'
+    elif name_lower.endswith('й'):
+        return name[:-1] + 'ю'
+    elif name_lower.endswith('ь'):
+        return name[:-1] + 'ю'
+    else:
+        return name + 'у'
+
+def get_gender(user):
+    name = (user.first_name or "").lower()
+    female_endings = ('а', 'я', 'ия', 'ья')
+    male_exceptions = ('никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья')
+    if name.endswith(female_endings) and name not in male_exceptions:
+        return 'female'
+    return 'male'
+
 # ========== ОСНОВНОЙ ОБРАБОТЧИК ==========
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
@@ -1596,22 +1207,29 @@ def main_handler(message):
         text_lower = message.text.lower().strip()
         user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
         
-        if text_lower in ["привет", "здарова", "ку", "хай"]:
+        greetings = ["привет", "здарова", "ку", "хай"]
+        thanks = ["спасибо", "благодарю", "thanks"]
+        goodbyes = ["пока", "до свидания", "bye"]
+        howare = ["как дела", "как ты"]
+        morning = ["доброе утро", "доброго утра"]
+        night = ["спокойной ночи", "доброй ночи"]
+        
+        if text_lower in greetings:
             bot.reply_to(message, f"👋 Привет, {user_name}!")
             return
-        if text_lower in ["спасибо", "благодарю", "thanks"]:
+        if text_lower in thanks:
             bot.reply_to(message, f"🙏 Пожалуйста, {user_name}!")
             return
-        if text_lower in ["пока", "до свидания", "bye"]:
+        if text_lower in goodbyes:
             bot.reply_to(message, f"👋 Пока, {user_name}!")
             return
-        if text_lower in ["как дела", "как ты"]:
+        if text_lower in howare:
             bot.reply_to(message, f"😊 У меня всё отлично, {user_name}!")
             return
-        if text_lower in ["доброе утро", "доброго утра"]:
+        if text_lower in morning:
             bot.reply_to(message, f"🌅 Доброе утро, {user_name}!")
             return
-        if text_lower in ["спокойной ночи", "доброй ночи"]:
+        if text_lower in night:
             bot.reply_to(message, f"🌙 Спокойной ночи, {user_name}!")
             return
     
@@ -1623,465 +1241,282 @@ def main_handler(message):
         global chat_users
         old_count = len(chat_users)
         chat_users = user_cache.save_user_from_message(message, chat_users)
-        new_count = len(chat_users)
-        if new_count > old_count:
-            print(f"✨ Новый пользователь! Всего: {new_count}")
+        if len(chat_users) != old_count:
+            print(f"✨ Новый пользователь! Всего: {len(chat_users)}")
         add_chat_to_active(message)
         get_chat_summary_settings(message.chat.id)
         add_message_to_quotes(message)
 
-# ========== ЛС-МЕНЮ С КНОПКАМИ ==========
+# ========== ЛС-МЕНЮ ==========
 
 def send_main_menu(user_id):
-    text = "⚙️ *Главное меню бота*\n\n"
-    text += "Выберите раздел для управления:"
-    
+    text = "⚙️ *Главное меню бота*\n\nВыберите раздел:"
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("📊 Сводка дня", callback_data="menu_summary"),
-        InlineKeyboardButton("⏰ Напоминания", callback_data="menu_reminders")
-    )
-    markup.add(
-        InlineKeyboardButton("➕ Добавить бота в чат", callback_data="menu_add_bot"),
+        InlineKeyboardButton("📊 Сводка", callback_data="menu_summary"),
+        InlineKeyboardButton("⏰ Напоминания", callback_data="menu_reminders"),
+        InlineKeyboardButton("📜 Цитаты", callback_data="menu_quotes"),
+        InlineKeyboardButton("➕ Добавить бота", callback_data="menu_add_bot"),
         InlineKeyboardButton("❌ Закрыть", callback_data="close_menu")
     )
-    
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
-def add_bot_to_chat_menu(user_id, message_id=None):
-    bot_username = bot.get_me().username
-    
-    text = "🤖 *Как добавить бота в чат:*\n\n"
-    text += "1. Откройте настройки вашей группы\n"
-    text += "2. Нажмите «Добавить участника»\n"
-    text += f"3. Введите `@{bot_username}`\n"
-    text += "4. Выдайте боту права администратора:\n"
-    text += "   • ✅ Удалять сообщения\n"
-    text += "   • ✅ Блокировать пользователей\n"
-    text += "   • ✅ Закреплять сообщения\n"
-    text += "   • ✅ Изменять информацию чата\n\n"
-    text += "5. Напишите любое сообщение в чате\n"
-    text += "6. Вернитесь в меню и чат появится в списке\n\n"
-    text += f"[🔗 Ссылка для добавления](https://t.me/{bot_username}?startgroup=start)"
-    
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("🔗 Пригласить бота в чат", url=f"https://t.me/{bot_username}?startgroup=start"))
-    markup.add(InlineKeyboardButton("◀ Назад в главное меню", callback_data="back_to_main"))
-    
-    if message_id:
-        try:
-            bot.edit_message_text(text, user_id, message_id, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
-        except:
-            bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
-    else:
-        bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
-
 def get_user_chats_list(user_id):
-    """Возвращает список чатов, где есть бот и пользователь"""
-    user_chats_list = []
-    seen_chats = set()
-    
-    # 1. Чаты из active_chats
+    user_chats = []
+    seen = set()
     for unique_id in active_chats:
         parts = unique_id.split("_")
         chat_id = int(parts[0])
-        if chat_id in seen_chats:
+        if chat_id in seen:
             continue
         try:
             chat = bot.get_chat(chat_id)
             try:
                 member = bot.get_chat_member(chat_id, user_id)
                 if member.status in ['member', 'administrator', 'creator', 'restricted']:
-                    seen_chats.add(chat_id)
-                    user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
+                    seen.add(chat_id)
+                    user_chats.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
             except:
-                seen_chats.add(chat_id)
-                user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
+                seen.add(chat_id)
+                user_chats.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
         except:
             continue
-    
-    # 2. Чаты из напоминаний пользователя
-    for r in reminders:
-        if r.get("user_id") == user_id:
-            chat_id = r.get("chat_id")
-            if chat_id and chat_id not in seen_chats:
-                try:
-                    chat = bot.get_chat(chat_id)
-                    user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
-                except:
-                    user_chats_list.append({"id": chat_id, "title": f"Чат {chat_id}"})
-                seen_chats.add(chat_id)
-    
-    return user_chats_list
+    return user_chats
 
-def show_chats_for_summary(user_id, message_id=None):
-    chats = get_user_chats_list(user_id)
-    
-    if not chats:
-        text = "📭 Вы ещё не написали ни в одном чате, где есть я.\n\nНапишите что-нибудь в группе, и я вас запомню!"
-        bot.send_message(user_id, text, parse_mode="Markdown")
-        return
-    
-    markup = InlineKeyboardMarkup(row_width=1)
-    for chat in chats:
-        markup.add(InlineKeyboardButton(
-            f"📊 {chat['title'][:40]}",
-            callback_data=f"select_chat_summary_{chat['id']}"
-        ))
-    markup.add(InlineKeyboardButton("◀ Назад в главное меню", callback_data="back_to_main"))
-    
-    text = "📊 *Выберите чат для настройки сводки:*"
-    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
-
-def show_summary_settings(user_id, chat_id):
-    settings = get_chat_summary_settings(chat_id)
-    
-    try:
-        chat = bot.get_chat(chat_id)
-        chat_title = chat.title or f"Чат {chat_id}"
-    except:
-        chat_title = f"Чат {chat_id}"
-    
-    status_text = "✅ Включена" if settings.get("enabled", True) else "❌ Выключена"
-    mode_text = "🤖 ИИ" if settings["mode"] == "ai" else "📊 Обычная"
-    style_text = "🎭 Тролль" if settings.get("ai_style") == "troll" else "📝 Обычный"
-    
-    text = f"📊 *Настройки сводки*\n"
-    text += f"`{chat_title}`\n\n"
-    text += f"🟢 Статус: {status_text}\n"
-    text += f"🤖 Режим: {mode_text}\n"
-    if settings["mode"] == "ai":
-        text += f"🎭 Стиль: {style_text}\n"
-    text += f"🕐 Время: {settings['time']}\n"
-    
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("✅ Включить", callback_data=f"summary_action_enable_{chat_id}"),
-        InlineKeyboardButton("❌ Выключить", callback_data=f"summary_action_disable_{chat_id}")
-    )
-    markup.add(
-        InlineKeyboardButton("🤖 ИИ режим", callback_data=f"summary_action_ai_{chat_id}"),
-        InlineKeyboardButton("📊 Обычный", callback_data=f"summary_action_normal_{chat_id}")
-    )
-    if settings["mode"] == "ai":
-        markup.add(
-            InlineKeyboardButton("🎭 Стиль Тролль", callback_data=f"summary_action_troll_{chat_id}"),
-            InlineKeyboardButton("📝 Обычный стиль", callback_data=f"summary_action_normalstyle_{chat_id}")
-        )
-    markup.add(InlineKeyboardButton("📋 Показать сводку", callback_data=f"summary_action_show_{chat_id}"))
-    markup.add(InlineKeyboardButton("◀ Назад к списку чатов", callback_data="back_to_summary_chats"))
-    
-    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
-
-def show_chats_for_reminders(user_id, message_id=None):
-    chats = get_user_chats_list(user_id)
-    
-    if not chats:
-        text = "📭 У вас нет чатов с напоминаниями.\n\nСоздать: `/remind 15:30 текст` в нужном чате"
-        bot.send_message(user_id, text, parse_mode="Markdown")
-        return
-    
-    markup = InlineKeyboardMarkup(row_width=1)
-    for chat in chats:
-        reminders_count = len([r for r in reminders if r.get('chat_id') == chat['id'] and r.get('user_id') == user_id])
-        badge = f" ({reminders_count})" if reminders_count > 0 else ""
-        markup.add(InlineKeyboardButton(
-            f"⏰ {chat['title'][:35]}{badge}",
-            callback_data=f"select_chat_reminder_{chat['id']}"
-        ))
-    markup.add(InlineKeyboardButton("◀ Назад в главное меню", callback_data="back_to_main"))
-    
-    text = "⏰ *Выберите чат для управления напоминаниями:*"
-    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
-
-def show_reminders_for_chat(user_id, chat_id, message_id=None):
-    user_reminders = [r for r in reminders 
-                      if r.get("chat_id") == chat_id 
-                      and r.get("user_id") == user_id]
-    
-    try:
-        chat = bot.get_chat(chat_id)
-        chat_title = chat.title or f"Чат {chat_id}"
-    except:
-        chat_title = f"Чат {chat_id}"
-    
-    if not user_reminders:
-        text = f"⏰ *Напоминания*\n`{chat_title}`\n\n"
-        text += "📭 У вас нет напоминаний в этом чате.\n\n"
-        text += "Создать: `/remind 15:30 текст` в этом чате"
-        
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("◀ Назад к чатам", callback_data="back_to_reminder_chats"))
-        
-        bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
-        return
-    
-    text = f"⏰ *Ваши напоминания*\n`{chat_title}`\n\n"
-    for r in user_reminders[:15]:
-        period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}" if r.get("daily") else f"{r['hours']:02d}:{r['minutes']:02d}"
-        text += f"🆔 `{r['id']}` • {period}\n   📝 {r['text'][:50]}\n\n"
-    
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("➕ Создать", callback_data=f"create_remind_{chat_id}"),
-        InlineKeyboardButton("🗑️ Удалить", callback_data=f"delete_remind_list_{chat_id}")
-    )
-    markup.add(InlineKeyboardButton("◀ Назад к чатам", callback_data="back_to_reminder_chats"))
-    
-    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
-
-def show_delete_reminders_list(user_id, chat_id, message_id=None):
-    user_reminders = [r for r in reminders 
-                      if r.get("chat_id") == chat_id 
-                      and r.get("user_id") == user_id]
-    
-    if not user_reminders:
-        bot.send_message(user_id, "❌ Нет напоминаний для удаления")
-        return
-    
-    markup = InlineKeyboardMarkup(row_width=1)
-    for r in user_reminders:
-        period = f"{r['hours']:02d}:{r['minutes']:02d}"
-        if r.get("daily"):
-            period += " (ежедневно)"
-        markup.add(InlineKeyboardButton(
-            f"🗑️ [{r['id']}] {period} — {r['text'][:30]}",
-            callback_data=f"del_remind_{r['id']}_{chat_id}"
-        ))
-    
-    markup.add(InlineKeyboardButton("◀ Назад", callback_data=f"select_chat_reminder_{chat_id}"))
-    
-    bot.send_message(user_id, "🗑️ *Выберите напоминание для удаления:*", parse_mode="Markdown", reply_markup=markup)
-
-# ========== CALLBACK ОБРАБОТЧИКИ ==========
+# ========== CALLBACKИ ==========
 
 @bot.callback_query_handler(func=lambda call: True)
-def handle_menu_callback(call):
+def handle_callback(call):
     user_id = call.from_user.id
+    data = call.data
     
-    if call.data == "menu_summary":
+    if data == "menu_summary":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_chats_for_summary(user_id)
+        chats = get_user_chats_list(user_id)
+        if not chats:
+            bot.send_message(user_id, "📭 Нет чатов. Добавьте бота и сделайте админом.")
+            return
+        markup = InlineKeyboardMarkup()
+        for chat in chats:
+            markup.add(InlineKeyboardButton(f"📊 {chat['title'][:35]}", callback_data=f"summary_{chat['id']}"))
+        markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
+        bot.send_message(user_id, "📊 *Выберите чат*", parse_mode="Markdown", reply_markup=markup)
         
-    elif call.data == "menu_reminders":
+    elif data == "menu_reminders":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_chats_for_reminders(user_id)
+        chats = get_user_chats_list(user_id)
+        if not chats:
+            bot.send_message(user_id, "📭 Нет чатов.")
+            return
+        markup = InlineKeyboardMarkup()
+        for chat in chats:
+            count = len([r for r in reminders if r.get('chat_id') == chat['id'] and r.get('user_id') == user_id])
+            markup.add(InlineKeyboardButton(f"⏰ {chat['title'][:30]} ({count})", callback_data=f"remind_{chat['id']}"))
+        markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
+        bot.send_message(user_id, "⏰ *Выберите чат*", parse_mode="Markdown", reply_markup=markup)
         
-    elif call.data == "menu_add_bot":
+    elif data == "menu_quotes":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        add_bot_to_chat_menu(user_id)
+        chats = get_user_chats_list(user_id)
+        if not chats:
+            bot.send_message(user_id, "📭 Нет чатов.")
+            return
+        markup = InlineKeyboardMarkup()
+        for chat in chats:
+            settings = get_chat_quotes_settings(chat['id'])
+            status = "✅" if settings.get("enabled", True) else "❌"
+            markup.add(InlineKeyboardButton(f"📜 {status} {chat['title'][:33]}", callback_data=f"quotes_{chat['id']}"))
+        markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
+        bot.send_message(user_id, "📜 *Выберите чат*", parse_mode="Markdown", reply_markup=markup)
         
-    elif call.data == "back_to_main":
+    elif data == "menu_add_bot":
+        bot.answer_callback_query(call.id)
+        bot_username = bot.get_me().username
+        text = f"🤖 *Добавить бота:*\n\n1. Откройте группу\n2. Добавьте @{bot_username}\n3. Выдайте права админа\n\n[🔗 Ссылка](https://t.me/{bot_username}?startgroup=start)"
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🔗 Пригласить", url=f"https://t.me/{bot_username}?startgroup=start"))
+        markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
+        
+    elif data == "back_main":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
         send_main_menu(user_id)
         
-    elif call.data == "back_to_summary_chats":
+    elif data == "close_menu":
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_chats_for_summary(user_id)
         
-    elif call.data == "back_to_reminder_chats":
-        bot.answer_callback_query(call.id)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_chats_for_reminders(user_id)
-        
-    elif call.data.startswith("select_chat_summary_"):
-        chat_id = int(call.data.split("_")[3])
-        bot.answer_callback_query(call.id)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_summary_settings(user_id, chat_id)
-        
-    elif call.data.startswith("select_chat_reminder_"):
-        chat_id = int(call.data.split("_")[3])
-        bot.answer_callback_query(call.id)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_reminders_for_chat(user_id, chat_id)
-        
-    elif call.data.startswith("summary_action_"):
-        parts = call.data.split("_")
-        action = parts[2]
-        chat_id = int(parts[3])
-        
-        if action != "show":
-            if not is_chat_admin(chat_id, user_id):
-                bot.answer_callback_query(call.id, "❌ Вы не администратор этого чата!", show_alert=True)
-                return
-        
-        if action == "enable":
-            update_chat_summary_settings(chat_id, "enabled", True)
-            bot.answer_callback_query(call.id, "✅ Авто-сводка включена!")
-        elif action == "disable":
-            update_chat_summary_settings(chat_id, "enabled", False)
-            bot.answer_callback_query(call.id, "❌ Авто-сводка выключена!")
-        elif action == "ai":
-            update_chat_summary_settings(chat_id, "mode", "ai")
-            bot.answer_callback_query(call.id, "🤖 Режим: ИИ")
-        elif action == "normal":
-            update_chat_summary_settings(chat_id, "mode", "normal")
-            bot.answer_callback_query(call.id, "📊 Режим: обычный")
-        elif action == "troll":
-            update_chat_summary_settings(chat_id, "ai_style", "troll")
-            bot.answer_callback_query(call.id, "🎭 Стиль: Тролль")
-        elif action == "normalstyle":
-            update_chat_summary_settings(chat_id, "ai_style", "normal")
-            bot.answer_callback_query(call.id, "📝 Стиль: обычный")
-        elif action == "show":
-            bot.answer_callback_query(call.id, "📋 Генерирую сводку...")
-            settings = get_chat_summary_settings(chat_id)
-            if settings.get("mode") == "ai":
-                summary = generate_ai_summary(chat_id, settings.get("ai_style", "troll"))
-            else:
-                summary = generate_regular_summary(chat_id)
-            if summary:
-                bot.send_message(user_id, summary, parse_mode="Markdown")
-            else:
-                bot.send_message(user_id, "📭 Недостаточно сообщений для сводки")
-            return
-        
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_summary_settings(user_id, chat_id)
-        
-    elif call.data.startswith("create_remind_"):
-        chat_id = int(call.data.split("_")[2])
-        bot.answer_callback_query(call.id, "✏️ Используйте /remind в чате для создания")
-        bot.send_message(
-            user_id,
-            f"✏️ Чтобы создать напоминание в этом чате,\n"
-            f"напишите команду в самом чате:\n"
-            f"`/remind 15:30 ваш текст`\n\n"
-            f"Для ежедневного: `/remind 9:00 ежедневно текст`",
-            parse_mode="Markdown"
+    elif data.startswith("summary_"):
+        chat_id = int(data.split("_")[1])
+        settings = get_chat_summary_settings(chat_id)
+        status = "✅ Вкл" if settings.get("enabled") else "❌ Выкл"
+        mode = "🤖 ИИ" if settings["mode"] == "ai" else "📊 Обычный"
+        text = f"📊 *Настройки*\n\n🟢 Статус: {status}\n🤖 Режим: {mode}\n🕐 Время: {settings['time']}"
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("✅ Вкл", callback_data=f"summ_enable_{chat_id}"),
+            InlineKeyboardButton("❌ Выкл", callback_data=f"summ_disable_{chat_id}"),
+            InlineKeyboardButton("🤖 ИИ", callback_data=f"summ_ai_{chat_id}"),
+            InlineKeyboardButton("📊 Обычный", callback_data=f"summ_normal_{chat_id}"),
+            InlineKeyboardButton("📋 Показать", callback_data=f"summ_show_{chat_id}"),
+            InlineKeyboardButton("◀ Назад", callback_data="menu_summary")
         )
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
         
-    elif call.data.startswith("delete_remind_list_"):
-        chat_id = int(call.data.split("_")[3])
-        bot.answer_callback_query(call.id)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_delete_reminders_list(user_id, chat_id)
+    elif data.startswith("remind_"):
+        chat_id = int(data.split("_")[1])
+        user_reminders = [r for r in reminders if r.get("chat_id") == chat_id and r.get("user_id") == user_id]
+        try:
+            chat = bot.get_chat(chat_id)
+            title = chat.title or f"Чат {chat_id}"
+        except:
+            title = f"Чат {chat_id}"
+        if not user_reminders:
+            text = f"⏰ *{title}*\n\n📭 Нет напоминаний"
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("➕ Создать", callback_data=f"create_{chat_id}"))
+            markup.add(InlineKeyboardButton("◀ Назад", callback_data="menu_reminders"))
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+            return
+        text = f"⏰ *Ваши напоминания*\n`{title}`\n\n"
+        for r in user_reminders[:10]:
+            period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}" if r.get("daily") else f"{r['hours']:02d}:{r['minutes']:02d}"
+            text += f"🆔 `{r['id']}` • {period}\n   📝 {r['text'][:40]}\n\n"
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("➕ Создать", callback_data=f"create_{chat_id}"),
+            InlineKeyboardButton("🗑️ Удалить", callback_data=f"delete_{chat_id}"),
+            InlineKeyboardButton("◀ Назад", callback_data="menu_reminders")
+        )
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
         
-    elif call.data.startswith("del_remind_"):
-        parts = call.data.split("_")
-        reminder_id = int(parts[2])
+    elif data.startswith("quotes_"):
+        chat_id = int(data.split("_")[1])
+        settings = get_chat_quotes_settings(chat_id)
+        try:
+            chat = bot.get_chat(chat_id)
+            title = chat.title or f"Чат {chat_id}"
+        except:
+            title = f"Чат {chat_id}"
+        status = "✅ Включены" if settings.get("enabled", True) else "❌ Выключены"
+        interval = settings.get("interval_hours", 2)
+        text = f"📜 *Настройки цитат*\n`{title}`\n\n🟢 Статус: {status}\n⏱️ Интервал: {interval}ч"
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("✅ Вкл", callback_data=f"quote_enable_{chat_id}"),
+            InlineKeyboardButton("❌ Выкл", callback_data=f"quote_disable_{chat_id}"),
+            InlineKeyboardButton("⏱️ 1ч", callback_data=f"quote_interval_1_{chat_id}"),
+            InlineKeyboardButton("⏱️ 2ч", callback_data=f"quote_interval_2_{chat_id}"),
+            InlineKeyboardButton("⏱️ 3ч", callback_data=f"quote_interval_3_{chat_id}"),
+            InlineKeyboardButton("◀ Назад", callback_data="menu_quotes")
+        )
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        
+    elif data.startswith("quote_enable_"):
+        chat_id = int(data.split("_")[2])
+        update_chat_quotes_settings(chat_id, "enabled", True)
+        reschedule = True
+        for unique_id in active_chats:
+            parts = unique_id.split("_")
+            if int(parts[0]) == chat_id:
+                thread_id = int(parts[1]) if len(parts) > 1 else 0
+                schedule_quote_for_chat(chat_id, thread_id)
+                break
+        bot.answer_callback_query(call.id, "✅ Цитаты включены!")
+        
+    elif data.startswith("quote_disable_"):
+        chat_id = int(data.split("_")[2])
+        update_chat_quotes_settings(chat_id, "enabled", False)
+        cancel_quote_timer(chat_id)
+        bot.answer_callback_query(call.id, "❌ Цитаты выключены!")
+        
+    elif data.startswith("quote_interval_"):
+        parts = data.split("_")
+        interval = int(parts[2])
         chat_id = int(parts[3])
+        update_chat_quotes_settings(chat_id, "interval_hours", interval)
+        if get_chat_quotes_settings(chat_id).get("enabled", True):
+            cancel_quote_timer(chat_id)
+            for unique_id in active_chats:
+                parts = unique_id.split("_")
+                if int(parts[0]) == chat_id:
+                    thread_id = int(parts[1]) if len(parts) > 1 else 0
+                    schedule_quote_for_chat(chat_id, thread_id)
+                    break
+        bot.answer_callback_query(call.id, f"⏱️ Интервал {interval} часа")
         
+    elif data.startswith("summ_enable_"):
+        chat_id = int(data.split("_")[2])
+        update_chat_summary_settings(chat_id, "enabled", True)
+        bot.answer_callback_query(call.id, "✅ Сводка включена!")
+        
+    elif data.startswith("summ_disable_"):
+        chat_id = int(data.split("_")[2])
+        update_chat_summary_settings(chat_id, "enabled", False)
+        bot.answer_callback_query(call.id, "❌ Сводка выключена!")
+        
+    elif data.startswith("summ_ai_"):
+        chat_id = int(data.split("_")[2])
+        update_chat_summary_settings(chat_id, "mode", "ai")
+        bot.answer_callback_query(call.id, "🤖 Режим: ИИ")
+        
+    elif data.startswith("summ_normal_"):
+        chat_id = int(data.split("_")[2])
+        update_chat_summary_settings(chat_id, "mode", "normal")
+        bot.answer_callback_query(call.id, "📊 Режим: обычный")
+        
+    elif data.startswith("summ_show_"):
+        chat_id = int(data.split("_")[2])
+        bot.answer_callback_query(call.id, "📋 Генерирую...")
+        settings = get_chat_summary_settings(chat_id)
+        if settings.get("mode") == "ai":
+            summary = generate_ai_summary(chat_id, settings.get("ai_style", "troll"))
+        else:
+            summary = generate_regular_summary(chat_id)
+        if summary:
+            bot.send_message(user_id, summary, parse_mode="Markdown")
+        else:
+            bot.send_message(user_id, "📭 Недостаточно сообщений")
+            
+    elif data.startswith("create_"):
+        chat_id = int(data.split("_")[1])
+        bot.answer_callback_query(call.id, "✏️ Используйте /remind в чате")
+        bot.send_message(user_id, f"✏️ Напишите в чате:\n`/remind 15:30 текст`", parse_mode="Markdown")
+        
+    elif data.startswith("delete_"):
+        chat_id = int(data.split("_")[1])
+        user_reminders = [r for r in reminders if r.get("chat_id") == chat_id and r.get("user_id") == user_id]
+        if not user_reminders:
+            bot.answer_callback_query(call.id, "❌ Нет напоминаний")
+            return
+        markup = InlineKeyboardMarkup()
+        for r in user_reminders:
+            period = f"{r['hours']:02d}:{r['minutes']:02d}"
+            if r.get("daily"):
+                period += " (ежедневно)"
+            markup.add(InlineKeyboardButton(f"🗑️ {period} — {r['text'][:30]}", callback_data=f"del_{r['id']}_{chat_id}"))
+        markup.add(InlineKeyboardButton("◀ Назад", callback_data=f"remind_{chat_id}"))
+        bot.edit_message_text("🗑️ *Выберите:*", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        
+    elif data.startswith("del_"):
+        parts = data.split("_")
+        rid = int(parts[1])
+        chat_id = int(parts[2])
         for i, r in enumerate(reminders):
-            if r["id"] == reminder_id and r.get("user_id") == user_id:
+            if r["id"] == rid and r.get("user_id") == user_id:
                 if "_timer" in r:
                     try:
                         r["_timer"].cancel()
                     except:
                         pass
                 reminders.pop(i)
-                save_reminders(reminders)
-                bot.answer_callback_query(call.id, "✅ Напоминание удалено!")
-                bot.delete_message(call.message.chat.id, call.message.message_id)
-                show_reminders_for_chat(user_id, chat_id)
-                return
-        
-        bot.answer_callback_query(call.id, "❌ Напоминание не найдено")
-        
-    elif call.data == "close_menu":
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.answer_callback_query(call.id)
-    
-    elif call.data == "admin_back_to_list":
-        bot.answer_callback_query(call.id)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        check_all_reminders(call.message)
-        
-    elif call.data.startswith("admin_check_chat_"):
-        chat_id = int(call.data.split("_")[3])
-        bot.answer_callback_query(call.id)
-        show_admin_chat_reminders(user_id, chat_id, call.message.message_id)
-        
-    elif call.data.startswith("admin_delete_chat_"):
-        chat_id = int(call.data.split("_")[3])
-        bot.answer_callback_query(call.id)
-        
-        to_delete = []
-        for i, r in enumerate(reminders):
-            if r.get("chat_id") == chat_id:
-                if "_timer" in r:
-                    try:
-                        r["_timer"].cancel()
-                    except:
-                        pass
-                to_delete.append(i)
-        
-        for i in reversed(to_delete):
-            reminders.pop(i)
-        
-        save_reminders(reminders)
-        bot.send_message(user_id, f"✅ Удалены все напоминания в чате {chat_id}")
-        check_all_reminders(call.message)
-        
-    elif call.data == "admin_delete_all_reminders":
-        bot.answer_callback_query(call.id)
-        for r in reminders:
-            if "_timer" in r:
-                try:
-                    r["_timer"].cancel()
-                except:
-                    pass
-        reminders.clear()
-        save_reminders(reminders)
-        bot.send_message(user_id, "✅ Удалены ВСЕ напоминания в боте")
-        check_all_reminders(call.message)
-
-# ========== ОТСЛЕЖИВАНИЕ ДОБАВЛЕНИЯ БОТА В ЧАТ ==========
-
-@bot.my_chat_member_handler(func=lambda message: True)
-def on_bot_added_to_chat(message):
-    try:
-        chat = message.chat
-        chat_id = chat.id
-        chat_title = chat.title or f"Чат {chat_id}"
-        
-        inviter = message.from_user
-        inviter_id = inviter.id
-        inviter_name = inviter.first_name or inviter.username or "Пользователь"
-        
-        print(f"📌 Бот добавлен в чат '{chat_title}' пользователем {inviter_name} (ID: {inviter_id})")
-        
-        unique_id = f"{chat_id}_0"
-        if unique_id not in active_chats:
-            active_chats.add(unique_id)
-            print(f"📌 Чат {chat_id} добавлен в active_chats")
-        
-        if str(inviter_id) not in chat_users:
-            chat_users[str(inviter_id)] = {
-                "id": inviter_id,
-                "username": inviter.username,
-                "first_name": inviter.first_name,
-                "last_name": inviter.last_name,
-                "full_name": f"{inviter.first_name or ''} {inviter.last_name or ''}".strip(),
-                "last_seen": datetime.now(MOSCOW_TZ).isoformat(),
-                "added_bot_to_chat": chat_title
-            }
-            user_cache.save_users(chat_users)
-            print(f"👤 Новый пользователь {inviter_name} добавлен в базу")
-        
-        # Планируем сводку для нового чата (если включена)
-        schedule_summary_for_chat(chat_id)
-        
-        try:
-            bot.send_message(
-                inviter_id,
-                f"✅ Бот успешно добавлен в чат *{chat_title}*!\n\n"
-                f"Теперь этот чат появится в вашем меню.\n\n"
-                f"📊 Для настройки сводки нажмите кнопку ниже.\n\n"
-                f"⚙️ Открыть меню: `/start`",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            print(f"⚠️ Не удалось отправить сообщение пользователю {inviter_id}: {e}")
-            
-    except Exception as e:
-        print(f"❌ Ошибка при добавлении бота в чат: {e}")
+                save_reminders()
+                bot.answer_callback_query(call.id, "✅ Удалено!")
+                break
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -2115,11 +1550,15 @@ if __name__ == "__main__":
     r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={webhook_url}")
     print(f"Результат: {r.json()}")
     
-    print("🔄 Перезапуск планировщиков...")
-    schedule_daily_quotes()
-    load_summary_settings()
+    print("🔄 Загрузка данных...")
     load_daily_quotes()
+    load_reminders()
+    load_summary_settings()
+    load_quotes_settings()
+    
+    print("🔄 Запуск планировщиков...")
     start_all_reminders()
     schedule_all_chat_summaries()
+    schedule_all_chat_quotes()
     
     app.run(host="0.0.0.0", port=port)
