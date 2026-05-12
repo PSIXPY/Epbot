@@ -38,8 +38,9 @@ daily_messages = []
 daily_quote_times = [9, 12, 15, 18, 21]
 active_chats = set()
 
-# === ХРАНИЛИЩЕ ДЛЯ ПЛАНИРОВЩИКОВ ===
-scheduled_tasks = []
+# === Глобальные переменные для хранения таймеров ===
+quote_timers = []  # Для таймеров цитат
+summary_timers = {}  # Для таймеров сводок
 
 def load_daily_quotes():
     global daily_messages
@@ -136,27 +137,20 @@ def clean_inactive_chats():
     for item in to_remove:
         active_chats.discard(item)
 
-def send_random_quote_to_all_chats():
-    clean_inactive_chats()
-    sent_chats = set()
-    for unique_id in list(active_chats):
-        parts = unique_id.split("_")
-        chat_id = int(parts[0])
-        if chat_id in sent_chats:
-            continue
-        chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
-        if len(chat_messages) < 2:
-            continue
-        sent_chats.add(chat_id)
-        quote = random.choice(chat_messages)
-        text = f"📜 *Цитата дня*\n\n« {quote['text']} »"
-        try:
-            bot.send_message(chat_id, text, parse_mode="Markdown")
-        except Exception as e:
-            print(f"❌ Ошибка: {e}")
-
 def schedule_daily_quotes():
+    """Планирует отправку цитат на каждый час"""
+    global quote_timers
+    
+    # Отменяем старые таймеры
+    for timer in quote_timers:
+        try:
+            timer.cancel()
+        except:
+            pass
+    quote_timers.clear()
+    
     now_moscow = datetime.now(MOSCOW_TZ)
+    
     for hour in daily_quote_times:
         target = now_moscow.replace(hour=hour, minute=0, second=0, microsecond=0)
         if target <= now_moscow:
@@ -165,12 +159,50 @@ def schedule_daily_quotes():
         timer = threading.Timer(delay, send_random_quote_to_all_chats)
         timer.daemon = True
         timer.start()
-        print(f"📜 Цитата на {target.strftime('%H:%M')}")
+        quote_timers.append(timer)
+        print(f"📜 Цитата запланирована на {target.strftime('%H:%M')}")
+    
+    # Очистка кэша в полночь
     midnight = now_moscow.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     midnight_delay = (midnight - now_moscow).total_seconds()
     midnight_timer = threading.Timer(midnight_delay, clear_daily_quotes)
     midnight_timer.daemon = True
     midnight_timer.start()
+    quote_timers.append(midnight_timer)
+    print(f"🗑️ Очистка кэша цитат запланирована на полночь")
+
+def send_random_quote_to_all_chats():
+    """Отправляет цитаты во все активные чаты, где есть сообщения"""
+    clean_inactive_chats()
+    
+    print(f"📜 Отправка цитат во все чаты. Всего чатов: {len(active_chats)}")
+    
+    for unique_id in list(active_chats):
+        parts = unique_id.split("_")
+        chat_id = int(parts[0])
+        thread_id = int(parts[1]) if len(parts) > 1 else 0
+        
+        # Получаем сообщения для этого чата
+        unique_id_full = f"{chat_id}_{thread_id}"
+        chat_messages = [m for m in daily_messages if m.get('unique_id') == unique_id_full]
+        
+        # Проверяем, достаточно ли сообщений
+        if len(chat_messages) < 2:
+            print(f"⏩ В чате {chat_id} (thread={thread_id}) недостаточно сообщений: {len(chat_messages)}")
+            continue
+        
+        # Выбираем случайную цитату
+        quote = random.choice(chat_messages)
+        author_name = quote.get('author_name', 'Участник')
+        quote_text = quote.get('text', '')
+        
+        text = f"📜 *Цитата дня*\n\n« {quote_text} »\n\n— {author_name}"
+        
+        try:
+            bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
+            print(f"✅ Цитата отправлена в чат {chat_id} (thread={thread_id})")
+        except Exception as e:
+            print(f"❌ Ошибка отправки цитаты в чат {chat_id}: {e}")
 
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
@@ -318,7 +350,6 @@ def set_reaction(chat_id, message_id):
 
 summary_settings = {}
 SUMMARY_FILE = "summary_settings.json"
-summary_timers = {}  # Хранилище таймеров для сводок по чатам
 
 def load_summary_settings():
     global summary_settings
@@ -403,7 +434,6 @@ def schedule_summary_for_chat(chat_id, thread_id=0):
 
 def reschedule_summary_for_chat(chat_id):
     """Переназначает сводку для чата (при изменении настроек)"""
-    # Находим thread_id из active_chats
     thread_id = 0
     for unique_id in active_chats:
         parts = unique_id.split("_")
@@ -526,7 +556,6 @@ def generate_ai_summary(chat_id, style="troll"):
         return None
 
 def generate_fallback_summary(chat_id):
-    """Резервная сводка если ИИ не доступен"""
     today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
     if len(today_messages) < 3:
         return None
@@ -553,17 +582,7 @@ def send_scheduled_summary(chat_id, thread_id=0):
     
     if summary:
         try:
-            # Отправляем сводку с кнопкой "Раскрыть" если текст слишком длинный
-            if len(summary) > 3000:
-                # Разбиваем на части
-                parts = [summary[i:i+3000] for i in range(0, len(summary), 3000)]
-                for i, part in enumerate(parts):
-                    if i == 0:
-                        bot.send_message(chat_id, part, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
-                    else:
-                        bot.send_message(chat_id, part, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
-            else:
-                bot.send_message(chat_id, summary, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
+            bot.send_message(chat_id, summary, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
             print(f"📋 Отправлена сводка в чат {chat_id}")
             
             # Планируем следующую сводку
@@ -573,7 +592,6 @@ def send_scheduled_summary(chat_id, thread_id=0):
             print(f"❌ Ошибка: {e}")
     else:
         print(f"⏩ Недостаточно сообщений для сводки в чате {chat_id}")
-        # Всё равно планируем следующую
         schedule_summary_for_chat(chat_id, thread_id)
 
 def schedule_all_chat_summaries():
@@ -615,7 +633,8 @@ def help_command(message):
         text += "📨 *Скрытые сообщения:* `@бот username текст`\n\n"
         text += "⚙️ *Меню:* `/start` — открыть в ЛС\n\n"
         text += "👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore`\n"
-        text += "🔍 `/check_reminders` — проверить все напоминания"
+        text += "🔍 `/check_reminders` — проверить все напоминания\n"
+        text += "🔍 `/check_quotes` — проверить статус цитат"
     else:
         text = "✅ *Бот работает!*\n\n"
         text += "🤖 *ИИ:* `/ai вопрос`\n\n"
@@ -764,6 +783,34 @@ def quote_command(message):
     quote_text = get_random_quote(message.chat.id, thread_id)
     if quote_text:
         bot.reply_to(message, quote_text, parse_mode="Markdown")
+
+@bot.message_handler(commands=['check_quotes'])
+def check_quotes_command(message):
+    """Проверка статуса цитат (только для админа)"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав!")
+        return
+    
+    text = f"📊 *Статус цитат*\n\n"
+    text += f"📝 Всего чатов: {len(active_chats)}\n"
+    text += f"📜 Запланировано таймеров: {len(quote_timers)}\n"
+    text += f"💬 Сообщений в кэше: {len(daily_messages)}\n\n"
+    text += f"*Чаты с сообщениями:*\n"
+    
+    unique_chats = set()
+    for msg in daily_messages:
+        unique_chats.add(msg.get('chat_id'))
+    
+    for chat_id in unique_chats:
+        try:
+            chat = bot.get_chat(chat_id)
+            chat_title = chat.title or f"Чат {chat_id}"
+            msg_count = len([m for m in daily_messages if m.get('chat_id') == chat_id])
+            text += f"• {chat_title[:30]} — {msg_count} сообщ.\n"
+        except:
+            text += f"• Чат {chat_id} — {msg_count} сообщ.\n"
+    
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 # ========== АДМИН-КОМАНДА: ПРОВЕРКА ВСЕХ НАПОМИНАНИЙ ==========
 
@@ -1378,8 +1425,11 @@ def handle_actions(message):
             "кончить на всех": ("💦", "кончил на всех", "кончила на всех"),
             "сквиртануть на всех": ("💦💦", "сквиртанул на всех", "сквиртанула на всех"),
             "кончить всем в лицо": ("💦", "кончил всем в лицо", "кончила всем в лицо"),
+            "кончить": ("💦", "кончил", "кончила"),
+            "сквиртануть": ("💦💦", "сквиртанул", "сквиртанула"),
         }
         
+        # Проверяем точное совпадение
         if full_text in global_actions:
             emoji, male_action, female_action = global_actions[full_text]
             sender = message.from_user
@@ -1387,7 +1437,17 @@ def handle_actions(message):
             sender_gender = get_gender(sender)
             action = male_action if sender_gender == 'male' else female_action
             
-            response = f"{emoji} {sender_name} {action}"
+            # Ищем последнее сообщение в чате
+            chat_id = message.chat.id
+            thread_id = message.message_thread_id or 0
+            chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id and m.get('thread_id') == thread_id]
+            
+            target_name = "всех"
+            if chat_messages:
+                last_msg = chat_messages[-1]
+                target_name = last_msg.get('author_name', 'кого-то')
+            
+            response = f"{emoji} {sender_name} {action} {target_name}"
             thread_id = message.message_thread_id if message.message_thread_id else None
             try:
                 bot.send_message(message.chat.id, response, message_thread_id=thread_id)
@@ -1854,22 +1914,15 @@ def handle_menu_callback(call):
         if action == "enable":
             update_chat_summary_settings(chat_id, "enabled", True)
             bot.answer_callback_query(call.id, "✅ Авто-сводка включена!")
-            # Перепланируем сводку после включения
-            schedule_summary_for_chat(chat_id)
         elif action == "disable":
             update_chat_summary_settings(chat_id, "enabled", False)
             bot.answer_callback_query(call.id, "❌ Авто-сводка выключена!")
-            # Отменяем таймер сводки
-            cancel_summary_timer(chat_id)
         elif action == "ai":
             update_chat_summary_settings(chat_id, "mode", "ai")
             bot.answer_callback_query(call.id, "🤖 Режим: ИИ")
-            # Перепланируем сводку
-            schedule_summary_for_chat(chat_id)
         elif action == "normal":
             update_chat_summary_settings(chat_id, "mode", "normal")
             bot.answer_callback_query(call.id, "📊 Режим: обычный")
-            schedule_summary_for_chat(chat_id)
         elif action == "troll":
             update_chat_summary_settings(chat_id, "ai_style", "troll")
             bot.answer_callback_query(call.id, "🎭 Стиль: Тролль")
@@ -2056,14 +2109,17 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
+    
     print("🔄 Установка вебхука...")
     requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
     r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={webhook_url}")
     print(f"Результат: {r.json()}")
     
+    print("🔄 Перезапуск планировщиков...")
     schedule_daily_quotes()
     load_summary_settings()
     load_daily_quotes()
     start_all_reminders()
     schedule_all_chat_summaries()
+    
     app.run(host="0.0.0.0", port=port)
