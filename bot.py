@@ -12,9 +12,6 @@ from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pytz
 import user_cache
-from io import BytesIO
-from PIL import Image, ImageDraw, ImageFont, ImageOps
-import textwrap
 
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -34,26 +31,6 @@ print(f"👑 ADMIN: {ADMIN_ID}")
 # === ЗАГРУЗКА КЭША ПОЛЬЗОВАТЕЛЕЙ ===
 chat_users = user_cache.load_users()
 print(f"👥 Загружено {len(chat_users)} пользователей")
-
-# === НАСТРОЙКИ ДЛЯ КАРТИНОК С ЦИТАТАМИ ===
-IMAGE_WIDTH = 1080
-IMAGE_HEIGHT = 1080
-BACKGROUND_COLOR = (0, 0, 0)
-TEXT_COLOR = (255, 255, 255)
-FONT_SIZE = 48
-TEXT_PADDING = 50
-
-FONT_PATHS = [
-    "DejaVuSans.ttf",
-    "arial.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/System/Library/Fonts/Arial.ttf"
-]
-FONT_PATH = None
-for path in FONT_PATHS:
-    if os.path.exists(path):
-        FONT_PATH = path
-        break
 
 # === ДЛЯ ЦИТАТ ===
 QUOTES_CACHE_FILE = "daily_quotes.json"
@@ -98,51 +75,6 @@ def update_chat_quotes_settings(chat_id, key, value):
 # === Глобальные переменные для таймеров ===
 quote_timers = {}
 summary_timers = {}
-
-def create_quote_image(quote_text, author_name):
-    global FONT_PATH
-    try:
-        image = Image.new('RGB', (IMAGE_WIDTH, IMAGE_HEIGHT), color=BACKGROUND_COLOR)
-        draw = ImageDraw.Draw(image)
-        
-        if FONT_PATH and os.path.exists(FONT_PATH):
-            font = ImageFont.truetype(FONT_PATH, size=FONT_SIZE)
-        else:
-            font = ImageFont.load_default()
-        
-        full_text = f"« {quote_text} »\n\n— {author_name}"
-        chars_per_line = (IMAGE_WIDTH - 2 * TEXT_PADDING) // (FONT_SIZE // 2)
-        wrapped_lines = textwrap.wrap(full_text, width=chars_per_line)
-        
-        text_height = 0
-        for line in wrapped_lines:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            text_height += bbox[3] - bbox[1]
-        
-        y = (IMAGE_HEIGHT - text_height) // 2
-        
-        for line in wrapped_lines:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            line_width = bbox[2] - bbox[0]
-            x = (IMAGE_WIDTH - line_width) // 2
-            draw.text((x, y), line, font=font, fill=TEXT_COLOR)
-            y += bbox[3] - bbox[1]
-        
-        draw.rectangle([5, 5, IMAGE_WIDTH-5, IMAGE_HEIGHT-5], outline=(255, 255, 255), width=3)
-        return image
-    except Exception as e:
-        print(f"❌ Ошибка создания картинки: {e}")
-        return None
-
-def send_quote_as_image(chat_id, quote_text, author_name, thread_id=None):
-    image = create_quote_image(quote_text, author_name)
-    if image:
-        with BytesIO() as bio:
-            image.save(bio, format='JPEG')
-            bio.seek(0)
-            bot.send_photo(chat_id, bio, caption=f"📜 *Цитата дня*", parse_mode="Markdown", message_thread_id=thread_id)
-        return True
-    return False
 
 def load_daily_quotes():
     global daily_messages
@@ -279,17 +211,10 @@ def send_quote_to_chat(chat_id, thread_id=0):
     author_name = quote.get('author_name', 'Участник')
     quote_text = quote.get('text', '')
     
-    send_as_image = random.random() < 0.3 and FONT_PATH
+    text = f"📜 *Цитата дня*\n\n« {quote_text} »\n\n— {author_name}"
     
     try:
-        if send_as_image:
-            success = send_quote_as_image(chat_id, quote_text, author_name, thread_id if thread_id else None)
-            if not success:
-                text = f"📜 *Цитата дня*\n\n« {quote_text} »\n\n— {author_name}"
-                bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
-        else:
-            text = f"📜 *Цитата дня*\n\n« {quote_text} »\n\n— {author_name}"
-            bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
+        bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
         print(f"✅ Цитата отправлена в чат {chat_id}")
     except Exception as e:
         print(f"❌ Ошибка: {e}")
@@ -562,6 +487,15 @@ def schedule_all_chat_summaries():
         thread_id = int(parts[1]) if len(parts) > 1 else 0
         schedule_summary_for_chat(chat_id, thread_id)
 
+# ========== ФУНКЦИЯ ПРОВЕРКИ ПРАВ АДМИНА ==========
+
+def is_chat_admin(chat_id, user_id):
+    try:
+        chat_member = bot.get_chat_member(chat_id, user_id)
+        return chat_member.status in ['administrator', 'creator']
+    except:
+        return False
+
 # ========== КОМАНДЫ ==========
 
 @bot.message_handler(commands=['start'])
@@ -576,7 +510,7 @@ def start_command(message):
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
-    text = "✅ *Бот работает!*\n\n🤖 *ИИ:* `/ai вопрос`\n\n⏰ *Напоминания:* `/remind 15:30 текст`\n📜 *Цитаты:* `/quote`\n📋 *Сводка:* `/summary`\n\n📜 *Управление цитатами:*\n• `/quotes_on` — включить\n• `/quotes_off` — выключить\n• `/quotes_interval 2` — часы\n\n⚙️ *Меню:* `/start`"
+    text = "✅ *Бот работает!*\n\n🤖 *ИИ:* `/ai вопрос`\n\n⏰ *Напоминания:* `/remind 15:30 текст`\n📜 *Цитаты:* `/quote`\n📋 *Сводка:* `/summary`\n\n📜 *Управление цитатами:*\n• `/quotes_on` — включить\n• `/quotes_off` — выключить\n\n⚙️ *Меню:* `/start`"
     if message.from_user.id == ADMIN_ID:
         text += "\n\n👑 *Админ-команды:* `/users` `/backup` `/restore`"
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
@@ -602,27 +536,11 @@ def quote_command(message):
     if quote_text:
         bot.reply_to(message, quote_text, parse_mode="Markdown")
 
-@bot.message_handler(commands=['quote_img'])
-def quote_image_command(message):
-    thread_id = message.message_thread_id or 0
-    unique_id = f"{message.chat.id}_{thread_id}"
-    chat_messages = [m for m in daily_messages if m.get('unique_id') == unique_id]
-    if len(chat_messages) < 2:
-        bot.reply_to(message, "📭 Нет сообщений для цитаты")
-        return
-    quote = random.choice(chat_messages)
-    msg = bot.reply_to(message, "🖼️ Создаю картинку...")
-    success = send_quote_as_image(message.chat.id, quote['text'], quote.get('author_name', 'Участник'), thread_id if thread_id else None)
-    if success:
-        bot.delete_message(message.chat.id, msg.message_id)
-    else:
-        bot.edit_message_text("❌ Ошибка создания картинки", message.chat.id, msg.message_id)
-
 @bot.message_handler(commands=['quotes_on'])
 def quotes_on_command(message):
     chat_id = message.chat.id
     if not is_chat_admin(chat_id, message.from_user.id):
-        bot.reply_to(message, "❌ Только админы!")
+        bot.reply_to(message, "❌ Только админы могут включать цитаты!")
         return
     update_chat_quotes_settings(chat_id, "enabled", True)
     thread_id = 0
@@ -638,41 +556,11 @@ def quotes_on_command(message):
 def quotes_off_command(message):
     chat_id = message.chat.id
     if not is_chat_admin(chat_id, message.from_user.id):
-        bot.reply_to(message, "❌ Только админы!")
+        bot.reply_to(message, "❌ Только админы могут выключать цитаты!")
         return
     update_chat_quotes_settings(chat_id, "enabled", False)
     cancel_quote_timer(chat_id)
     bot.reply_to(message, "❌ Цитаты выключены!")
-
-@bot.message_handler(commands=['quotes_interval'])
-def quotes_interval_command(message):
-    chat_id = message.chat.id
-    if not is_chat_admin(chat_id, message.from_user.id):
-        bot.reply_to(message, "❌ Только админы!")
-        return
-    parts = message.text.split()
-    if len(parts) < 2:
-        bot.reply_to(message, "ℹ️ /quotes_interval 2")
-        return
-    try:
-        interval = int(parts[1])
-        if interval < 1 or interval > 6:
-            bot.reply_to(message, "❌ От 1 до 6 часов")
-            return
-    except:
-        bot.reply_to(message, "❌ Неверный формат")
-        return
-    update_chat_quotes_settings(chat_id, "interval_hours", interval)
-    if get_chat_quotes_settings(chat_id).get("enabled", True):
-        cancel_quote_timer(chat_id)
-        thread_id = 0
-        for unique_id in active_chats:
-            parts = unique_id.split("_")
-            if int(parts[0]) == chat_id:
-                thread_id = int(parts[1]) if len(parts) > 1 else 0
-                break
-        schedule_quote_for_chat(chat_id, thread_id)
-    bot.reply_to(message, f"✅ Интервал {interval} часа")
 
 @bot.message_handler(commands=['summary'])
 def summary_command(message):
@@ -681,26 +569,35 @@ def summary_command(message):
         subcmd = parts[1].lower()
         if subcmd == "on":
             if not is_chat_admin(message.chat.id, message.from_user.id):
-                bot.reply_to(message, "❌ Только админы!")
+                bot.reply_to(message, "❌ Только админы могут включать сводку!")
                 return
             update_chat_summary_settings(message.chat.id, "enabled", True)
             bot.reply_to(message, "✅ Сводка включена!")
             return
         elif subcmd == "off":
             if not is_chat_admin(message.chat.id, message.from_user.id):
-                bot.reply_to(message, "❌ Только админы!")
+                bot.reply_to(message, "❌ Только админы могут выключать сводку!")
                 return
             update_chat_summary_settings(message.chat.id, "enabled", False)
             bot.reply_to(message, "❌ Сводка выключена!")
             return
         elif subcmd in ["тролль", "troll"]:
+            if not is_chat_admin(message.chat.id, message.from_user.id):
+                bot.reply_to(message, "❌ Только админы могут смотреть сводку!")
+                return
             summary = generate_ai_summary(message.chat.id, "troll")
             bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений")
             return
         elif subcmd in ["обычный", "normal"]:
+            if not is_chat_admin(message.chat.id, message.from_user.id):
+                bot.reply_to(message, "❌ Только админы могут смотреть сводку!")
+                return
             summary = generate_regular_summary(message.chat.id)
             bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений")
             return
+    if not is_chat_admin(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "❌ Только админы могут смотреть сводку!")
+        return
     settings = get_chat_summary_settings(message.chat.id)
     if settings.get("mode") == "ai":
         summary = generate_ai_summary(message.chat.id, settings.get("ai_style", "troll"))
@@ -817,13 +714,6 @@ def delete_reminder(message):
         delete_after_delay(chat_id, msg.message_id, 10)
 
 # ========== АДМИН-КОМАНДЫ ==========
-
-def is_chat_admin(chat_id, user_id):
-    try:
-        chat_member = bot.get_chat_member(chat_id, user_id)
-        return chat_member.status in ['administrator', 'creator']
-    except:
-        return False
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -970,6 +860,64 @@ def handle_restore_file(message):
 
 # ========== РП ДЕЙСТВИЯ ==========
 
+def decline_name(name, preposition=""):
+    preposition = preposition.lower()
+    if name in ["кому-то", "пользователь", "участник", "кто-то", "кого-то"]:
+        return name
+    parts = name.split()
+    declined_parts = []
+    for part in parts:
+        declined_parts.append(decline_single_name(part, preposition))
+    return " ".join(declined_parts)
+
+def decline_single_name(name, preposition=""):
+    name_lower = name.lower()
+    
+    if preposition in ["у", "без", "до", "из", "от", "para"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'ы'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'и'
+        else:
+            return name + 'а'
+    
+    if preposition in ["с", "над", "под", "перед"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'ой'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'ей'
+        elif name_lower.endswith('й'):
+            return name[:-1] + 'ем'
+        else:
+            return name + 'ом'
+    
+    if preposition in ["о", "об", "при"]:
+        if name_lower.endswith('а'):
+            return name[:-1] + 'е'
+        elif name_lower.endswith('я'):
+            return name[:-1] + 'е'
+        else:
+            return name + 'е'
+    
+    if name_lower.endswith('а'):
+        return name[:-1] + 'е'
+    elif name_lower.endswith('я'):
+        return name[:-1] + 'е'
+    elif name_lower.endswith('й'):
+        return name[:-1] + 'ю'
+    elif name_lower.endswith('ь'):
+        return name[:-1] + 'ю'
+    else:
+        return name + 'у'
+
+def get_gender(user):
+    name = (user.first_name or "").lower()
+    female_endings = ('а', 'я', 'ия', 'ья')
+    male_exceptions = ('никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья')
+    if name.endswith(female_endings) and name not in male_exceptions:
+        return 'female'
+    return 'male'
+
 def handle_actions(message):
     if not message.reply_to_message:
         full_text = message.text.strip().lower()
@@ -978,8 +926,6 @@ def handle_actions(message):
             "кончить на всех": ("💦", "кончил на всех", "кончила на всех"),
             "сквиртануть на всех": ("💦💦", "сквиртанул на всех", "сквиртанула на всех"),
             "кончить всем в лицо": ("💦", "кончил всем в лицо", "кончила всем в лицо"),
-            "кончить": ("💦", "кончил", "кончила"),
-            "сквиртануть": ("💦💦", "сквиртанул", "сквиртанула"),
         }
         
         if full_text in global_actions:
@@ -1140,66 +1086,6 @@ def handle_actions(message):
         print(f"❌ Ошибка: {e}")
         return False
 
-# ========== ФУНКЦИИ ДЛЯ СКЛОНЕНИЯ ==========
-
-def decline_name(name, preposition=""):
-    preposition = preposition.lower()
-    if name in ["кому-то", "пользователь", "участник", "кто-то", "кого-то"]:
-        return name
-    parts = name.split()
-    declined_parts = []
-    for part in parts:
-        declined_parts.append(decline_single_name(part, preposition))
-    return " ".join(declined_parts)
-
-def decline_single_name(name, preposition=""):
-    name_lower = name.lower()
-    
-    if preposition in ["у", "без", "до", "из", "от", "para"]:
-        if name_lower.endswith('а'):
-            return name[:-1] + 'ы'
-        elif name_lower.endswith('я'):
-            return name[:-1] + 'и'
-        else:
-            return name + 'а'
-    
-    if preposition in ["с", "над", "под", "перед"]:
-        if name_lower.endswith('а'):
-            return name[:-1] + 'ой'
-        elif name_lower.endswith('я'):
-            return name[:-1] + 'ей'
-        elif name_lower.endswith('й'):
-            return name[:-1] + 'ем'
-        else:
-            return name + 'ом'
-    
-    if preposition in ["о", "об", "при"]:
-        if name_lower.endswith('а'):
-            return name[:-1] + 'е'
-        elif name_lower.endswith('я'):
-            return name[:-1] + 'е'
-        else:
-            return name + 'е'
-    
-    if name_lower.endswith('а'):
-        return name[:-1] + 'е'
-    elif name_lower.endswith('я'):
-        return name[:-1] + 'е'
-    elif name_lower.endswith('й'):
-        return name[:-1] + 'ю'
-    elif name_lower.endswith('ь'):
-        return name[:-1] + 'ю'
-    else:
-        return name + 'у'
-
-def get_gender(user):
-    name = (user.first_name or "").lower()
-    female_endings = ('а', 'я', 'ия', 'ья')
-    male_exceptions = ('никита', 'дима', 'влад', 'лева', 'саша', 'женя', 'валя', 'илья')
-    if name.endswith(female_endings) and name not in male_exceptions:
-        return 'female'
-    return 'male'
-
 # ========== ОСНОВНОЙ ОБРАБОТЧИК ==========
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
@@ -1261,7 +1147,8 @@ def send_main_menu(user_id):
     )
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
-def get_user_chats_list(user_id):
+def get_user_chats_list(user_id, check_admin=False):
+    """Возвращает чаты пользователя. Если check_admin=True - только чаты где он админ"""
     user_chats = []
     seen = set()
     for unique_id in active_chats:
@@ -1271,14 +1158,19 @@ def get_user_chats_list(user_id):
             continue
         try:
             chat = bot.get_chat(chat_id)
-            try:
+            if check_admin:
                 member = bot.get_chat_member(chat_id, user_id)
-                if member.status in ['member', 'administrator', 'creator', 'restricted']:
-                    seen.add(chat_id)
-                    user_chats.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
-            except:
-                seen.add(chat_id)
-                user_chats.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
+                if member.status not in ['administrator', 'creator']:
+                    continue
+            else:
+                try:
+                    member = bot.get_chat_member(chat_id, user_id)
+                    if member.status not in ['member', 'administrator', 'creator', 'restricted']:
+                        continue
+                except:
+                    pass
+            seen.add(chat_id)
+            user_chats.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
         except:
             continue
     return user_chats
@@ -1293,22 +1185,22 @@ def handle_callback(call):
     if data == "menu_summary":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        chats = get_user_chats_list(user_id)
+        chats = get_user_chats_list(user_id, check_admin=True)
         if not chats:
-            bot.send_message(user_id, "📭 Нет чатов. Добавьте бота и сделайте админом.")
+            bot.send_message(user_id, "📭 Нет чатов, где вы администратор. Добавьте бота и сделайте админом.")
             return
         markup = InlineKeyboardMarkup()
         for chat in chats:
             markup.add(InlineKeyboardButton(f"📊 {chat['title'][:35]}", callback_data=f"summary_{chat['id']}"))
         markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
-        bot.send_message(user_id, "📊 *Выберите чат*", parse_mode="Markdown", reply_markup=markup)
+        bot.send_message(user_id, "📊 *Выберите чат* (только где вы админ)", parse_mode="Markdown", reply_markup=markup)
         
     elif data == "menu_reminders":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        chats = get_user_chats_list(user_id)
+        chats = get_user_chats_list(user_id, check_admin=False)
         if not chats:
-            bot.send_message(user_id, "📭 Нет чатов.")
+            bot.send_message(user_id, "📭 Нет доступных чатов.")
             return
         markup = InlineKeyboardMarkup()
         for chat in chats:
@@ -1320,9 +1212,9 @@ def handle_callback(call):
     elif data == "menu_quotes":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        chats = get_user_chats_list(user_id)
+        chats = get_user_chats_list(user_id, check_admin=True)
         if not chats:
-            bot.send_message(user_id, "📭 Нет чатов.")
+            bot.send_message(user_id, "📭 Нет чатов, где вы администратор.")
             return
         markup = InlineKeyboardMarkup()
         for chat in chats:
@@ -1330,7 +1222,7 @@ def handle_callback(call):
             status = "✅" if settings.get("enabled", True) else "❌"
             markup.add(InlineKeyboardButton(f"📜 {status} {chat['title'][:33]}", callback_data=f"quotes_{chat['id']}"))
         markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
-        bot.send_message(user_id, "📜 *Выберите чат*", parse_mode="Markdown", reply_markup=markup)
+        bot.send_message(user_id, "📜 *Выберите чат* (только где вы админ)", parse_mode="Markdown", reply_markup=markup)
         
     elif data == "menu_add_bot":
         bot.answer_callback_query(call.id)
@@ -1352,6 +1244,9 @@ def handle_callback(call):
         
     elif data.startswith("summary_"):
         chat_id = int(data.split("_")[1])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Вы не админ этого чата!", show_alert=True)
+            return
         settings = get_chat_summary_settings(chat_id)
         status = "✅ Вкл" if settings.get("enabled") else "❌ Выкл"
         mode = "🤖 ИИ" if settings["mode"] == "ai" else "📊 Обычный"
@@ -1396,6 +1291,9 @@ def handle_callback(call):
         
     elif data.startswith("quotes_"):
         chat_id = int(data.split("_")[1])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Вы не админ этого чата!", show_alert=True)
+            return
         settings = get_chat_quotes_settings(chat_id)
         try:
             chat = bot.get_chat(chat_id)
@@ -1418,8 +1316,10 @@ def handle_callback(call):
         
     elif data.startswith("quote_enable_"):
         chat_id = int(data.split("_")[2])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
         update_chat_quotes_settings(chat_id, "enabled", True)
-        reschedule = True
         for unique_id in active_chats:
             parts = unique_id.split("_")
             if int(parts[0]) == chat_id:
@@ -1430,6 +1330,9 @@ def handle_callback(call):
         
     elif data.startswith("quote_disable_"):
         chat_id = int(data.split("_")[2])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
         update_chat_quotes_settings(chat_id, "enabled", False)
         cancel_quote_timer(chat_id)
         bot.answer_callback_query(call.id, "❌ Цитаты выключены!")
@@ -1438,6 +1341,9 @@ def handle_callback(call):
         parts = data.split("_")
         interval = int(parts[2])
         chat_id = int(parts[3])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
         update_chat_quotes_settings(chat_id, "interval_hours", interval)
         if get_chat_quotes_settings(chat_id).get("enabled", True):
             cancel_quote_timer(chat_id)
@@ -1451,26 +1357,41 @@ def handle_callback(call):
         
     elif data.startswith("summ_enable_"):
         chat_id = int(data.split("_")[2])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
         update_chat_summary_settings(chat_id, "enabled", True)
         bot.answer_callback_query(call.id, "✅ Сводка включена!")
         
     elif data.startswith("summ_disable_"):
         chat_id = int(data.split("_")[2])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
         update_chat_summary_settings(chat_id, "enabled", False)
         bot.answer_callback_query(call.id, "❌ Сводка выключена!")
         
     elif data.startswith("summ_ai_"):
         chat_id = int(data.split("_")[2])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
         update_chat_summary_settings(chat_id, "mode", "ai")
         bot.answer_callback_query(call.id, "🤖 Режим: ИИ")
         
     elif data.startswith("summ_normal_"):
         chat_id = int(data.split("_")[2])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
         update_chat_summary_settings(chat_id, "mode", "normal")
         bot.answer_callback_query(call.id, "📊 Режим: обычный")
         
     elif data.startswith("summ_show_"):
         chat_id = int(data.split("_")[2])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
         bot.answer_callback_query(call.id, "📋 Генерирую...")
         settings = get_chat_summary_settings(chat_id)
         if settings.get("mode") == "ai":
@@ -1517,6 +1438,121 @@ def handle_callback(call):
                 save_reminders()
                 bot.answer_callback_query(call.id, "✅ Удалено!")
                 break
+
+# ========== ОТСЛЕЖИВАНИЕ ДОБАВЛЕНИЯ БОТА ==========
+
+@bot.my_chat_member_handler(func=lambda message: True)
+def on_bot_added_to_chat(message):
+    try:
+        chat = message.chat
+        chat_id = chat.id
+        chat_title = chat.title or f"Чат {chat_id}"
+        inviter = message.from_user
+        inviter_id = inviter.id
+        
+        unique_id = f"{chat_id}_0"
+        if unique_id not in active_chats:
+            active_chats.add(unique_id)
+        
+        if str(inviter_id) not in chat_users:
+            chat_users[str(inviter_id)] = {
+                "id": inviter_id,
+                "username": inviter.username,
+                "first_name": inviter.first_name,
+                "last_name": inviter.last_name,
+                "full_name": f"{inviter.first_name or ''} {inviter.last_name or ''}".strip(),
+                "last_seen": datetime.now(MOSCOW_TZ).isoformat()
+            }
+            user_cache.save_users(chat_users)
+        
+        try:
+            bot.send_message(inviter_id, f"✅ Бот добавлен в чат *{chat_title}*!\n\n⚙️ Меню: `/start`", parse_mode="Markdown")
+        except:
+            pass
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+
+# ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
+@bot.inline_handler(func=lambda query: True)
+def inline_query(query):
+    try:
+        text = query.query.strip()
+        if not text or len(text.split(maxsplit=1)) < 2:
+            return
+        target_raw, content = text.split(maxsplit=1)
+        target_raw = target_raw.lstrip("@")
+        target_id = None
+        target_name = target_raw
+        for uid, user in chat_users.items():
+            username = user.get('username')
+            if username and username.lower() == target_raw.lower():
+                target_id = uid
+                target_name = user.get('first_name', target_raw)
+                break
+        if not target_id and target_raw.isdigit():
+            target_id = target_raw
+        if not target_id:
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("❓ Как узнать ID", url="https://t.me/userinfobot"))
+            result = types.InlineQueryResultArticle(
+                id="error",
+                title="❌ Пользователь не найден",
+                description=f"@{target_raw}",
+                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден"),
+                reply_markup=markup
+            )
+            bot.answer_inline_query(query.id, [result], cache_time=0)
+            return
+        msg_id = f"sec_{int(time.time())}_{query.from_user.id}_{random.randint(1000, 9999)}"
+        secret_messages[msg_id] = {
+            "target_id": target_id,
+            "target_name": target_name,
+            "content": content,
+            "sender_name": query.from_user.first_name,
+            "sender_id": query.from_user.id,
+            "expires": time.time() + 3600
+        }
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"secret_read_{msg_id}"))
+        result = types.InlineQueryResultArticle(
+            id=msg_id,
+            title=f"📨 Для {target_name}",
+            description=content[:50],
+            input_message_content=types.InputTextMessageContent(
+                f"🔐 *Скрытое сообщение*\nОт: {query.from_user.first_name}\nКому: {target_name}",
+                parse_mode="Markdown"
+            ),
+            reply_markup=markup
+        )
+        bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
+    except Exception as e:
+        print(f"Инлайн ошибка: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("secret_read_"))
+def handle_secret_read(call):
+    msg_id = call.data.replace("secret_read_", "")
+    if msg_id not in secret_messages:
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
+        return
+    data = secret_messages[msg_id]
+    if str(call.from_user.id) != str(data["target_id"]):
+        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
+        return
+    if time.time() > data["expires"]:
+        bot.answer_callback_query(call.id, "❌ Истекло", show_alert=True)
+        del secret_messages[msg_id]
+        return
+    bot.answer_callback_query(call.id, f"📩 От {data['sender_name']}:\n\n{data['content']}", show_alert=True)
+
+def clean_old_secrets():
+    while True:
+        time.sleep(3600)
+        now = time.time()
+        to_delete = [mid for mid, d in secret_messages.items() if d.get("expires", 0) < now]
+        for mid in to_delete:
+            del secret_messages[mid]
+
+threading.Thread(target=clean_old_secrets, daemon=True).start()
 
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
