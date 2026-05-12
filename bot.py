@@ -465,19 +465,64 @@ def generate_ai_summary(chat_id, style="troll"):
     return None
 
 def send_scheduled_summary(chat_id, thread_id=0):
+    """Отправляет запланированную сводку с кнопкой "Показать полностью" для длинных сообщений"""
     settings = get_chat_summary_settings(chat_id)
     if not settings.get("enabled", True):
         return
+    
     if settings.get("mode") == "ai":
         summary = generate_ai_summary(chat_id, settings.get("ai_style", "troll"))
     else:
         summary = generate_regular_summary(chat_id)
-    if summary:
+    
+    if not summary:
+        schedule_summary_for_chat(chat_id, thread_id)
+        return
+    
+    # Определяем, нужно ли скрыть часть текста
+    MAX_PREVIEW_LENGTH = 500
+    is_long = len(summary) > MAX_PREVIEW_LENGTH
+    
+    if is_long:
+        # Обрезаем текст до 500 символов
+        preview = summary[:MAX_PREVIEW_LENGTH]
+        # Ищем последний полный абзац или предложение
+        last_period = preview.rfind('.')
+        last_newline = preview.rfind('\n')
+        cut_pos = max(last_period, last_newline)
+        if cut_pos > 300:
+            preview = preview[:cut_pos + 1]
+        else:
+            preview = preview[:MAX_PREVIEW_LENGTH]
+        
+        preview += "\n\n..."
+        
+        # Создаём кнопку "Показать полностью"
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("📋 Показать полностью", callback_data=f"expand_summary_{chat_id}"))
+        
         try:
-            bot.send_message(chat_id, summary, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
-            print(f"📋 Отправлена сводка в чат {chat_id}")
+            bot.send_message(chat_id, preview, parse_mode="Markdown", 
+                            message_thread_id=thread_id if thread_id else None,
+                            reply_markup=markup)
+            print(f"📋 Отправлена сокращённая сводка в чат {chat_id} (скрыта часть)")
+            # Сохраняем полную сводку во временное хранилище
+            if not hasattr(send_scheduled_summary, 'full_summaries'):
+                send_scheduled_summary.full_summaries = {}
+            send_scheduled_summary.full_summaries[chat_id] = summary
         except Exception as e:
             print(f"❌ Ошибка: {e}")
+            # Если не удалось отправить сокращённую, отправляем полную
+            bot.send_message(chat_id, summary, parse_mode="Markdown", 
+                            message_thread_id=thread_id if thread_id else None)
+    else:
+        try:
+            bot.send_message(chat_id, summary, parse_mode="Markdown", 
+                            message_thread_id=thread_id if thread_id else None)
+            print(f"📋 Отправлена полная сводка в чат {chat_id}")
+        except Exception as e:
+            print(f"❌ Ошибка: {e}")
+    
     schedule_summary_for_chat(chat_id, thread_id)
 
 def schedule_all_chat_summaries():
@@ -1181,6 +1226,31 @@ def get_user_chats_list(user_id, check_admin=False):
 def handle_callback(call):
     user_id = call.from_user.id
     data = call.data
+    
+    # Обработчик для кнопки "Показать полностью"
+    if data.startswith("expand_summary_"):
+        chat_id = int(data.split("_")[2])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Только админы могут смотреть сводку!", show_alert=True)
+            return
+        
+        # Получаем полную сводку из временного хранилища или генерируем заново
+        if hasattr(send_scheduled_summary, 'full_summaries') and chat_id in send_scheduled_summary.full_summaries:
+            full_summary = send_scheduled_summary.full_summaries[chat_id]
+            bot.answer_callback_query(call.id, "📋 Полная сводка:")
+            bot.send_message(call.message.chat.id, full_summary, parse_mode="Markdown")
+        else:
+            settings = get_chat_summary_settings(chat_id)
+            if settings.get("mode") == "ai":
+                full_summary = generate_ai_summary(chat_id, settings.get("ai_style", "troll"))
+            else:
+                full_summary = generate_regular_summary(chat_id)
+            if full_summary:
+                bot.answer_callback_query(call.id, "📋 Полная сводка:")
+                bot.send_message(call.message.chat.id, full_summary, parse_mode="Markdown")
+            else:
+                bot.answer_callback_query(call.id, "❌ Недостаточно сообщений")
+        return
     
     if data == "menu_summary":
         bot.answer_callback_query(call.id)
