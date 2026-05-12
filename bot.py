@@ -38,6 +38,9 @@ daily_messages = []
 daily_quote_times = [9, 12, 15, 18, 21]
 active_chats = set()
 
+# === ХРАНИЛИЩЕ ДЛЯ ПЛАНИРОВЩИКОВ ===
+scheduled_tasks = []
+
 def load_daily_quotes():
     global daily_messages
     if os.path.exists(QUOTES_CACHE_FILE):
@@ -109,12 +112,6 @@ def add_chat_to_active(message):
     if unique_id not in active_chats:
         active_chats.add(unique_id)
 
-def add_chat_from_reminder(chat_id, user_id):
-    unique_id = f"{chat_id}_0"
-    if unique_id not in active_chats:
-        active_chats.add(unique_id)
-        print(f"📌 Добавлен чат {chat_id} в active_chats (из напоминания)")
-
 def get_chat_messages_count(chat_id, thread_id=0):
     unique_id = f"{chat_id}_{thread_id}"
     return len([m for m in daily_messages if m.get('unique_id') == unique_id])
@@ -139,23 +136,6 @@ def clean_inactive_chats():
     for item in to_remove:
         active_chats.discard(item)
 
-def schedule_daily_quotes():
-    now_moscow = datetime.now(MOSCOW_TZ)
-    for hour in daily_quote_times:
-        target = now_moscow.replace(hour=hour, minute=0, second=0, microsecond=0)
-        if target <= now_moscow:
-            target += timedelta(days=1)
-        delay = (target - now_moscow).total_seconds()
-        timer = threading.Timer(delay, send_random_quote_to_all_chats)
-        timer.daemon = True
-        timer.start()
-        print(f"📜 Цитата на {target.strftime('%H:%M')}")
-    midnight = now_moscow.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    midnight_delay = (midnight - now_moscow).total_seconds()
-    midnight_timer = threading.Timer(midnight_delay, clear_daily_quotes)
-    midnight_timer.daemon = True
-    midnight_timer.start()
-
 def send_random_quote_to_all_chats():
     clean_inactive_chats()
     sent_chats = set()
@@ -175,6 +155,23 @@ def send_random_quote_to_all_chats():
         except Exception as e:
             print(f"❌ Ошибка: {e}")
 
+def schedule_daily_quotes():
+    now_moscow = datetime.now(MOSCOW_TZ)
+    for hour in daily_quote_times:
+        target = now_moscow.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if target <= now_moscow:
+            target += timedelta(days=1)
+        delay = (target - now_moscow).total_seconds()
+        timer = threading.Timer(delay, send_random_quote_to_all_chats)
+        timer.daemon = True
+        timer.start()
+        print(f"📜 Цитата на {target.strftime('%H:%M')}")
+    midnight = now_moscow.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    midnight_delay = (midnight - now_moscow).total_seconds()
+    midnight_timer = threading.Timer(midnight_delay, clear_daily_quotes)
+    midnight_timer.daemon = True
+    midnight_timer.start()
+
 def delete_after_delay(chat_id, message_id, delay=10):
     threading.Timer(delay, lambda: bot.delete_message(chat_id, message_id)).start()
 
@@ -182,10 +179,12 @@ def delete_after_delay(chat_id, message_id, delay=10):
 REMINDERS_FILE = "reminders.json"
 
 def load_reminders():
+    global reminders, reminder_counter
     if os.path.exists(REMINDERS_FILE):
         try:
             with open(REMINDERS_FILE, 'r', encoding='utf-8') as f:
                 reminders = json.load(f)
+                reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
                 print(f"⏰ Загружено {len(reminders)} напоминаний")
                 return reminders
         except:
@@ -212,7 +211,7 @@ reminder_counter = max([r.get("id", 0) for r in reminders]) if reminders else 0
 def send_reminder(reminder):
     try:
         bot.send_message(reminder["chat_id"], f"⏰ НАПОМИНАНИЕ!\n\n{reminder['text']}", message_thread_id=reminder.get("thread_id"))
-        print(f"✅ Напоминание {reminder['id']} отправлено")
+        print(f"✅ Напоминание {reminder['id']} отправлено в чат {reminder['chat_id']}")
     except Exception as e:
         print(f"❌ Ошибка отправки: {e}")
 
@@ -226,7 +225,7 @@ def schedule_reminder(reminder):
     timer.daemon = True
     timer.start()
     reminder["_timer"] = timer
-    print(f"⏰ Напоминание {reminder['id']} на {target.strftime('%Y-%m-%d %H:%M')}")
+    print(f"⏰ Напоминание {reminder['id']} на {target.strftime('%Y-%m-%d %H:%M')} в чат {reminder['chat_id']}")
 
 def execute_reminder(reminder):
     send_reminder(reminder)
@@ -236,6 +235,7 @@ def execute_reminder(reminder):
 def start_all_reminders():
     for r in reminders:
         schedule_reminder(r)
+        print(f"🔄 Перезапущено напоминание {r['id']} в чат {r['chat_id']}")
 
 # === ИИ ===
 ai_cache = {}
@@ -318,6 +318,7 @@ def set_reaction(chat_id, message_id):
 
 summary_settings = {}
 SUMMARY_FILE = "summary_settings.json"
+summary_timers = {}  # Хранилище таймеров для сводок по чатам
 
 def load_summary_settings():
     global summary_settings
@@ -356,8 +357,63 @@ def update_chat_summary_settings(chat_id, key, value):
         summary_settings[chat_id_str] = {"enabled": True, "time": "22:00", "mode": "normal", "ai_style": "troll", "regular_length": "full"}
     summary_settings[chat_id_str][key] = value
     save_summary_settings()
+    
+    # Обновляем планировщик для этого чата
+    reschedule_summary_for_chat(chat_id)
+
+def cancel_summary_timer(chat_id):
+    """Отменяет существующий таймер сводки для чата"""
+    if chat_id in summary_timers:
+        try:
+            summary_timers[chat_id].cancel()
+            print(f"⏹️ Отменён таймер сводки для чата {chat_id}")
+        except:
+            pass
+        del summary_timers[chat_id]
+
+def schedule_summary_for_chat(chat_id, thread_id=0):
+    """Планирует сводку для конкретного чата"""
+    settings = get_chat_summary_settings(chat_id)
+    
+    if not settings.get("enabled", True):
+        print(f"⏩ Сводка для чата {chat_id} отключена, не планируем")
+        return
+    
+    now_moscow = datetime.now(MOSCOW_TZ)
+    time_str = settings["time"]
+    
+    try:
+        target_hour, target_minute = map(int, time_str.split(":"))
+        target = now_moscow.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        if target <= now_moscow:
+            target += timedelta(days=1)
+        delay = (target - now_moscow).total_seconds()
+        
+        # Отменяем старый таймер
+        cancel_summary_timer(chat_id)
+        
+        # Создаём новый таймер
+        timer = threading.Timer(delay, lambda: send_scheduled_summary(chat_id, thread_id))
+        timer.daemon = True
+        timer.start()
+        summary_timers[chat_id] = timer
+        print(f"📋 Сводка для чата {chat_id} запланирована на {target.strftime('%Y-%m-%d %H:%M')} (режим: {settings['mode']})")
+    except Exception as e:
+        print(f"❌ Ошибка планирования сводки для чата {chat_id}: {e}")
+
+def reschedule_summary_for_chat(chat_id):
+    """Переназначает сводку для чата (при изменении настроек)"""
+    # Находим thread_id из active_chats
+    thread_id = 0
+    for unique_id in active_chats:
+        parts = unique_id.split("_")
+        if int(parts[0]) == chat_id:
+            thread_id = int(parts[1]) if len(parts) > 1 else 0
+            break
+    schedule_summary_for_chat(chat_id, thread_id)
 
 def generate_regular_summary(chat_id):
+    """Обычная сводка (без ИИ) - полная версия"""
     today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
     
     if len(today_messages) < 3:
@@ -405,8 +461,6 @@ def generate_regular_summary(chat_id):
             text += f"  •  {random_quote['time']}"
     
     return text
-
-# ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ generate_ai_summary ==========
 
 def generate_ai_summary(chat_id, style="troll"):
     """Генерирует ИИ-сводку дня для чата"""
@@ -472,6 +526,7 @@ def generate_ai_summary(chat_id, style="troll"):
         return None
 
 def generate_fallback_summary(chat_id):
+    """Резервная сводка если ИИ не доступен"""
     today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
     if len(today_messages) < 3:
         return None
@@ -482,6 +537,7 @@ def generate_fallback_summary(chat_id):
     return f"🤖 *ИИ временно недоступен*\n\nСегодня в чате {total_msgs} сообщений от {users_count} участников.\n\nПопробуй ещё раз через минуту. #summary"
 
 def send_scheduled_summary(chat_id, thread_id=0):
+    """Отправляет запланированную сводку"""
     settings = get_chat_summary_settings(chat_id)
     
     if not settings.get("enabled", True):
@@ -497,38 +553,36 @@ def send_scheduled_summary(chat_id, thread_id=0):
     
     if summary:
         try:
-            bot.send_message(chat_id, summary, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
+            # Отправляем сводку с кнопкой "Раскрыть" если текст слишком длинный
+            if len(summary) > 3000:
+                # Разбиваем на части
+                parts = [summary[i:i+3000] for i in range(0, len(summary), 3000)]
+                for i, part in enumerate(parts):
+                    if i == 0:
+                        bot.send_message(chat_id, part, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
+                    else:
+                        bot.send_message(chat_id, part, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
+            else:
+                bot.send_message(chat_id, summary, parse_mode="Markdown", message_thread_id=thread_id if thread_id != 0 else None)
             print(f"📋 Отправлена сводка в чат {chat_id}")
+            
+            # Планируем следующую сводку
+            schedule_summary_for_chat(chat_id, thread_id)
+            
         except Exception as e:
             print(f"❌ Ошибка: {e}")
     else:
         print(f"⏩ Недостаточно сообщений для сводки в чате {chat_id}")
+        # Всё равно планируем следующую
+        schedule_summary_for_chat(chat_id, thread_id)
 
-def schedule_chat_summaries():
-    now_moscow = datetime.now(MOSCOW_TZ)
-    
+def schedule_all_chat_summaries():
+    """Запускает планировщик сводок для всех чатов"""
     for unique_chat in list(active_chats):
         parts = unique_chat.split("_")
         chat_id = int(parts[0])
         thread_id = int(parts[1]) if len(parts) > 1 else 0
-        
-        settings = get_chat_summary_settings(chat_id)
-        if not settings.get("enabled", True):
-            continue
-        
-        time_str = settings["time"]
-        try:
-            target_hour, target_minute = map(int, time_str.split(":"))
-            target = now_moscow.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
-            if target <= now_moscow:
-                target += timedelta(days=1)
-            delay = (target - now_moscow).total_seconds()
-            timer = threading.Timer(delay, lambda: send_scheduled_summary(chat_id, thread_id))
-            timer.daemon = True
-            timer.start()
-            print(f"📋 Сводка для чата {chat_id} на {target.strftime('%H:%M')} (режим: {settings['mode']})")
-        except:
-            pass
+        schedule_summary_for_chat(chat_id, thread_id)
 
 # ========== КОМАНДЫ ==========
 
@@ -802,53 +856,6 @@ def show_admin_chat_reminders(user_id, chat_id, message_id=None):
             bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
     else:
         bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
-
-# ========== ОТСЛЕЖИВАНИЕ ДОБАВЛЕНИЯ БОТА В ЧАТ ==========
-
-@bot.my_chat_member_handler(func=lambda message: True)
-def on_bot_added_to_chat(message):
-    try:
-        chat = message.chat
-        chat_id = chat.id
-        chat_title = chat.title or f"Чат {chat_id}"
-        
-        inviter = message.from_user
-        inviter_id = inviter.id
-        inviter_name = inviter.first_name or inviter.username or "Пользователь"
-        
-        print(f"📌 Бот добавлен в чат '{chat_title}' пользователем {inviter_name} (ID: {inviter_id})")
-        
-        unique_id = f"{chat_id}_0"
-        if unique_id not in active_chats:
-            active_chats.add(unique_id)
-            print(f"📌 Чат {chat_id} добавлен в active_chats")
-        
-        if str(inviter_id) not in chat_users:
-            chat_users[str(inviter_id)] = {
-                "id": inviter_id,
-                "username": inviter.username,
-                "first_name": inviter.first_name,
-                "last_name": inviter.last_name,
-                "full_name": f"{inviter.first_name or ''} {inviter.last_name or ''}".strip(),
-                "last_seen": datetime.now(MOSCOW_TZ).isoformat(),
-                "added_bot_to_chat": chat_title
-            }
-            user_cache.save_users(chat_users)
-            print(f"👤 Новый пользователь {inviter_name} добавлен в базу")
-        
-        try:
-            bot.send_message(
-                inviter_id,
-                f"✅ Бот успешно добавлен в чат *{chat_title}*!\n\n"
-                f"Теперь этот чат появится в вашем меню.\n\n"
-                f"⚙️ Открыть меню: `/start`",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            print(f"⚠️ Не удалось отправить сообщение пользователю {inviter_id}: {e}")
-            
-    except Exception as e:
-        print(f"❌ Ошибка при добавлении бота в чат: {e}")
 
 # ========== ФУНКЦИЯ ПРОВЕРКИ ПРАВ АДМИНА ЧАТА ==========
 
@@ -1216,6 +1223,7 @@ def handle_restore_file(message):
         if "summary_settings" in data:
             summary_settings = data["summary_settings"]
             save_summary_settings()
+            schedule_all_chat_summaries()
         bot.edit_message_text(f"✅ Восстановлено!\n👥 {len(chat_users)} пользователей\n⏰ {len(reminders)} напоминаний", message.chat.id, status.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, status.message_id)
@@ -1609,32 +1617,48 @@ def add_bot_to_chat_menu(user_id, message_id=None):
         bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
 
 def get_user_chats_list(user_id):
-    """Возвращает список чатов, куда пользователь добавил бота"""
-    user_chats_dict = {}
+    """Возвращает список чатов, где есть бот и пользователь"""
+    user_chats_list = []
+    seen_chats = set()
     
+    # 1. Чаты из active_chats
     for unique_id in active_chats:
         parts = unique_id.split("_")
         chat_id = int(parts[0])
-        
+        if chat_id in seen_chats:
+            continue
         try:
-            member = bot.get_chat_member(chat_id, user_id)
-            if member.status in ['member', 'administrator', 'creator']:
-                chat = bot.get_chat(chat_id)
-                chat_title = chat.title or f"Чат {chat_id}"
-                user_chats_dict[chat_id] = chat_title
-                print(f"📌 Чат {chat_id} добавлен для пользователя {user_id}")
+            chat = bot.get_chat(chat_id)
+            try:
+                member = bot.get_chat_member(chat_id, user_id)
+                if member.status in ['member', 'administrator', 'creator', 'restricted']:
+                    seen_chats.add(chat_id)
+                    user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
+            except:
+                seen_chats.add(chat_id)
+                user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
         except:
             continue
     
-    return [{"id": chat_id, "title": title} for chat_id, title in user_chats_dict.items()]
+    # 2. Чаты из напоминаний пользователя
+    for r in reminders:
+        if r.get("user_id") == user_id:
+            chat_id = r.get("chat_id")
+            if chat_id and chat_id not in seen_chats:
+                try:
+                    chat = bot.get_chat(chat_id)
+                    user_chats_list.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
+                except:
+                    user_chats_list.append({"id": chat_id, "title": f"Чат {chat_id}"})
+                seen_chats.add(chat_id)
+    
+    return user_chats_list
 
 def show_chats_for_summary(user_id, message_id=None):
     chats = get_user_chats_list(user_id)
     
     if not chats:
-        text = "📭 *У вас нет доступных чатов*\n\n"
-        text += "Чтобы чат появился в меню:\n"
-        text += "• Добавьте бота в чат и сделайте его администратором"
+        text = "📭 Вы ещё не написали ни в одном чате, где есть я.\n\nНапишите что-нибудь в группе, и я вас запомню!"
         bot.send_message(user_id, text, parse_mode="Markdown")
         return
     
@@ -1677,7 +1701,7 @@ def show_summary_settings(user_id, chat_id):
     )
     markup.add(
         InlineKeyboardButton("🤖 ИИ режим", callback_data=f"summary_action_ai_{chat_id}"),
-        InlineKeyboardButton("📊 Обычный режим", callback_data=f"summary_action_normal_{chat_id}")
+        InlineKeyboardButton("📊 Обычный", callback_data=f"summary_action_normal_{chat_id}")
     )
     if settings["mode"] == "ai":
         markup.add(
@@ -1693,9 +1717,7 @@ def show_chats_for_reminders(user_id, message_id=None):
     chats = get_user_chats_list(user_id)
     
     if not chats:
-        text = "📭 *У вас нет доступных чатов*\n\n"
-        text += "Чтобы создать напоминание:\n"
-        text += "`/remind 15:30 текст` в нужном чате"
+        text = "📭 У вас нет чатов с напоминаниями.\n\nСоздать: `/remind 15:30 текст` в нужном чате"
         bot.send_message(user_id, text, parse_mode="Markdown")
         return
     
@@ -1832,15 +1854,22 @@ def handle_menu_callback(call):
         if action == "enable":
             update_chat_summary_settings(chat_id, "enabled", True)
             bot.answer_callback_query(call.id, "✅ Авто-сводка включена!")
+            # Перепланируем сводку после включения
+            schedule_summary_for_chat(chat_id)
         elif action == "disable":
             update_chat_summary_settings(chat_id, "enabled", False)
             bot.answer_callback_query(call.id, "❌ Авто-сводка выключена!")
+            # Отменяем таймер сводки
+            cancel_summary_timer(chat_id)
         elif action == "ai":
             update_chat_summary_settings(chat_id, "mode", "ai")
             bot.answer_callback_query(call.id, "🤖 Режим: ИИ")
+            # Перепланируем сводку
+            schedule_summary_for_chat(chat_id)
         elif action == "normal":
             update_chat_summary_settings(chat_id, "mode", "normal")
             bot.answer_callback_query(call.id, "📊 Режим: обычный")
+            schedule_summary_for_chat(chat_id)
         elif action == "troll":
             update_chat_summary_settings(chat_id, "ai_style", "troll")
             bot.answer_callback_query(call.id, "🎭 Стиль: Тролль")
@@ -1950,6 +1979,57 @@ def handle_menu_callback(call):
         bot.send_message(user_id, "✅ Удалены ВСЕ напоминания в боте")
         check_all_reminders(call.message)
 
+# ========== ОТСЛЕЖИВАНИЕ ДОБАВЛЕНИЯ БОТА В ЧАТ ==========
+
+@bot.my_chat_member_handler(func=lambda message: True)
+def on_bot_added_to_chat(message):
+    try:
+        chat = message.chat
+        chat_id = chat.id
+        chat_title = chat.title or f"Чат {chat_id}"
+        
+        inviter = message.from_user
+        inviter_id = inviter.id
+        inviter_name = inviter.first_name or inviter.username or "Пользователь"
+        
+        print(f"📌 Бот добавлен в чат '{chat_title}' пользователем {inviter_name} (ID: {inviter_id})")
+        
+        unique_id = f"{chat_id}_0"
+        if unique_id not in active_chats:
+            active_chats.add(unique_id)
+            print(f"📌 Чат {chat_id} добавлен в active_chats")
+        
+        if str(inviter_id) not in chat_users:
+            chat_users[str(inviter_id)] = {
+                "id": inviter_id,
+                "username": inviter.username,
+                "first_name": inviter.first_name,
+                "last_name": inviter.last_name,
+                "full_name": f"{inviter.first_name or ''} {inviter.last_name or ''}".strip(),
+                "last_seen": datetime.now(MOSCOW_TZ).isoformat(),
+                "added_bot_to_chat": chat_title
+            }
+            user_cache.save_users(chat_users)
+            print(f"👤 Новый пользователь {inviter_name} добавлен в базу")
+        
+        # Планируем сводку для нового чата (если включена)
+        schedule_summary_for_chat(chat_id)
+        
+        try:
+            bot.send_message(
+                inviter_id,
+                f"✅ Бот успешно добавлен в чат *{chat_title}*!\n\n"
+                f"Теперь этот чат появится в вашем меню.\n\n"
+                f"📊 Для настройки сводки нажмите кнопку ниже.\n\n"
+                f"⚙️ Открыть меню: `/start`",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"⚠️ Не удалось отправить сообщение пользователю {inviter_id}: {e}")
+            
+    except Exception as e:
+        print(f"❌ Ошибка при добавлении бота в чат: {e}")
+
 # ========== ВЕБХУК ==========
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
@@ -1983,7 +2063,7 @@ if __name__ == "__main__":
     
     schedule_daily_quotes()
     load_summary_settings()
-    schedule_chat_summaries()
     load_daily_quotes()
     start_all_reminders()
+    schedule_all_chat_summaries()
     app.run(host="0.0.0.0", port=port)
