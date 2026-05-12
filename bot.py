@@ -371,14 +371,26 @@ def save_summary_settings():
 def get_chat_summary_settings(chat_id):
     chat_id_str = str(chat_id)
     if chat_id_str not in summary_settings:
-        summary_settings[chat_id_str] = {"enabled": True, "time": "22:00", "mode": "normal", "ai_style": "troll"}
+        summary_settings[chat_id_str] = {
+            "enabled": True,
+            "time": "22:00",
+            "mode": "normal",
+            "ai_style": "troll",
+            "format": "normal"  # normal - обычный текст, quote - цитата
+        }
         save_summary_settings()
     return summary_settings[chat_id_str]
 
 def update_chat_summary_settings(chat_id, key, value):
     chat_id_str = str(chat_id)
     if chat_id_str not in summary_settings:
-        summary_settings[chat_id_str] = {"enabled": True, "time": "22:00", "mode": "normal", "ai_style": "troll"}
+        summary_settings[chat_id_str] = {
+            "enabled": True,
+            "time": "22:00",
+            "mode": "normal",
+            "ai_style": "troll",
+            "format": "normal"
+        }
     summary_settings[chat_id_str][key] = value
     save_summary_settings()
     reschedule_summary_for_chat(chat_id)
@@ -465,7 +477,7 @@ def generate_ai_summary(chat_id, style="troll"):
     return None
 
 def send_scheduled_summary(chat_id, thread_id=0):
-    """Отправляет запланированную сводку с кнопкой "Показать полностью" для длинных сообщений"""
+    """Отправляет запланированную сводку"""
     settings = get_chat_summary_settings(chat_id)
     if not settings.get("enabled", True):
         return
@@ -479,14 +491,15 @@ def send_scheduled_summary(chat_id, thread_id=0):
         schedule_summary_for_chat(chat_id, thread_id)
         return
     
+    # Проверяем формат отправки
+    summary_format = settings.get("format", "normal")
+    
     # Определяем, нужно ли скрыть часть текста
     MAX_PREVIEW_LENGTH = 500
     is_long = len(summary) > MAX_PREVIEW_LENGTH
     
     if is_long:
-        # Обрезаем текст до 500 символов
         preview = summary[:MAX_PREVIEW_LENGTH]
-        # Ищем последний полный абзац или предложение
         last_period = preview.rfind('.')
         last_newline = preview.rfind('\n')
         cut_pos = max(last_period, last_newline)
@@ -494,10 +507,8 @@ def send_scheduled_summary(chat_id, thread_id=0):
             preview = preview[:cut_pos + 1]
         else:
             preview = preview[:MAX_PREVIEW_LENGTH]
-        
         preview += "\n\n..."
         
-        # Создаём кнопку "Показать полностью"
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("📋 Показать полностью", callback_data=f"expand_summary_{chat_id}"))
         
@@ -505,21 +516,19 @@ def send_scheduled_summary(chat_id, thread_id=0):
             bot.send_message(chat_id, preview, parse_mode="Markdown", 
                             message_thread_id=thread_id if thread_id else None,
                             reply_markup=markup)
-            print(f"📋 Отправлена сокращённая сводка в чат {chat_id} (скрыта часть)")
-            # Сохраняем полную сводку во временное хранилище
             if not hasattr(send_scheduled_summary, 'full_summaries'):
                 send_scheduled_summary.full_summaries = {}
             send_scheduled_summary.full_summaries[chat_id] = summary
+            print(f"📋 Отправлена сокращённая сводка в чат {chat_id} (формат: {summary_format})")
         except Exception as e:
             print(f"❌ Ошибка: {e}")
-            # Если не удалось отправить сокращённую, отправляем полную
             bot.send_message(chat_id, summary, parse_mode="Markdown", 
                             message_thread_id=thread_id if thread_id else None)
     else:
         try:
             bot.send_message(chat_id, summary, parse_mode="Markdown", 
                             message_thread_id=thread_id if thread_id else None)
-            print(f"📋 Отправлена полная сводка в чат {chat_id}")
+            print(f"📋 Отправлена сводка в чат {chat_id} (формат: {summary_format})")
         except Exception as e:
             print(f"❌ Ошибка: {e}")
     
@@ -1234,7 +1243,6 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, "❌ Только админы могут смотреть сводку!", show_alert=True)
             return
         
-        # Получаем полную сводку из временного хранилища или генерируем заново
         if hasattr(send_scheduled_summary, 'full_summaries') and chat_id in send_scheduled_summary.full_summaries:
             full_summary = send_scheduled_summary.full_summaries[chat_id]
             bot.answer_callback_query(call.id, "📋 Полная сводка:")
@@ -1320,13 +1328,16 @@ def handle_callback(call):
         settings = get_chat_summary_settings(chat_id)
         status = "✅ Вкл" if settings.get("enabled") else "❌ Выкл"
         mode = "🤖 ИИ" if settings["mode"] == "ai" else "📊 Обычный"
-        text = f"📊 *Настройки*\n\n🟢 Статус: {status}\n🤖 Режим: {mode}\n🕐 Время: {settings['time']}"
+        format_text = "📝 Обычный" if settings.get("format", "normal") == "normal" else "💬 Цитата"
+        text = f"📊 *Настройки*\n\n🟢 Статус: {status}\n🤖 Режим: {mode}\n🕐 Время: {settings['time']}\n📝 Формат: {format_text}"
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
             InlineKeyboardButton("✅ Вкл", callback_data=f"summ_enable_{chat_id}"),
             InlineKeyboardButton("❌ Выкл", callback_data=f"summ_disable_{chat_id}"),
             InlineKeyboardButton("🤖 ИИ", callback_data=f"summ_ai_{chat_id}"),
             InlineKeyboardButton("📊 Обычный", callback_data=f"summ_normal_{chat_id}"),
+            InlineKeyboardButton("📝 Обычный формат", callback_data=f"summ_format_normal_{chat_id}"),
+            InlineKeyboardButton("💬 Цитата", callback_data=f"summ_format_quote_{chat_id}"),
             InlineKeyboardButton("📋 Показать", callback_data=f"summ_show_{chat_id}"),
             InlineKeyboardButton("◀ Назад", callback_data="menu_summary")
         )
@@ -1456,6 +1467,26 @@ def handle_callback(call):
             return
         update_chat_summary_settings(chat_id, "mode", "normal")
         bot.answer_callback_query(call.id, "📊 Режим: обычный")
+        
+    elif data.startswith("summ_format_normal_"):
+        chat_id = int(data.split("_")[3])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
+        update_chat_summary_settings(chat_id, "format", "normal")
+        bot.answer_callback_query(call.id, "📝 Формат: обычный")
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_summary_settings(user_id, chat_id)
+        
+    elif data.startswith("summ_format_quote_"):
+        chat_id = int(data.split("_")[3])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
+        update_chat_summary_settings(chat_id, "format", "quote")
+        bot.answer_callback_query(call.id, "💬 Формат: цитата")
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_summary_settings(user_id, chat_id)
         
     elif data.startswith("summ_show_"):
         chat_id = int(data.split("_")[2])
