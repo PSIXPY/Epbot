@@ -150,7 +150,6 @@ def add_message_to_quotes(message):
     save_daily_quotes()
 
 def get_today_messages_for_chat(chat_id, thread_id=0):
-    """Возвращает сообщения за сегодня для конкретного чата"""
     unique_id = f"{chat_id}_{thread_id}"
     return [m for m in daily_messages if m.get('unique_id') == unique_id]
 
@@ -494,7 +493,6 @@ def send_scheduled_summary(chat_id, thread_id=0):
     if not settings.get("enabled", True):
         return
     
-    # Проверяем, есть ли сообщения за сегодня
     today_messages = get_today_messages_for_chat(chat_id, thread_id)
     if len(today_messages) < 3:
         print(f"⏩ В чате {chat_id} недостаточно сообщений за сегодня для сводки")
@@ -1165,6 +1163,10 @@ def handle_actions(message):
         "спать": ("😴", "лёг спать", "леглá спать", ""),
         "уснуть": ("😴", "уснул", "уснула", ""),
         "пить": ("🍺", "выпил", "выпила", ""),
+        # === НОВЫЕ КОМАНДЫ ===
+        "зарезать": ("🔪", "зарезал", "зарезала", ""),
+        "харкнуть": ("💨", "харкнул", "харкнула", "на"),
+        "пнуть": ("🦶", "пнул", "пнула", ""),
     }
     
     emoji = None
@@ -1631,18 +1633,22 @@ def inline_query(query):
         text = query.query.strip()
         if not text or len(text.split(maxsplit=1)) < 2:
             return
+        
         target_raw, content = text.split(maxsplit=1)
         target_raw = target_raw.lstrip("@")
         target_id = None
         target_name = target_raw
+        
         for uid, user in chat_users.items():
             username = user.get('username')
             if username and username.lower() == target_raw.lower():
                 target_id = uid
                 target_name = user.get('first_name', target_raw)
                 break
+        
         if not target_id and target_raw.isdigit():
             target_id = target_raw
+        
         if not target_id:
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton("❓ Как узнать ID", url="https://t.me/userinfobot"))
@@ -1655,6 +1661,7 @@ def inline_query(query):
             )
             bot.answer_inline_query(query.id, [result], cache_time=0)
             return
+        
         msg_id = f"sec_{int(time.time())}_{query.from_user.id}_{random.randint(1000, 9999)}"
         secret_messages[msg_id] = {
             "target_id": target_id,
@@ -1664,37 +1671,50 @@ def inline_query(query):
             "sender_id": query.from_user.id,
             "expires": time.time() + 3600
         }
+        
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"secret_read_{msg_id}"))
+        markup.add(InlineKeyboardButton("📩 Прочитать сообщение", callback_data=f"secret_read_{msg_id}"))
+        
         result = types.InlineQueryResultArticle(
             id=msg_id,
-            title=f"📨 Для {escape_markdown(target_name)}",
+            title=f"📨 Скрытое сообщение для {target_name}",
             description=content[:50],
             input_message_content=types.InputTextMessageContent(
-                f"🔐 *Скрытое сообщение*\nОт: {escape_markdown(query.from_user.first_name)}\nКому: {escape_markdown(target_name)}",
+                f"🔐 *Скрытое сообщение*\nОт: {escape_markdown(query.from_user.first_name)}\nКому: {escape_markdown(target_name)}\n\n⚠️ Нажмите на кнопку ниже, чтобы прочитать",
                 parse_mode="Markdown"
             ),
             reply_markup=markup
         )
+        
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
+        
     except Exception as e:
-        print(f"Инлайн ошибка: {e}")
+        print(f"❌ Инлайн ошибка: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("secret_read_"))
 def handle_secret_read(call):
     msg_id = call.data.replace("secret_read_", "")
+    
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено или уже удалено", show_alert=True)
         return
+    
     data = secret_messages[msg_id]
+    
     if str(call.from_user.id) != str(data["target_id"]):
-        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
         return
+    
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Истекло", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение истекло (хранится 1 час)", show_alert=True)
         del secret_messages[msg_id]
         return
-    bot.answer_callback_query(call.id, f"📩 От {escape_markdown(data['sender_name'])}:\n\n{escape_markdown(data['content'])}", show_alert=True)
+    
+    message_text = f"📩 *Отправитель:* {data['sender_name']}\n\n📝 *Сообщение:*\n{data['content']}"
+    
+    del secret_messages[msg_id]
+    
+    bot.answer_callback_query(call.id, message_text, show_alert=True)
 
 def clean_old_secrets():
     while True:
