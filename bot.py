@@ -376,7 +376,7 @@ def get_chat_summary_settings(chat_id):
             "time": "22:00",
             "mode": "normal",
             "ai_style": "troll",
-            "format": "normal"
+            "quote_enabled": False  # цитирование вкл/выкл
         }
         save_summary_settings()
     return summary_settings[chat_id_str]
@@ -389,7 +389,7 @@ def update_chat_summary_settings(chat_id, key, value):
             "time": "22:00",
             "mode": "normal",
             "ai_style": "troll",
-            "format": "normal"
+            "quote_enabled": False
         }
     summary_settings[chat_id_str][key] = value
     save_summary_settings()
@@ -491,39 +491,37 @@ def send_scheduled_summary(chat_id, thread_id=0):
         schedule_summary_for_chat(chat_id, thread_id)
         return
     
-    # Определяем, нужно ли скрыть часть текста
-    MAX_PREVIEW_LENGTH = 500
-    is_long = len(summary) > MAX_PREVIEW_LENGTH
+    # Проверяем, нужно ли цитировать
+    quote_enabled = settings.get("quote_enabled", False)
     
-    if is_long:
-        preview = summary[:MAX_PREVIEW_LENGTH]
-        last_period = preview.rfind('.')
-        last_newline = preview.rfind('\n')
-        cut_pos = max(last_period, last_newline)
-        if cut_pos > 300:
-            preview = preview[:cut_pos + 1]
-        else:
-            preview = preview[:MAX_PREVIEW_LENGTH]
-        preview += "\n\n..."
+    # Заголовок сводки
+    header = "📊 *Сводка дня*"
+    
+    if quote_enabled:
+        # Отправляем как сворачиваемую цитату
+        # Экранируем Markdown для HTML
+        summary_html = summary.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        # Простое преобразование Markdown в HTML
+        summary_html = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', summary_html)
+        summary_html = re.sub(r'\*(.+?)\*', r'<i>\1</i>', summary_html)
+        summary_html = summary_html.replace('\n', '<br/>')
         
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📋 Показать полностью", callback_data=f"expand_summary_{chat_id}"))
+        # Сворачиваемая цитата
+        text = f"{header}\n\n<blockquote expandable>{summary_html}</blockquote>"
         
         try:
-            bot.send_message(chat_id, preview, parse_mode="Markdown", 
-                            message_thread_id=thread_id if thread_id else None,
-                            reply_markup=markup)
-            if not hasattr(send_scheduled_summary, 'full_summaries'):
-                send_scheduled_summary.full_summaries = {}
-            send_scheduled_summary.full_summaries[chat_id] = summary
-            print(f"📋 Отправлена сокращённая сводка в чат {chat_id}")
+            bot.send_message(chat_id, text, parse_mode="HTML", 
+                            message_thread_id=thread_id if thread_id else None)
+            print(f"📋 Отправлена сводка (цитата) в чат {chat_id}")
         except Exception as e:
-            print(f"❌ Ошибка: {e}")
-            bot.send_message(chat_id, summary, parse_mode="Markdown", 
+            print(f"❌ Ошибка HTML: {e}")
+            # Если не получилось, отправляем как обычный Markdown
+            bot.send_message(chat_id, f"{header}\n\n{summary}", parse_mode="Markdown", 
                             message_thread_id=thread_id if thread_id else None)
     else:
+        # Обычная отправка (без цитаты)
         try:
-            bot.send_message(chat_id, summary, parse_mode="Markdown", 
+            bot.send_message(chat_id, f"{header}\n\n{summary}", parse_mode="Markdown", 
                             message_thread_id=thread_id if thread_id else None)
             print(f"📋 Отправлена сводка в чат {chat_id}")
         except Exception as e:
@@ -972,43 +970,36 @@ def get_gender(user):
 # ========== РП ДЕЙСТВИЯ (ПОЛНАЯ ВЕРСИЯ) ==========
 
 def handle_actions(message):
-    if not message.reply_to_message:
-        full_text = message.text.strip().lower()
-        
-        global_actions = {
-            "кончить на всех": ("💦", "кончил на всех", "кончила на всех"),
-            "сквиртануть на всех": ("💦💦", "сквиртанул на всех", "сквиртанула на всех"),
-            "кончить всем в лицо": ("💦", "кончил всем в лицо", "кончила всем в лицо"),
-        }
-        
-        if full_text in global_actions:
-            emoji, male_action, female_action = global_actions[full_text]
-            sender = message.from_user
-            sender_name = sender.first_name or sender.username or "Кто-то"
-            sender_gender = get_gender(sender)
-            action = male_action if sender_gender == 'male' else female_action
-            
-            chat_id = message.chat.id
-            thread_id = message.message_thread_id or 0
-            chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id and m.get('thread_id') == thread_id]
-            
-            target_name = "всех"
-            if chat_messages:
-                last_msg = chat_messages[-1]
-                target_name = last_msg.get('author_name', 'кого-то')
-            
-            response = f"{emoji} {sender_name} {action} {target_name}"
-            thread_id = message.message_thread_id if message.message_thread_id else None
-            try:
-                bot.send_message(message.chat.id, response, message_thread_id=thread_id)
-                return True
-            except Exception as e:
-                print(f"❌ Ошибка: {e}")
-                return False
-        return False
-    
     full_text = message.text.strip().lower()
     
+    # Команды на всех (без ответа)
+    global_actions = {
+        "кончить на всех": ("💦", "кончил на всех", "кончила на всех"),
+        "сквиртануть на всех": ("💦💦", "сквиртанул на всех", "сквиртанула на всех"),
+        "кончить всем в лицо": ("💦", "кончил всем в лицо", "кончила всем в лицо"),
+    }
+    
+    if full_text in global_actions:
+        emoji, male_action, female_action = global_actions[full_text]
+        sender = message.from_user
+        sender_name = sender.first_name or sender.username or "Кто-то"
+        sender_gender = get_gender(sender)
+        action = male_action if sender_gender == 'male' else female_action
+        
+        response = f"{emoji} {sender_name} {action}"
+        thread_id = message.message_thread_id if message.message_thread_id else None
+        try:
+            bot.send_message(message.chat.id, response, message_thread_id=thread_id)
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка: {e}")
+            return False
+    
+    # Команды с ответом на сообщение
+    if not message.reply_to_message:
+        return False
+    
+    # Многословные команды
     multiline_commands = ["сесть на лицо", "дать пять", "пожать руку", "послать нахуй"]
     search_key = None
     
@@ -1137,7 +1128,7 @@ def handle_actions(message):
         bot.send_message(message.chat.id, response, message_thread_id=thread_id)
         return True
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка РП: {e}")
         return False
 
 # ========== ОСНОВНОЙ ОБРАБОТЧИК ==========
@@ -1235,29 +1226,6 @@ def handle_callback(call):
     user_id = call.from_user.id
     data = call.data
     
-    if data.startswith("expand_summary_"):
-        chat_id = int(data.split("_")[2])
-        if not is_chat_admin(chat_id, user_id):
-            bot.answer_callback_query(call.id, "❌ Только админы могут смотреть сводку!", show_alert=True)
-            return
-        
-        if hasattr(send_scheduled_summary, 'full_summaries') and chat_id in send_scheduled_summary.full_summaries:
-            full_summary = send_scheduled_summary.full_summaries[chat_id]
-            bot.answer_callback_query(call.id, "📋 Полная сводка:")
-            bot.send_message(call.message.chat.id, full_summary, parse_mode="Markdown")
-        else:
-            settings = get_chat_summary_settings(chat_id)
-            if settings.get("mode") == "ai":
-                full_summary = generate_ai_summary(chat_id, settings.get("ai_style", "troll"))
-            else:
-                full_summary = generate_regular_summary(chat_id)
-            if full_summary:
-                bot.answer_callback_query(call.id, "📋 Полная сводка:")
-                bot.send_message(call.message.chat.id, full_summary, parse_mode="Markdown")
-            else:
-                bot.answer_callback_query(call.id, "❌ Недостаточно сообщений")
-        return
-    
     if data == "menu_summary":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -1326,16 +1294,19 @@ def handle_callback(call):
         settings = get_chat_summary_settings(chat_id)
         status = "✅ Вкл" if settings.get("enabled") else "❌ Выкл"
         mode = "🤖 ИИ" if settings["mode"] == "ai" else "📊 Обычный"
-        format_text = "📝 Обычный" if settings.get("format", "normal") == "normal" else "💬 Цитата"
-        text = f"📊 *Настройки*\n\n🟢 Статус: {status}\n🤖 Режим: {mode}\n🕐 Время: {settings['time']}\n📝 Формат: {format_text}"
+        style = "🎭 Тролль" if settings.get("ai_style") == "troll" else "📝 Обычный"
+        quote_status = "💬 Вкл" if settings.get("quote_enabled", False) else "📝 Выкл"
+        text = f"📊 *Настройки*\n\n🟢 Статус: {status}\n🤖 Режим: {mode}\n🎭 Стиль: {style}\n🕐 Время: {settings['time']}\n💬 Цитирование: {quote_status}"
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
             InlineKeyboardButton("✅ Вкл", callback_data=f"summ_enable_{chat_id}"),
             InlineKeyboardButton("❌ Выкл", callback_data=f"summ_disable_{chat_id}"),
             InlineKeyboardButton("🤖 ИИ", callback_data=f"summ_ai_{chat_id}"),
             InlineKeyboardButton("📊 Обычный", callback_data=f"summ_normal_{chat_id}"),
-            InlineKeyboardButton("📝 Обычный формат", callback_data=f"summ_format_normal_{chat_id}"),
-            InlineKeyboardButton("💬 Цитата", callback_data=f"summ_format_quote_{chat_id}"),
+            InlineKeyboardButton("🎭 Тролль", callback_data=f"summ_style_troll_{chat_id}"),
+            InlineKeyboardButton("📝 Обычный стиль", callback_data=f"summ_style_normal_{chat_id}"),
+            InlineKeyboardButton("💬 Вкл цит.", callback_data=f"summ_quote_on_{chat_id}"),
+            InlineKeyboardButton("📝 Выкл цит.", callback_data=f"summ_quote_off_{chat_id}"),
             InlineKeyboardButton("📋 Показать", callback_data=f"summ_show_{chat_id}"),
             InlineKeyboardButton("◀ Назад", callback_data="menu_summary")
         )
@@ -1466,23 +1437,43 @@ def handle_callback(call):
         update_chat_summary_settings(chat_id, "mode", "normal")
         bot.answer_callback_query(call.id, "📊 Режим: обычный")
         
-    elif data.startswith("summ_format_normal_"):
+    elif data.startswith("summ_style_troll_"):
         chat_id = int(data.split("_")[3])
         if not is_chat_admin(chat_id, user_id):
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
-        update_chat_summary_settings(chat_id, "format", "normal")
-        bot.answer_callback_query(call.id, "📝 Формат: обычный")
+        update_chat_summary_settings(chat_id, "ai_style", "troll")
+        bot.answer_callback_query(call.id, "🎭 Стиль: Тролль")
         bot.delete_message(call.message.chat.id, call.message.message_id)
         show_summary_settings(user_id, chat_id)
         
-    elif data.startswith("summ_format_quote_"):
+    elif data.startswith("summ_style_normal_"):
         chat_id = int(data.split("_")[3])
         if not is_chat_admin(chat_id, user_id):
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
-        update_chat_summary_settings(chat_id, "format", "quote")
-        bot.answer_callback_query(call.id, "💬 Формат: цитата")
+        update_chat_summary_settings(chat_id, "ai_style", "normal")
+        bot.answer_callback_query(call.id, "📝 Стиль: обычный")
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_summary_settings(user_id, chat_id)
+        
+    elif data.startswith("summ_quote_on_"):
+        chat_id = int(data.split("_")[3])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
+        update_chat_summary_settings(chat_id, "quote_enabled", True)
+        bot.answer_callback_query(call.id, "💬 Цитирование включено!")
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_summary_settings(user_id, chat_id)
+        
+    elif data.startswith("summ_quote_off_"):
+        chat_id = int(data.split("_")[3])
+        if not is_chat_admin(chat_id, user_id):
+            bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
+            return
+        update_chat_summary_settings(chat_id, "quote_enabled", False)
+        bot.answer_callback_query(call.id, "📝 Цитирование выключено!")
         bot.delete_message(call.message.chat.id, call.message.message_id)
         show_summary_settings(user_id, chat_id)
         
