@@ -30,7 +30,6 @@ print(f"👑 ADMIN: {ADMIN_ID}")
 
 # === ФУНКЦИЯ ЭКРАНИРОВАНИЯ MARKDOWN ===
 def escape_markdown(text):
-    """Экранирует спецсимволы Markdown (_ * [ ] ( ) ~ ` > # + - = | { } . !)"""
     if not text:
         return text
     escape_chars = r'_*[]()~`>#+-=|{}.!'
@@ -43,7 +42,6 @@ print(f"👥 Загружено {len(chat_users)} пользователей")
 # === ДЛЯ ЦИТАТ ===
 QUOTES_CACHE_FILE = "daily_quotes.json"
 daily_messages = []
-daily_quote_times = [9, 12, 15, 18, 21]
 active_chats = set()
 
 # === НАСТРОЙКИ ЦИТАТ ===
@@ -85,15 +83,18 @@ def update_chat_quotes_settings(chat_id, key, value):
 quote_timers = {}
 summary_timers = {}
 
+def get_today_date():
+    return datetime.now(MOSCOW_TZ).strftime('%Y-%m-%d')
+
 def load_daily_quotes():
     global daily_messages
     if os.path.exists(QUOTES_CACHE_FILE):
         try:
             with open(QUOTES_CACHE_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                if data.get('date') == datetime.now(MOSCOW_TZ).strftime('%Y-%m-%d'):
+                if data.get('date') == get_today_date():
                     daily_messages = data.get('messages', [])
-                    print(f"📚 Загружено {len(daily_messages)} сообщений")
+                    print(f"📚 Загружено {len(daily_messages)} сообщений за сегодня")
                 else:
                     clear_daily_quotes()
         except Exception as e:
@@ -102,7 +103,7 @@ def load_daily_quotes():
 def save_daily_quotes():
     try:
         data = {
-            'date': datetime.now(MOSCOW_TZ).strftime('%Y-%m-%d'),
+            'date': get_today_date(),
             'messages': daily_messages
         }
         with open(QUOTES_CACHE_FILE, 'w', encoding='utf-8') as f:
@@ -141,11 +142,17 @@ def add_message_to_quotes(message):
         'time': datetime.now(MOSCOW_TZ).strftime('%H:%M:%S'),
         'chat_id': message.chat.id,
         'thread_id': thread_id,
-        'unique_id': unique_id
+        'unique_id': unique_id,
+        'date': get_today_date()
     })
     if len(daily_messages) > 1000:
         daily_messages = daily_messages[-1000:]
     save_daily_quotes()
+
+def get_today_messages_for_chat(chat_id, thread_id=0):
+    """Возвращает сообщения за сегодня для конкретного чата"""
+    unique_id = f"{chat_id}_{thread_id}"
+    return [m for m in daily_messages if m.get('unique_id') == unique_id]
 
 def add_chat_to_active(message):
     if message.text and message.text.startswith('/'):
@@ -156,12 +163,10 @@ def add_chat_to_active(message):
         active_chats.add(unique_id)
 
 def get_chat_messages_count(chat_id, thread_id=0):
-    unique_id = f"{chat_id}_{thread_id}"
-    return len([m for m in daily_messages if m.get('unique_id') == unique_id])
+    return len(get_today_messages_for_chat(chat_id, thread_id))
 
 def get_random_quote(chat_id, thread_id=0):
-    unique_id = f"{chat_id}_{thread_id}"
-    chat_messages = [m for m in daily_messages if m.get('unique_id') == unique_id]
+    chat_messages = get_today_messages_for_chat(chat_id, thread_id)
     if len(chat_messages) < 2:
         return None
     quote = random.choice(chat_messages)
@@ -173,7 +178,7 @@ def clean_inactive_chats():
     for unique_id in active_chats:
         parts = unique_id.split("_")
         chat_id = int(parts[0])
-        chat_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
+        chat_messages = get_today_messages_for_chat(chat_id)
         if len(chat_messages) < 2:
             to_remove.append(unique_id)
     for item in to_remove:
@@ -209,8 +214,7 @@ def send_quote_to_chat(chat_id, thread_id=0):
         cancel_quote_timer(chat_id)
         return
     
-    unique_id_full = f"{chat_id}_{thread_id}"
-    chat_messages = [m for m in daily_messages if m.get('unique_id') == unique_id_full]
+    chat_messages = get_today_messages_for_chat(chat_id, thread_id)
     
     if len(chat_messages) < 2:
         schedule_quote_for_chat(chat_id, thread_id)
@@ -444,7 +448,7 @@ def reschedule_summary_for_chat(chat_id):
     schedule_summary_for_chat(chat_id, thread_id)
 
 def generate_regular_summary(chat_id):
-    today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
+    today_messages = get_today_messages_for_chat(chat_id)
     if len(today_messages) < 3:
         return None
     total_msgs = len(today_messages)
@@ -454,7 +458,7 @@ def generate_regular_summary(chat_id):
         author = msg.get('author_name', 'Участник')
         user_activity[author] = user_activity.get(author, 0) + 1
     top_users = sorted(user_activity.items(), key=lambda x: x[1], reverse=True)[:3]
-    text = f"📋 *Сводка дня*\n\n📊 *Статистика:*\n• Сообщений: {total_msgs}\n• Участников: {users_count}\n\n"
+    text = f"📊 *Сводка дня*\n\n📊 *Статистика:*\n• Сообщений: {total_msgs}\n• Участников: {users_count}\n\n"
     if top_users:
         text += f"🏆 *Самые активные:*\n"
         for name, count in top_users:
@@ -462,7 +466,7 @@ def generate_regular_summary(chat_id):
     return text
 
 def generate_ai_summary(chat_id, style="troll"):
-    today_messages = [m for m in daily_messages if m.get('chat_id') == chat_id]
+    today_messages = get_today_messages_for_chat(chat_id)
     if len(today_messages) < 5:
         return None
     recent_messages = today_messages[-40:]
@@ -478,16 +482,23 @@ def generate_ai_summary(chat_id, style="troll"):
     style_text = "юмористическую" if style == "troll" else "информативную"
     prompt = f"""Ты — журналист. Напиши {style_text} сводку по этому чату.
 Разбей на 4-6 тем с эмодзи. НЕ ИСПОЛЬЗУЙ теги <think>.
-Вот диалог:
+Вот диалог за сегодня:
 {conversation}"""
     response = ask_groq_for_summary(prompt)
     if response:
-        return f"📝 *Что обсуждали участники чата?*\n\n{response}"
+        return f"📝 *Что обсуждали участники чата сегодня?*\n\n{response}"
     return None
 
 def send_scheduled_summary(chat_id, thread_id=0):
     settings = get_chat_summary_settings(chat_id)
     if not settings.get("enabled", True):
+        return
+    
+    # Проверяем, есть ли сообщения за сегодня
+    today_messages = get_today_messages_for_chat(chat_id, thread_id)
+    if len(today_messages) < 3:
+        print(f"⏩ В чате {chat_id} недостаточно сообщений за сегодня для сводки")
+        schedule_summary_for_chat(chat_id, thread_id)
         return
     
     if settings.get("mode") == "ai":
@@ -634,14 +645,14 @@ def summary_command(message):
                 bot.reply_to(message, "❌ Только админы могут смотреть сводку!")
                 return
             summary = generate_ai_summary(message.chat.id, "troll")
-            bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений")
+            bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений за сегодня")
             return
         elif subcmd in ["обычный", "normal"]:
             if not is_chat_admin(message.chat.id, message.from_user.id):
                 bot.reply_to(message, "❌ Только админы могут смотреть сводку!")
                 return
             summary = generate_regular_summary(message.chat.id)
-            bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений")
+            bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений за сегодня")
             return
     if not is_chat_admin(message.chat.id, message.from_user.id):
         bot.reply_to(message, "❌ Только админы могут смотреть сводку!")
@@ -651,7 +662,7 @@ def summary_command(message):
         summary = generate_ai_summary(message.chat.id, settings.get("ai_style", "troll"))
     else:
         summary = generate_regular_summary(message.chat.id)
-    bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений")
+    bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений за сегодня")
 
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
@@ -757,7 +768,8 @@ def delete_reminder(message):
                 save_reminders()
                 msg = bot.send_message(chat_id, f"✅ Напоминание {rid} удалено", message_thread_id=thread_id)
                 delete_after_delay(chat_id, msg.message_id, 10)
-                return        msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не найдено", message_thread_id=thread_id)
+                return
+        msg = bot.send_message(chat_id, f"❌ Напоминание {rid} не найдено", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
     except:
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
@@ -1541,7 +1553,7 @@ def handle_callback(call):
         if summary:
             bot.send_message(user_id, summary, parse_mode="Markdown")
         else:
-            bot.send_message(user_id, "📭 Недостаточно сообщений")
+            bot.send_message(user_id, "📭 Недостаточно сообщений за сегодня")
             
     elif data.startswith("create_"):
         chat_id = int(data.split("_")[1])
