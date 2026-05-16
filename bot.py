@@ -1163,10 +1163,8 @@ def handle_actions(message):
         "спать": ("😴", "лёг спать", "леглá спать", ""),
         "уснуть": ("😴", "уснул", "уснула", ""),
         "пить": ("🍺", "выпил", "выпила", ""),
-        # === НОВЫЕ КОМАНДЫ ===
         "зарезать": ("🔪", "зарезал", "зарезала", ""),
         "харкнуть": ("💨", "харкнул", "харкнула", "на"),
-        "пнуть": ("🦶", "пнул", "пнула", ""),
     }
     
     emoji = None
@@ -1648,6 +1646,10 @@ def inline_query(query):
         
         if not target_id and target_raw.isdigit():
             target_id = target_raw
+            for uid, user in chat_users.items():
+                if uid == target_raw:
+                    target_name = user.get('first_name', target_raw)
+                    break
         
         if not target_id:
             markup = InlineKeyboardMarkup()
@@ -1664,11 +1666,11 @@ def inline_query(query):
         
         msg_id = f"sec_{int(time.time())}_{query.from_user.id}_{random.randint(1000, 9999)}"
         secret_messages[msg_id] = {
-            "target_id": target_id,
+            "target_id": str(target_id),
             "target_name": target_name,
             "content": content,
             "sender_name": query.from_user.first_name,
-            "sender_id": query.from_user.id,
+            "sender_id": str(query.from_user.id),
             "expires": time.time() + 3600
         }
         
@@ -1714,7 +1716,11 @@ def handle_secret_read(call):
     
     del secret_messages[msg_id]
     
-    bot.answer_callback_query(call.id, message_text, show_alert=True)
+    try:
+        bot.answer_callback_query(call.id, message_text, show_alert=True)
+    except Exception as e:
+        print(f"❌ Ошибка при отправке скрытого сообщения: {e}")
+        bot.send_message(call.from_user.id, f"🔐 *Скрытое сообщение*\n\n{message_text}", parse_mode="Markdown")
 
 def clean_old_secrets():
     while True:
