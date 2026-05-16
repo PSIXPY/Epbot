@@ -37,14 +37,14 @@ def save_user_from_message(message, chat_users):
     user_id = str(user.id)
     
     # Получаем свежие данные от Telegram
-    new_username = user.username if user.username else None
+    username = user.username if user.username else None
     first_name = user.first_name or ""
     last_name = user.last_name or ""
     
-    # Отладочный вывод - показывает есть ли _ в username
-    if new_username:
-        has_underscore = "_" in new_username
-        print(f"🔍 [CACHE] Username: '{new_username}' | Есть _ : {has_underscore}")
+    # Отладочный вывод
+    if username:
+        has_underscore = "_" in username
+        print(f"🔍 [CACHE] Username: '{username}' | Есть _ : {has_underscore}")
     else:
         print(f"🔍 [CACHE] Username: None (нет username)")
     
@@ -55,7 +55,7 @@ def save_user_from_message(message, chat_users):
     # ВСЕГДА обновляем данные (принудительно)
     chat_users[user_id] = {
         "id": user.id,
-        "username": new_username,
+        "username": username,
         "first_name": first_name,
         "last_name": last_name,
         "full_name": f"{first_name} {last_name}".strip(),
@@ -66,15 +66,15 @@ def save_user_from_message(message, chat_users):
     
     # Логируем изменения
     if is_new:
-        if new_username:
-            print(f"🆕 НОВЫЙ: @{new_username} ({first_name})")
+        if username:
+            print(f"🆕 НОВЫЙ: @{username} ({first_name})")
         else:
             print(f"🆕 НОВЫЙ: {first_name} (без username)")
-    elif old_username != new_username:
-        print(f"🔄 ОБНОВЛЁН: @{old_username} → @{new_username} ({first_name})")
+    elif old_username != username:
+        print(f"🔄 ОБНОВЛЁН: @{old_username} → @{username} ({first_name})")
     else:
-        if new_username:
-            print(f"✅ Обновлён: @{new_username} ({first_name})")
+        if username:
+            print(f"✅ Обновлён: @{username} ({first_name})")
         else:
             print(f"✅ Обновлён: {first_name} (без username)")
     
