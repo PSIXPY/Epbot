@@ -376,7 +376,7 @@ def get_chat_summary_settings(chat_id):
             "time": "22:00",
             "mode": "normal",
             "ai_style": "troll",
-            "format": "normal"  # normal - обычный текст, quote - цитата
+            "format": "normal"
         }
         save_summary_settings()
     return summary_settings[chat_id_str]
@@ -491,9 +491,6 @@ def send_scheduled_summary(chat_id, thread_id=0):
         schedule_summary_for_chat(chat_id, thread_id)
         return
     
-    # Проверяем формат отправки
-    summary_format = settings.get("format", "normal")
-    
     # Определяем, нужно ли скрыть часть текста
     MAX_PREVIEW_LENGTH = 500
     is_long = len(summary) > MAX_PREVIEW_LENGTH
@@ -519,7 +516,7 @@ def send_scheduled_summary(chat_id, thread_id=0):
             if not hasattr(send_scheduled_summary, 'full_summaries'):
                 send_scheduled_summary.full_summaries = {}
             send_scheduled_summary.full_summaries[chat_id] = summary
-            print(f"📋 Отправлена сокращённая сводка в чат {chat_id} (формат: {summary_format})")
+            print(f"📋 Отправлена сокращённая сводка в чат {chat_id}")
         except Exception as e:
             print(f"❌ Ошибка: {e}")
             bot.send_message(chat_id, summary, parse_mode="Markdown", 
@@ -528,7 +525,7 @@ def send_scheduled_summary(chat_id, thread_id=0):
         try:
             bot.send_message(chat_id, summary, parse_mode="Markdown", 
                             message_thread_id=thread_id if thread_id else None)
-            print(f"📋 Отправлена сводка в чат {chat_id} (формат: {summary_format})")
+            print(f"📋 Отправлена сводка в чат {chat_id}")
         except Exception as e:
             print(f"❌ Ошибка: {e}")
     
@@ -912,7 +909,7 @@ def handle_restore_file(message):
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, status.message_id)
 
-# ========== РП ДЕЙСТВИЯ ==========
+# ========== ФУНКЦИИ ДЛЯ СКЛОНЕНИЯ ==========
 
 def decline_name(name, preposition=""):
     preposition = preposition.lower()
@@ -971,6 +968,8 @@ def get_gender(user):
     if name.endswith(female_endings) and name not in male_exceptions:
         return 'female'
     return 'male'
+
+# ========== РП ДЕЙСТВИЯ (ПОЛНАЯ ВЕРСИЯ) ==========
 
 def handle_actions(message):
     if not message.reply_to_message:
@@ -1121,11 +1120,12 @@ def handle_actions(message):
     sender_gender = get_gender(sender)
     past_action = past_action_male if sender_gender == 'male' else past_action_female
     
+    declined_target = decline_name(target_name, preposition) if preposition else decline_name(target_name, "")
+    
     if preposition:
-        declined_target = decline_name(target_name, preposition)
         target_with_preposition = f"{preposition} {declined_target}"
     else:
-        target_with_preposition = decline_name(target_name, "")
+        target_with_preposition = declined_target
     
     if reply_text:
         response = f"{emoji} {sender_name} {past_action} {target_with_preposition}: {reply_text}"
@@ -1202,7 +1202,6 @@ def send_main_menu(user_id):
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 def get_user_chats_list(user_id, check_admin=False):
-    """Возвращает чаты пользователя. Если check_admin=True - только чаты где он админ"""
     user_chats = []
     seen = set()
     for unique_id in active_chats:
@@ -1236,7 +1235,6 @@ def handle_callback(call):
     user_id = call.from_user.id
     data = call.data
     
-    # Обработчик для кнопки "Показать полностью"
     if data.startswith("expand_summary_"):
         chat_id = int(data.split("_")[2])
         if not is_chat_admin(chat_id, user_id):
