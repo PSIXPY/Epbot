@@ -1304,7 +1304,7 @@ def get_user_chats_list(user_id, check_admin=False):
             continue
     return user_chats
 
-# ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
+# ========== СКРЫТЫЕ СООБЩЕНИЯ (ИСПРАВЛЕННЫЕ) ==========
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -1353,14 +1353,14 @@ def inline_query(query):
         }
         
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📩 Прочитать сообщение", callback_data=f"secret_read_{msg_id}"))
+        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"secret_read_{msg_id}"))
         
         result = types.InlineQueryResultArticle(
             id=msg_id,
-            title=f"📨 Сообщение для {target_name}",
+            title=f"📨 Для {target_name}",
             description=content[:50],
             input_message_content=types.InputTextMessageContent(
-                f"🔐 *Скрытое сообщение*\nОт: {query.from_user.first_name}\nКому: {target_name}\n\n⬇️ Нажмите на кнопку ниже, чтобы прочитать",
+                f"🔐 *Скрытое сообщение*\nОт: {query.from_user.first_name}\nКому: {target_name}",
                 parse_mode="Markdown"
             ),
             reply_markup=markup
@@ -1376,34 +1376,28 @@ def inline_query(query):
 def handle_secret_read(call):
     msg_id = call.data.replace("secret_read_", "")
     
-    print(f"🔑 Нажата кнопка для сообщения {msg_id} пользователем {call.from_user.id}")
-    
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено или уже удалено", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
         return
     
     data = secret_messages[msg_id]
     
     # Проверяем получателя
     if str(call.from_user.id) != str(data["target_id"]):
-        bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
         return
     
-    # Проверяем срок
+    # Проверяем срок (не удаляем, просто показываем)
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Сообщение истекло (хранится 1 час)", show_alert=True)
-        del secret_messages[msg_id]
+        bot.answer_callback_query(call.id, "❌ Сообщение истекло", show_alert=True)
         return
     
-    # Формируем текст сообщения для всплывающего окна
-    message_text = f"📩 *Скрытое сообщение*\n\n👤 *Отправитель:* {data['sender_name']}\n\n💬 *Текст:*\n{data['content']}"
+    # Короткий и красивый текст
+    message_text = f"📩 {data['sender_name']}:\n\n{data['content']}"
     
-    # Удаляем из кэша
-    del secret_messages[msg_id]
-    
-    # Показываем всплывающее окно с сообщением
+    # Показываем всплывающее окно (не удаляем сообщение!)
     bot.answer_callback_query(call.id, message_text, show_alert=True)
-    print(f"✅ Сообщение {msg_id} показано в всплывающем окне")
+    print(f"✅ Сообщение {msg_id} показано, осталось в кэше до {time.ctime(data['expires'])}")
 
 def clean_old_secrets():
     while True:
