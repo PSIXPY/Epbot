@@ -1673,7 +1673,7 @@ def inline_query(query):
         }
         
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"secret_read_{msg_id}"))
+        markup.add(InlineKeyboardButton("📩 Прочитать сообщение", callback_data=f"secret_read_{msg_id}"))
         
         result = types.InlineQueryResultArticle(
             id=msg_id,
@@ -1699,8 +1699,7 @@ def handle_secret_read(call):
     print(f"🔑 Нажата кнопка для сообщения {msg_id} пользователем {call.from_user.id}")
     
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
-        print(f"❌ Сообщение {msg_id} не найдено")
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено или уже удалено", show_alert=True)
         return
     
     data = secret_messages[msg_id]
@@ -1708,30 +1707,39 @@ def handle_secret_read(call):
     # Проверяем получателя
     if str(call.from_user.id) != str(data["target_id"]):
         bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
-        print(f"❌ Отказано: {call.from_user.id} != {data['target_id']}")
         return
     
     # Проверяем срок
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Сообщение истекло", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение истекло (хранится 1 час)", show_alert=True)
         del secret_messages[msg_id]
-        print(f"❌ Сообщение {msg_id} истекло")
         return
     
-    # Формируем текст
-    message_text = f"📩 *Скрытое сообщение*\n\n👤 *Отправитель:* {data['sender_name']}\n\n💬 *Текст:*\n{data['content']}"
+    # Формируем текст для всплывающего окна
+    alert_text = f"📩 Новое сообщение от {data['sender_name']}!\n\nНажмите OK, чтобы прочитать полный текст в личных сообщениях."
+    
+    # Полный текст для ЛС
+    full_message = f"📩 *Скрытое сообщение*\n\n👤 *Отправитель:* {data['sender_name']}\n\n💬 *Текст:*\n{data['content']}\n\n⏰ *Отправлено:* {datetime.now(MOSCOW_TZ).strftime('%d.%m.%Y %H:%M')}"
     
     # Удаляем из кэша
     del secret_messages[msg_id]
     
-    # Отправляем в ЛС получателя
     try:
-        bot.send_message(call.from_user.id, message_text, parse_mode="Markdown")
-        bot.answer_callback_query(call.id, "✅ Сообщение доставлено в личные сообщения!", show_alert=True)
+        # Сначала показываем всплывающее уведомление
+        bot.answer_callback_query(call.id, alert_text, show_alert=True)
+        
+        # Затем отправляем полное сообщение в ЛС
+        bot.send_message(call.from_user.id, full_message, parse_mode="Markdown")
         print(f"✅ Сообщение {msg_id} отправлено в ЛС {call.from_user.id}")
+        
     except Exception as e:
-        bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)[:50]}", show_alert=True)
-        print(f"❌ Ошибка отправки: {e}")
+        print(f"❌ Ошибка: {e}")
+        # Если не получилось, пробуем отправить только в ЛС
+        try:
+            bot.send_message(call.from_user.id, full_message, parse_mode="Markdown")
+            bot.answer_callback_query(call.id, "✅ Сообщение доставлено в личные сообщения!", show_alert=True)
+        except:
+            bot.answer_callback_query(call.id, "❌ Не удалось доставить сообщение", show_alert=True)
 
 def clean_old_secrets():
     while True:
