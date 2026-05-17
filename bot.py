@@ -1624,7 +1624,7 @@ def on_bot_added_to_chat(message):
     except Exception as e:
         print(f"❌ Ошибка: {e}")
 
-# ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
+# ========== СКРЫТЫЕ СООБЩЕНИЯ (ИСПРАВЛЕННАЯ ВЕРСИЯ) ==========
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -1637,6 +1637,7 @@ def inline_query(query):
         target_id = None
         target_name = target_raw
         
+        # Поиск пользователя
         for uid, user in chat_users.items():
             username = user.get('username')
             if username and username.lower() == target_raw.lower():
@@ -1646,10 +1647,6 @@ def inline_query(query):
         
         if not target_id and target_raw.isdigit():
             target_id = target_raw
-            for uid, user in chat_users.items():
-                if uid == target_raw:
-                    target_name = user.get('first_name', target_raw)
-                    break
         
         if not target_id:
             markup = InlineKeyboardMarkup()
@@ -1658,13 +1655,14 @@ def inline_query(query):
                 id="error",
                 title="❌ Пользователь не найден",
                 description=f"@{target_raw}",
-                input_message_content=types.InputTextMessageContent(f"❌ @{target_raw} не найден"),
+                input_message_content=types.InputTextMessageContent(f"❌ Пользователь @{target_raw} не найден"),
                 reply_markup=markup
             )
             bot.answer_inline_query(query.id, [result], cache_time=0)
             return
         
         msg_id = f"sec_{int(time.time())}_{query.from_user.id}_{random.randint(1000, 9999)}"
+        
         secret_messages[msg_id] = {
             "target_id": str(target_id),
             "target_name": target_name,
@@ -1675,20 +1673,21 @@ def inline_query(query):
         }
         
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📩 Прочитать сообщение", callback_data=f"secret_read_{msg_id}"))
+        markup.add(InlineKeyboardButton("📩 Прочитать", callback_data=f"secret_read_{msg_id}"))
         
         result = types.InlineQueryResultArticle(
             id=msg_id,
-            title=f"📨 Скрытое сообщение для {target_name}",
+            title=f"📨 Сообщение для {target_name}",
             description=content[:50],
             input_message_content=types.InputTextMessageContent(
-                f"🔐 *Скрытое сообщение*\nОт: {escape_markdown(query.from_user.first_name)}\nКому: {escape_markdown(target_name)}\n\n⚠️ Нажмите на кнопку ниже, чтобы прочитать",
+                f"🔐 *Скрытое сообщение*\nОт: {query.from_user.first_name}\nКому: {target_name}\n\n⬇️ Нажмите на кнопку ниже, чтобы прочитать",
                 parse_mode="Markdown"
             ),
             reply_markup=markup
         )
         
         bot.answer_inline_query(query.id, [result], cache_time=0, is_personal=True)
+        print(f"✅ Создано скрытое сообщение для {target_name} (ID: {target_id})")
         
     except Exception as e:
         print(f"❌ Инлайн ошибка: {e}")
@@ -1697,30 +1696,42 @@ def inline_query(query):
 def handle_secret_read(call):
     msg_id = call.data.replace("secret_read_", "")
     
+    print(f"🔑 Нажата кнопка для сообщения {msg_id} пользователем {call.from_user.id}")
+    
     if msg_id not in secret_messages:
-        bot.answer_callback_query(call.id, "❌ Сообщение не найдено или уже удалено", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение не найдено", show_alert=True)
+        print(f"❌ Сообщение {msg_id} не найдено")
         return
     
     data = secret_messages[msg_id]
     
+    # Проверяем получателя
     if str(call.from_user.id) != str(data["target_id"]):
         bot.answer_callback_query(call.id, "❌ Это сообщение не для вас!", show_alert=True)
+        print(f"❌ Отказано: {call.from_user.id} != {data['target_id']}")
         return
     
+    # Проверяем срок
     if time.time() > data["expires"]:
-        bot.answer_callback_query(call.id, "❌ Сообщение истекло (хранится 1 час)", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Сообщение истекло", show_alert=True)
         del secret_messages[msg_id]
+        print(f"❌ Сообщение {msg_id} истекло")
         return
     
-    message_text = f"📩 *Отправитель:* {data['sender_name']}\n\n📝 *Сообщение:*\n{data['content']}"
+    # Формируем текст
+    message_text = f"📩 *Скрытое сообщение*\n\n👤 *Отправитель:* {data['sender_name']}\n\n💬 *Текст:*\n{data['content']}"
     
+    # Удаляем из кэша
     del secret_messages[msg_id]
     
+    # Отправляем в ЛС получателя
     try:
-        bot.answer_callback_query(call.id, message_text, show_alert=True)
+        bot.send_message(call.from_user.id, message_text, parse_mode="Markdown")
+        bot.answer_callback_query(call.id, "✅ Сообщение доставлено в личные сообщения!", show_alert=True)
+        print(f"✅ Сообщение {msg_id} отправлено в ЛС {call.from_user.id}")
     except Exception as e:
-        print(f"❌ Ошибка при отправке скрытого сообщения: {e}")
-        bot.send_message(call.from_user.id, f"🔐 *Скрытое сообщение*\n\n{message_text}", parse_mode="Markdown")
+        bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)[:50]}", show_alert=True)
+        print(f"❌ Ошибка отправки: {e}")
 
 def clean_old_secrets():
     while True:
@@ -1729,6 +1740,7 @@ def clean_old_secrets():
         to_delete = [mid for mid, d in secret_messages.items() if d.get("expires", 0) < now]
         for mid in to_delete:
             del secret_messages[mid]
+            print(f"🗑️ Удалено истекшее сообщение {mid}")
 
 threading.Thread(target=clean_old_secrets, daemon=True).start()
 
