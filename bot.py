@@ -12,6 +12,8 @@ from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pytz
 import user_cache
+import chat_owners
+from chat_owners import load_chat_owners, set_chat_owner, is_chat_owner
 
 # === ПЕРЕМЕННЫЕ ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -614,6 +616,60 @@ def is_chat_admin(chat_id, user_id):
     except:
         return False
 
+# ========== ФУНКЦИЯ СПИСКА ЧАТОВ ДЛЯ МЕНЮ (НОВАЯ ЛОГИКА) ==========
+
+def get_user_chats_list(user_id, check_admin=False):
+    """Возвращает список чатов, которые пользователь может видеть в меню.
+       Условия: пользователь админ И (он добавил бота ИЛИ глобальный админ)
+    """
+    user_chats = []
+    seen = set()
+    
+    # Глобальный админ видит всё
+    if user_id == ADMIN_ID:
+        for unique_id in active_chats:
+            parts = unique_id.split("_")
+            chat_id = int(parts[0])
+            if chat_id in seen:
+                continue
+            try:
+                chat = bot.get_chat(chat_id)
+                seen.add(chat_id)
+                user_chats.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
+            except:
+                continue
+        user_chats.sort(key=lambda x: x['title'].lower())
+        return user_chats
+    
+    # Обычные пользователи: только чаты, где они админ И владелец (добавили бота)
+    for unique_id in active_chats:
+        parts = unique_id.split("_")
+        chat_id = int(parts[0])
+        
+        if chat_id in seen:
+            continue
+        
+        try:
+            # Проверяем статус пользователя в чате
+            member = bot.get_chat_member(chat_id, user_id)
+            is_admin = member.status in ['creator', 'administrator']
+            
+            # Проверяем, добавлял ли этот пользователь бота
+            owner = is_chat_owner(chat_id, user_id)
+            
+            # Только если админ И владелец
+            if is_admin and owner:
+                chat = bot.get_chat(chat_id)
+                seen.add(chat_id)
+                user_chats.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
+                
+        except Exception as e:
+            print(f"Ошибка при проверке чата {chat_id}: {e}")
+            continue
+    
+    user_chats.sort(key=lambda x: x['title'].lower())
+    return user_chats
+
 # ========== КОМАНДЫ ==========
 
 @bot.message_handler(commands=['start'])
@@ -742,7 +798,7 @@ def summary_command(message):
         summary = generate_regular_summary(message.chat.id)
     bot.reply_to(message, summary if summary else "📭 Недостаточно сообщений за сегодня")
 
-# ========== НАПОМИНАНИЯ (ИСПРАВЛЕННЫЕ) ==========
+# ========== НАПОМИНАНИЯ ==========
 
 @bot.message_handler(commands=['remind'])
 def add_reminder(message):
@@ -879,26 +935,6 @@ def delete_reminder(message):
         msg = bot.send_message(chat_id, "❌ Неверный ID", 
                               message_thread_id=current_thread_id if current_thread_id else None)
         delete_after_delay(chat_id, msg.message_id, 10)
-
-@bot.message_handler(commands=['check_reminder_status'])
-def check_reminder_status(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ Нет прав!")
-        return
-    chat_id = message.chat.id
-    user_reminders = [r for r in reminders if r.get("chat_id") == chat_id]
-    
-    if not user_reminders:
-        bot.reply_to(message, "📭 Нет напоминаний для этого чата")
-        return
-    
-    status = f"📊 *Напоминания в этом чате:*\n\n"
-    for r in user_reminders:
-        thread = r.get("thread_id", 0)
-        thread_str = f"топик {thread}" if thread else "основной чат"
-        status += f"🆔 {r['id']} | {r['hours']:02d}:{r['minutes']:02d} | {thread_str}\n   📝 {r['text'][:30]}\n\n"
-    
-    bot.reply_to(message, status, parse_mode="Markdown")
 
 # ========== АДМИН-КОМАНДЫ ==========
 
@@ -1580,33 +1616,6 @@ def send_main_menu(user_id):
     )
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
-def get_user_chats_list(user_id, check_admin=False):
-    user_chats = []
-    seen = set()
-    for unique_id in active_chats:
-        parts = unique_id.split("_")
-        chat_id = int(parts[0])
-        if chat_id in seen:
-            continue
-        try:
-            chat = bot.get_chat(chat_id)
-            if check_admin:
-                member = bot.get_chat_member(chat_id, user_id)
-                if member.status not in ['administrator', 'creator']:
-                    continue
-            else:
-                try:
-                    member = bot.get_chat_member(chat_id, user_id)
-                    if member.status not in ['member', 'administrator', 'creator', 'restricted']:
-                        continue
-                except:
-                    pass
-            seen.add(chat_id)
-            user_chats.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
-        except:
-            continue
-    return user_chats
-
 # ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
@@ -1718,20 +1727,20 @@ def handle_callback(call):
         bot.delete_message(call.message.chat.id, call.message.message_id)
         chats = get_user_chats_list(user_id, check_admin=True)
         if not chats:
-            bot.send_message(user_id, "📭 Нет чатов, где вы администратор. Добавьте бота и сделайте админом.")
+            bot.send_message(user_id, "📭 Нет чатов, где вы администратор и добавляли бота.\n\n💡 Чтобы управлять ботом в чате, добавьте его сами и выдайте права администратора.")
             return
         markup = InlineKeyboardMarkup()
         for chat in chats:
             markup.add(InlineKeyboardButton(f"📊 {escape_markdown(chat['title'][:35])}", callback_data=f"summary_{chat['id']}"))
         markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
-        bot.send_message(user_id, "📊 *Выберите чат* (только где вы админ)", parse_mode="Markdown", reply_markup=markup)
+        bot.send_message(user_id, "📊 *Выберите чат* (только где вы админ и добавляли бота)", parse_mode="Markdown", reply_markup=markup)
         
     elif data == "menu_reminders":
         bot.answer_callback_query(call.id)
         bot.delete_message(call.message.chat.id, call.message.message_id)
         chats = get_user_chats_list(user_id, check_admin=False)
         if not chats:
-            bot.send_message(user_id, "📭 Нет доступных чатов.")
+            bot.send_message(user_id, "📭 Нет доступных чатов.\n\n💡 Вы увидите чат в меню, только если вы администратор этого чата и сами добавили бота.")
             return
         markup = InlineKeyboardMarkup()
         for chat in chats:
@@ -1745,7 +1754,7 @@ def handle_callback(call):
         bot.delete_message(call.message.chat.id, call.message.message_id)
         chats = get_user_chats_list(user_id, check_admin=True)
         if not chats:
-            bot.send_message(user_id, "📭 Нет чатов, где вы администратор.")
+            bot.send_message(user_id, "📭 Нет чатов, где вы администратор и добавляли бота.")
             return
         markup = InlineKeyboardMarkup()
         for chat in chats:
@@ -1753,12 +1762,12 @@ def handle_callback(call):
             status = "✅" if settings.get("enabled", True) else "❌"
             markup.add(InlineKeyboardButton(f"📜 {status} {escape_markdown(chat['title'][:33])}", callback_data=f"quotes_{chat['id']}"))
         markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
-        bot.send_message(user_id, "📜 *Выберите чат* (только где вы админ)", parse_mode="Markdown", reply_markup=markup)
+        bot.send_message(user_id, "📜 *Выберите чат* (только где вы админ и добавляли бота)", parse_mode="Markdown", reply_markup=markup)
         
     elif data == "menu_add_bot":
         bot.answer_callback_query(call.id)
         bot_username = bot.get_me().username
-        text = f"🤖 *Добавить бота:*\n\n1. Откройте группу\n2. Добавьте @{bot_username}\n3. Выдайте права админа\n\n[🔗 Ссылка](https://t.me/{bot_username}?startgroup=start)"
+        text = f"🤖 *Добавить бота:*\n\n1. Откройте группу\n2. Добавьте @{bot_username}\n3. Выдайте права админа\n4. После добавления бота вы сможете управлять им через меню\n\n[🔗 Ссылка](https://t.me/{bot_username}?startgroup=start)"
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🔗 Пригласить", url=f"https://t.me/{bot_username}?startgroup=start"))
         markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
@@ -1775,8 +1784,8 @@ def handle_callback(call):
         
     elif data.startswith("summary_"):
         chat_id = int(data.split("_")[1])
-        if not is_chat_admin(chat_id, user_id):
-            bot.answer_callback_query(call.id, "❌ Вы не админ этого чата!", show_alert=True)
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Вы не можете управлять этим чатом (вы не добавляли бота)", show_alert=True)
             return
         settings = get_chat_summary_settings(chat_id)
         status = "✅ Вкл" if settings.get("enabled") else "❌ Выкл"
@@ -1804,17 +1813,22 @@ def handle_callback(call):
             title = chat.title or f"Чат {chat_id}"
         except:
             title = f"Чат {chat_id}"
+        
         if not user_reminders:
-            text = f"⏰ *{escape_markdown(title)}*\n\n📭 Нет напоминаний"
+            text = f"⏰ *{escape_markdown(title)}*\n\n📭 Нет напоминаний\n\n💡 Напоминания создаются командой `/remind 15:30 текст` в самом чате"
             markup = InlineKeyboardMarkup()
-            markup.add(InlineKeyboardButton("➕ Создать", callback_data=f"create_{chat_id}"))
             markup.add(InlineKeyboardButton("◀ Назад", callback_data="menu_reminders"))
             bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
             return
-        text = f"⏰ *Ваши напоминания*\n`{escape_markdown(title)}`\n\n"
-        for r in user_reminders[:10]:
+        
+        text = f"⏰ *Ваши напоминания в чате*\n`{escape_markdown(title)}`\n\n"
+        for r in user_reminders[:15]:
             period = f"ежедневно в {r['hours']:02d}:{r['minutes']:02d}" if r.get("daily") else f"{r['hours']:02d}:{r['minutes']:02d}"
+            r_thread = r.get("thread_id", 0)
+            if r_thread != 0:
+                period += f" 🔸 (в теме)"
             text += f"🆔 `{r['id']}` • {period}\n   📝 {escape_markdown(r['text'][:40])}\n\n"
+        
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
             InlineKeyboardButton("➕ Создать", callback_data=f"create_{chat_id}"),
@@ -1825,8 +1839,8 @@ def handle_callback(call):
         
     elif data.startswith("quotes_"):
         chat_id = int(data.split("_")[1])
-        if not is_chat_admin(chat_id, user_id):
-            bot.answer_callback_query(call.id, "❌ Вы не админ этого чата!", show_alert=True)
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Вы не можете управлять этим чатом (вы не добавляли бота)", show_alert=True)
             return
         settings = get_chat_quotes_settings(chat_id)
         try:
@@ -1850,7 +1864,7 @@ def handle_callback(call):
         
     elif data.startswith("quote_enable_"):
         chat_id = int(data.split("_")[2])
-        if not is_chat_admin(chat_id, user_id):
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
         update_chat_quotes_settings(chat_id, "enabled", True)
@@ -1864,7 +1878,7 @@ def handle_callback(call):
         
     elif data.startswith("quote_disable_"):
         chat_id = int(data.split("_")[2])
-        if not is_chat_admin(chat_id, user_id):
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
         update_chat_quotes_settings(chat_id, "enabled", False)
@@ -1875,7 +1889,7 @@ def handle_callback(call):
         parts = data.split("_")
         interval = int(parts[2])
         chat_id = int(parts[3])
-        if not is_chat_admin(chat_id, user_id):
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
         update_chat_quotes_settings(chat_id, "interval_hours", interval)
@@ -1891,7 +1905,7 @@ def handle_callback(call):
         
     elif data.startswith("summ_enable_"):
         chat_id = int(data.split("_")[2])
-        if not is_chat_admin(chat_id, user_id):
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
         update_chat_summary_settings(chat_id, "enabled", True)
@@ -1899,7 +1913,7 @@ def handle_callback(call):
         
     elif data.startswith("summ_disable_"):
         chat_id = int(data.split("_")[2])
-        if not is_chat_admin(chat_id, user_id):
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
         update_chat_summary_settings(chat_id, "enabled", False)
@@ -1907,7 +1921,7 @@ def handle_callback(call):
         
     elif data.startswith("summ_ai_"):
         chat_id = int(data.split("_")[2])
-        if not is_chat_admin(chat_id, user_id):
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
         update_chat_summary_settings(chat_id, "mode", "ai")
@@ -1915,7 +1929,7 @@ def handle_callback(call):
         
     elif data.startswith("summ_normal_"):
         chat_id = int(data.split("_")[2])
-        if not is_chat_admin(chat_id, user_id):
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
         update_chat_summary_settings(chat_id, "mode", "normal")
@@ -1923,7 +1937,7 @@ def handle_callback(call):
         
     elif data.startswith("summ_quote_on_"):
         chat_id = int(data.split("_")[3])
-        if not is_chat_admin(chat_id, user_id):
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
         update_chat_summary_settings(chat_id, "quote_enabled", True)
@@ -1949,7 +1963,7 @@ def handle_callback(call):
         
     elif data.startswith("summ_quote_off_"):
         chat_id = int(data.split("_")[3])
-        if not is_chat_admin(chat_id, user_id):
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
         update_chat_summary_settings(chat_id, "quote_enabled", False)
@@ -1975,7 +1989,7 @@ def handle_callback(call):
         
     elif data.startswith("summ_show_"):
         chat_id = int(data.split("_")[2])
-        if not is_chat_admin(chat_id, user_id):
+        if not is_chat_owner(chat_id, user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Нет прав!", show_alert=True)
             return
         bot.answer_callback_query(call.id, "📋 Генерирую...")
@@ -2040,6 +2054,11 @@ def on_bot_added_to_chat(message):
         if unique_id not in active_chats:
             active_chats.add(unique_id)
         
+        # Сохраняем кто добавил бота
+        if not inviter.is_bot:
+            set_chat_owner(chat_id, inviter_id)
+            print(f"👑 Владелец чата {chat_title}: {inviter.first_name} (ID: {inviter_id})")
+        
         if str(inviter_id) not in chat_users:
             chat_users[str(inviter_id)] = {
                 "id": inviter_id,
@@ -2052,7 +2071,12 @@ def on_bot_added_to_chat(message):
             user_cache.save_users(chat_users)
         
         try:
-            bot.send_message(inviter_id, f"✅ Бот добавлен в чат *{escape_markdown(chat_title)}*!\n\n⚙️ Меню: `/start`", parse_mode="Markdown")
+            bot.send_message(inviter_id, 
+                f"✅ Бот добавлен в чат *{escape_markdown(chat_title)}*!\n\n"
+                f"👑 Вы стали владельцем бота в этом чате.\n\n"
+                f"⚙️ Меню: `/start`\n\n"
+                f"💡 *Важно:* Другие администраторы не увидят этот чат в меню, только вы.", 
+                parse_mode="Markdown")
         except:
             pass
     except Exception as e:
@@ -2095,6 +2119,7 @@ if __name__ == "__main__":
     load_reminders()
     load_summary_settings()
     load_quotes_settings()
+    load_chat_owners()
     
     print("🔄 Запуск планировщиков...")
     start_all_reminders()
