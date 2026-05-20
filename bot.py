@@ -28,6 +28,9 @@ print("🤖 БОТ ЗАПУЩЕН")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
+# === КЭШ ИСПОЛЬЗОВАННЫХ ЦИТАТ ===
+used_quotes_cache = {}  # {unique_id: set(индексы)}
+
 # === ФУНКЦИЯ ЭКРАНИРОВАНИЯ MARKDOWN ===
 def escape_markdown(text):
     if not text:
@@ -112,8 +115,9 @@ def save_daily_quotes():
         print(f"❌ Ошибка: {e}")
 
 def clear_daily_quotes():
-    global daily_messages
+    global daily_messages, used_quotes_cache
     daily_messages = []
+    used_quotes_cache = {}  # Очищаем кэш использованных цитат
     save_daily_quotes()
     print("🔄 Кэш цитат очищен")
 
@@ -168,7 +172,30 @@ def get_random_quote(chat_id, thread_id=0):
     chat_messages = get_today_messages_for_chat(chat_id, thread_id)
     if len(chat_messages) < 2:
         return None
-    quote = random.choice(chat_messages)
+    
+    unique_id = f"{chat_id}_{thread_id}"
+    
+    # Инициализируем множество использованных цитат для этого чата
+    if unique_id not in used_quotes_cache:
+        used_quotes_cache[unique_id] = set()
+    
+    used_indices = used_quotes_cache[unique_id]
+    
+    # Если все сообщения уже использованы - сбрасываем
+    if len(used_indices) >= len(chat_messages):
+        used_indices.clear()
+        print(f"🔄 Сброс кэша цитат для чата {chat_id}")
+    
+    # Находим неиспользованные индексы
+    available_indices = [i for i in range(len(chat_messages)) if i not in used_indices]
+    
+    if not available_indices:
+        return None
+    
+    random_index = random.choice(available_indices)
+    used_indices.add(random_index)
+    
+    quote = chat_messages[random_index]
     return f"📜 *Цитата дня*\n\n« {escape_markdown(quote['text'])} »\n\n— {escape_markdown(quote.get('author_name', 'Участник'))}"
 
 def clean_inactive_chats():
@@ -219,14 +246,13 @@ def send_quote_to_chat(chat_id, thread_id=0):
         schedule_quote_for_chat(chat_id, thread_id)
         return
     
-    quote = random.choice(chat_messages)
-    author_name = quote.get('author_name', 'Участник')
-    quote_text = quote.get('text', '')
-    
-    text = f"📜 *Цитата дня*\n\n« {escape_markdown(quote_text)} »\n\n— {escape_markdown(author_name)}"
+    quote = get_random_quote(chat_id, thread_id)
+    if not quote:
+        schedule_quote_for_chat(chat_id, thread_id)
+        return
     
     try:
-        bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
+        bot.send_message(chat_id, quote, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
         print(f"✅ Цитата отправлена в чат {chat_id}")
     except Exception as e:
         print(f"❌ Ошибка: {e}")
@@ -272,10 +298,34 @@ def save_reminders():
 
 def send_reminder(reminder):
     try:
-        bot.send_message(reminder["chat_id"], f"⏰ НАПОМИНАНИЕ!\n\n{escape_markdown(reminder['text'])}", message_thread_id=reminder.get("thread_id"))
-        print(f"✅ Напоминание {reminder['id']} отправлено")
+        chat_id = reminder["chat_id"]
+        thread_id = reminder.get("thread_id", 0)
+        text = f"⏰ НАПОМИНАНИЕ!\n\n{escape_markdown(reminder['text'])}"
+        
+        bot.send_message(
+            chat_id, 
+            text, 
+            parse_mode="Markdown",
+            message_thread_id=thread_id if thread_id and thread_id != 0 else None
+        )
+        print(f"✅ Напоминание {reminder['id']} отправлено в чат {chat_id}, thread={thread_id}")
+        
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка при отправке напоминания {reminder.get('id')}: {e}")
+        
+        # Если ошибка связана с thread_id - пробуем отправить без него
+        if "message thread not found" in str(e) and reminder.get("thread_id"):
+            reminder["thread_id"] = 0
+            save_reminders()
+            try:
+                bot.send_message(
+                    reminder["chat_id"], 
+                    f"⏰ НАПОМИНАНИЕ!\n\n{escape_markdown(reminder['text'])}", 
+                    parse_mode="Markdown"
+                )
+                print(f"✅ (повторно) Напоминание {reminder['id']} отправлено без thread_id")
+            except Exception as e2:
+                print(f"❌ Повторная ошибка: {e2}")
 
 def schedule_reminder(reminder):
     now_moscow = datetime.now(MOSCOW_TZ)
@@ -510,30 +560,53 @@ def send_scheduled_summary(chat_id, thread_id=0):
     
     quote_enabled = settings.get("quote_enabled", False)
     header = "📊 *Сводка дня*"
+    full_text = f"{header}\n\n{summary}"
     
     if quote_enabled:
-        summary_html = summary.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        summary_html = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', summary_html)
-        summary_html = re.sub(r'\*(.+?)\*', r'<i>\1</i>', summary_html)
-        summary_html = summary_html.replace('\n', '<br/>')
+        # Убираем Markdown-символы, которые ломают HTML
+        clean_text = summary
+        # Убираем ** и * (жирный/курсив в Markdown)
+        clean_text = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_text)
+        clean_text = re.sub(r'\*(.+?)\*', r'\1', clean_text)
+        # Убираем другие служебные символы
+        clean_text = clean_text.replace('_', '').replace('`', '')
+        # Экранируем HTML-символы
+        clean_text = clean_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        # Сохраняем переносы строк
+        clean_text = clean_text.replace('\n', '<br/>')
         
-        text = f"{header}\n\n<blockquote expandable>{summary_html}</blockquote>"
-        
-        try:
-            bot.send_message(chat_id, text, parse_mode="HTML", 
-                            message_thread_id=thread_id if thread_id else None)
-            print(f"📋 Отправлена сводка (цитата) в чат {chat_id}")
-        except Exception as e:
-            print(f"❌ Ошибка HTML: {e}")
-            bot.send_message(chat_id, f"{header}\n\n{summary}", parse_mode="Markdown", 
-                            message_thread_id=thread_id if thread_id else None)
+        # Собираем финальное сообщение с цитатой
+        final_text = f"{header}\n\n<blockquote expandable>{clean_text}</blockquote>"
+        parse_mode = "HTML"
     else:
+        final_text = full_text
+        parse_mode = "Markdown"
+    
+    try:
+        bot.send_message(
+            chat_id, 
+            final_text, 
+            parse_mode=parse_mode, 
+            message_thread_id=thread_id if thread_id else None
+        )
+        print(f"📋 Отправлена сводка в чат {chat_id} (quote={quote_enabled})")
+    except Exception as e:
+        print(f"❌ Ошибка при отправке сводки: {e}")
+        # Fallback: отправляем обычным Markdown
         try:
-            bot.send_message(chat_id, f"{header}\n\n{summary}", parse_mode="Markdown", 
-                            message_thread_id=thread_id if thread_id else None)
-            print(f"📋 Отправлена сводка в чат {chat_id}")
-        except Exception as e:
-            print(f"❌ Ошибка: {e}")
+            bot.send_message(
+                chat_id, 
+                full_text, 
+                parse_mode="Markdown", 
+                message_thread_id=thread_id if thread_id else None
+            )
+        except:
+            # Самый последний вариант - без форматирования
+            bot.send_message(
+                chat_id, 
+                full_text.replace('*', '').replace('_', ''), 
+                message_thread_id=thread_id if thread_id else None
+            )
     
     schedule_summary_for_chat(chat_id, thread_id)
 
@@ -569,7 +642,7 @@ def start_command(message):
 def help_command(message):
     text = "✅ *Бот работает!*\n\n🤖 *ИИ:* `/ai вопрос`\n\n⏰ *Напоминания:* `/remind 15:30 текст`\n📜 *Цитаты:* `/quote`\n📋 *Сводка:* `/summary`\n\n📜 *Управление цитатами:*\n• `/quotes_on` — включить\n• `/quotes_off` — выключить\n\n⚙️ *Меню:* `/start`"
     if message.from_user.id == ADMIN_ID:
-        text += "\n\n👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/check_reminders`"
+        text += "\n\n👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/check_reminders` `/quote_stats`"
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
@@ -592,6 +665,25 @@ def quote_command(message):
     quote_text = get_random_quote(message.chat.id, thread_id)
     if quote_text:
         bot.reply_to(message, quote_text, parse_mode="Markdown")
+
+@bot.message_handler(commands=['quote_stats'])
+def quote_stats_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав!")
+        return
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id or 0
+    unique_id = f"{chat_id}_{thread_id}"
+    
+    messages_count = len(get_today_messages_for_chat(chat_id, thread_id))
+    used_count = len(used_quotes_cache.get(unique_id, set())) if unique_id in used_quotes_cache else 0
+    
+    stats = f"📊 *Статистика цитат:*\n"
+    stats += f"📝 Сообщений за сегодня: {messages_count}\n"
+    stats += f"✅ Цитат уже использовано: {used_count}\n"
+    stats += f"🆓 Осталось: {messages_count - used_count}"
+    
+    bot.reply_to(message, stats, parse_mode="Markdown")
 
 @bot.message_handler(commands=['quotes_on'])
 def quotes_on_command(message):
@@ -772,6 +864,26 @@ def delete_reminder(message):
     except:
         msg = bot.send_message(chat_id, "❌ Неверный ID", message_thread_id=thread_id)
         delete_after_delay(chat_id, msg.message_id, 10)
+
+@bot.message_handler(commands=['check_reminder_status'])
+def check_reminder_status(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ Нет прав!")
+        return
+    chat_id = message.chat.id
+    user_reminders = [r for r in reminders if r.get("chat_id") == chat_id]
+    
+    if not user_reminders:
+        bot.reply_to(message, "📭 Нет напоминаний для этого чата")
+        return
+    
+    status = f"📊 *Напоминания в этом чате:*\n\n"
+    for r in user_reminders:
+        thread = r.get("thread_id", 0)
+        thread_str = f"топик {thread}" if thread else "основной чат"
+        status += f"🆔 {r['id']} | {r['hours']:02d}:{r['minutes']:02d} | {thread_str}\n   📝 {r['text'][:30]}\n\n"
+    
+    bot.reply_to(message, status, parse_mode="Markdown")
 
 # ========== АДМИН-КОМАНДЫ ==========
 
@@ -1304,7 +1416,7 @@ def get_user_chats_list(user_id, check_admin=False):
             continue
     return user_chats
 
-# ========== СКРЫТЫЕ СООБЩЕНИЯ (ИСПРАВЛЕННЫЕ) ==========
+# ========== СКРЫТЫЕ СООБЩЕНИЯ ==========
 @bot.inline_handler(func=lambda query: True)
 def inline_query(query):
     try:
@@ -1387,17 +1499,14 @@ def handle_secret_read(call):
         bot.answer_callback_query(call.id, "❌ Не для вас", show_alert=True)
         return
     
-    # Проверяем срок (не удаляем, просто показываем)
+    # Проверяем срок
     if time.time() > data["expires"]:
         bot.answer_callback_query(call.id, "❌ Сообщение истекло", show_alert=True)
         return
     
-    # Короткий и красивый текст
     message_text = f"📩 {data['sender_name']}:\n\n{data['content']}"
-    
-    # Показываем всплывающее окно (не удаляем сообщение!)
     bot.answer_callback_query(call.id, message_text, show_alert=True)
-    print(f"✅ Сообщение {msg_id} показано, осталось в кэше до {time.ctime(data['expires'])}")
+    print(f"✅ Сообщение {msg_id} показано, осталось в кэше")
 
 def clean_old_secrets():
     while True:
@@ -1632,7 +1741,24 @@ def handle_callback(call):
         update_chat_summary_settings(chat_id, "quote_enabled", True)
         bot.answer_callback_query(call.id, "💬 Цитирование включено!")
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_summary_settings(user_id, chat_id)
+        # Показываем обновленные настройки
+        settings = get_chat_summary_settings(chat_id)
+        status = "✅ Вкл" if settings.get("enabled") else "❌ Выкл"
+        mode = "🤖 ИИ" if settings["mode"] == "ai" else "📊 Обычный"
+        quote_status = "💬 Вкл" if settings.get("quote_enabled", False) else "📝 Выкл"
+        text = f"📊 *Настройки*\n\n🟢 Статус: {status}\n🤖 Режим: {mode}\n🕐 Время: {settings['time']}\n💬 Цитирование: {quote_status}"
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("✅ Вкл", callback_data=f"summ_enable_{chat_id}"),
+            InlineKeyboardButton("❌ Выкл", callback_data=f"summ_disable_{chat_id}"),
+            InlineKeyboardButton("🤖 ИИ", callback_data=f"summ_ai_{chat_id}"),
+            InlineKeyboardButton("📊 Обычный", callback_data=f"summ_normal_{chat_id}"),
+            InlineKeyboardButton("💬 Вкл цит.", callback_data=f"summ_quote_on_{chat_id}"),
+            InlineKeyboardButton("📝 Выкл цит.", callback_data=f"summ_quote_off_{chat_id}"),
+            InlineKeyboardButton("📋 Показать", callback_data=f"summ_show_{chat_id}"),
+            InlineKeyboardButton("◀ Назад", callback_data="menu_summary")
+        )
+        bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
         
     elif data.startswith("summ_quote_off_"):
         chat_id = int(data.split("_")[3])
@@ -1642,7 +1768,24 @@ def handle_callback(call):
         update_chat_summary_settings(chat_id, "quote_enabled", False)
         bot.answer_callback_query(call.id, "📝 Цитирование выключено!")
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_summary_settings(user_id, chat_id)
+        # Показываем обновленные настройки
+        settings = get_chat_summary_settings(chat_id)
+        status = "✅ Вкл" if settings.get("enabled") else "❌ Выкл"
+        mode = "🤖 ИИ" if settings["mode"] == "ai" else "📊 Обычный"
+        quote_status = "💬 Вкл" if settings.get("quote_enabled", False) else "📝 Выкл"
+        text = f"📊 *Настройки*\n\n🟢 Статус: {status}\n🤖 Режим: {mode}\n🕐 Время: {settings['time']}\n💬 Цитирование: {quote_status}"
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("✅ Вкл", callback_data=f"summ_enable_{chat_id}"),
+            InlineKeyboardButton("❌ Выкл", callback_data=f"summ_disable_{chat_id}"),
+            InlineKeyboardButton("🤖 ИИ", callback_data=f"summ_ai_{chat_id}"),
+            InlineKeyboardButton("📊 Обычный", callback_data=f"summ_normal_{chat_id}"),
+            InlineKeyboardButton("💬 Вкл цит.", callback_data=f"summ_quote_on_{chat_id}"),
+            InlineKeyboardButton("📝 Выкл цит.", callback_data=f"summ_quote_off_{chat_id}"),
+            InlineKeyboardButton("📋 Показать", callback_data=f"summ_show_{chat_id}"),
+            InlineKeyboardButton("◀ Назад", callback_data="menu_summary")
+        )
+        bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
         
     elif data.startswith("summ_show_"):
         chat_id = int(data.split("_")[2])
