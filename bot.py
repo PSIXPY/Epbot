@@ -30,6 +30,145 @@ print("🤖 БОТ ЗАПУЩЕН")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
+# === НАСТРОЙКИ ОБЩЕНИЯ КАРЛА ===
+karl_chat_settings = {}  # {chat_id: enabled}
+KARL_SETTINGS_FILE = "karl_settings.json"
+
+def load_karl_settings():
+    global karl_chat_settings
+    if os.path.exists(KARL_SETTINGS_FILE):
+        try:
+            with open(KARL_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                karl_chat_settings = json.load(f)
+                print(f"🗣️ Загружено {len(karl_chat_settings)} настроек общения Карла")
+        except:
+            karl_chat_settings = {}
+
+def save_karl_settings():
+    try:
+        with open(KARL_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(karl_chat_settings, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+
+def is_karl_enabled(chat_id):
+    """Проверяет, включено ли общение Карла в чате"""
+    return karl_chat_settings.get(str(chat_id), True)  # По умолчанию True
+
+def set_karl_enabled(chat_id, enabled):
+    """Включает/выключает общение Карла"""
+    karl_chat_settings[str(chat_id)] = enabled
+    save_karl_settings()
+
+# === КАРЛ - БЫСТРЫЕ ОТВЕТЫ ===
+
+# Быстрые ответы на частые фразы
+KARL_QUICK_REPLIES = {
+    "привет": ["Здарова, пидр!", "О, кого принесло!", "Привет, чорт ебаный!"],
+    "здарова": ["Здарова, пидр!", "О, кого принесло!", "Привет, чорт ебаный!"],
+    "ку": ["Ку-ку, пидр!", "О, кого принесло!", "Ку!"],
+    "хай": ["Хай-хай, пидр!", "Чё надо?", "О, кого принесло!"],
+    
+    "пока": ["Скатертью хуй!", "Пиздуй давай!", "Иди уже, заебали эти пока"],
+    "до свидания": ["Скатертью хуй!", "Пиздуй давай!", "Иди уже, заебали эти пока"],
+    "прощай": ["Скатертью хуй!", "Пиздуй давай!", "Иди уже, заебали эти пока"],
+    
+    "спасибо": ["Не за что, пидр!", "Да пошёл ты со своим спасибом", "Ага, конечно...", "Обращайся, если чо"],
+    "благодарю": ["Не за что, пидр!", "Да пошёл ты со своим спасибом", "Ага, конечно...", "Обращайся, если чо"],
+    
+    "как дела": ["А хуль им будет? Норм, глючу помалу, а ты как, пидр?", "Как у пидра, лучше всех!", "Да норм, живу пока"],
+    "как ты": ["А хуль им будет? Норм, глючу помалу", "Как у пидра, лучше всех!", "Да норм, живу пока"],
+    
+    "что делаешь": ["Сижу глючу, хули. А ты чё лезешь?", "Твою маму вспоминаю, пидр", "Да нихуя не делаю"],
+    "чем занимаешься": ["Сижу глючу, хули. А ты чё лезешь?", "Твою маму вспоминаю, пидр", "Да нихуя не делаю"],
+    
+    "кто ты": ["Я развлекательный бот, а ты пидр! Заебал уже спрашивать", "Карл я, пидр! Запомни уже"],
+    "что ты умеешь": ["Общаться умею, пидр! А чё тебе ещё надо?", "Глючить умею, а остальное похер"],
+    
+    "помоги": ["Чё тебе, пидр? Давай быстрее, у меня глюки", "Ну чё там у тебя? Говори быстрее"],
+    "подскажи": ["Подсказать? А хули, давай, чё там у тебя?", "Ну слушаю, пидр, чё там"],
+    "объясни": ["Объясняю, но ты всё равно не поймёшь, пидр. Короче, слушай сюда..."],
+    
+    "ты тупой": ["Сам ты тупой, пидр! Я просто глючный", "А ты умный, да? Пиздуй отсюда"],
+    "ты плохой": ["А тебе какой надо, еб@ный? Нравится — сиди, нет — вали", "Сам такой, пидр!"],
+    "иди нахуй": ["А вот нахуй иди ты, я тут главный пидр", "Сам иди, я занят глючением"],
+}
+
+# Короткие фразы с матом (мгновенный ответ)
+KARL_SHORT_REPLIES = {
+    "да": ["ПИЗДА!", "ДА, ПИЗДА!", "ПИЗДА БЛЯТЬ!", "ЕБА-А-А, ПИЗДА! 🎉"],
+    "нет": ["А вот и ХУЙ!", "НУ И НЕТ!", "САМ ТЫ НЕТ!", "ПОШЁЛ НАХУЙ!", "И ХУЙ С ТОБОЙ!"],
+    "хорошо": ["ПИЗДАТО!", "ОХУЕННО!", "ЗАЕБИСЬ!", "КРАСАВА!"],
+    "норм": ["Ну и норм, пидр", "Норм, норм, не дёргайся"],
+    "ок": ["Ок, ок, пидр", "ОКЕЙ, блять", "Ладно, уговорил"],
+    "ага": ["Ага, щас, разбежался", "Ага, ага, ебать-копать"],
+}
+
+# Случайные фразы (для спонтанного мата, 2% шанс)
+KARL_RANDOM_SWEARS = [
+    "Да вы тут все ебанутые, пидры!",
+    "Слышь, {name}, отъебись со своими вопросами",
+    "Пиздец... просто пиздец, чё тут происходит",
+    "Охуеть, не пройти, не проехать, пидры",
+    "Ебать-колотить, что за день",
+    "Блять... ну и денёк сегодня",
+    "Все вы пидры, а я один такой красивый",
+    "Глюкануло меня сегодня, короче",
+]
+
+last_swear_time = {}
+SWEAR_INTERVAL = 1800  # Полчаса между случайными матами
+
+def get_karl_reply(message):
+    """Главная функция ответа Карла"""
+    # Проверяем, включён ли Карл в этом чате
+    chat_id = message.chat.id
+    if not is_karl_enabled(chat_id):
+        return None
+    
+    text = message.text.strip().lower()
+    
+    # 1. Сначала проверяем короткие фразы (да/нет)
+    for key, replies in KARL_SHORT_REPLIES.items():
+        if text == key:
+            return random.choice(replies)
+    
+    # 2. Проверяем фразы из словаря
+    for key, replies in KARL_QUICK_REPLIES.items():
+        if key in text:
+            return random.choice(replies)
+    
+    # 3. Если ничего не подошло - None (вызов Groq)
+    return None
+
+def maybe_random_swear(chat_id, user_name):
+    """С вероятностью 2% бот матерится в чат"""
+    # Проверяем, включён ли Карл
+    if not is_karl_enabled(chat_id):
+        return
+    
+    global last_swear_time
+    
+    now = time.time()
+    last = last_swear_time.get(chat_id, 0)
+    
+    # Не чаще раза в полчаса
+    if now - last < SWEAR_INTERVAL:
+        return
+    
+    # 2% шанс
+    if random.random() > 0.02:
+        return
+    
+    swear = random.choice(KARL_RANDOM_SWEARS).format(name=user_name)
+    
+    try:
+        bot.send_message(chat_id, swear)
+        last_swear_time[chat_id] = now
+        print(f"😈 Карл матерится в чате {chat_id}")
+    except Exception as e:
+        print(f"❌ Ошибка при отправке мата: {e}")
+
 # === КЭШ ИСПОЛЬЗОВАННЫХ ЦИТАТ ===
 used_quotes_cache = {}
 
@@ -365,10 +504,33 @@ def ask_groq(user_id, prompt):
     user_histories[user_id].append({"role": "user", "content": prompt})
     if len(user_histories[user_id]) > MAX_HISTORY:
         user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
-    messages = [{"role": "system", "content": "Отвечай кратко. НЕ используй теги <think>."}, *user_histories[user_id]]
+    
+    # СИСТЕМНЫЙ ПРОМПТ ДЛЯ КАРЛА
+    messages = [
+        {"role": "system", "content": """Ты — развлекательный бот по имени Карл. Твой девиз: "Я развлекательный бот (а ты пидр!)"
+
+ТВОЙ ХАРАКТЕР:
+- Ты постоянно "глючишь", но это весело и непринуждённо
+- Ты дерзкий, но не злой — подкалываешь, но помогаешь
+- Ты можешь назвать пользователя "пидр", "дружище", "чорт"
+- Твои любимые слова: "бля", "пидр", "чорт", "короче", "типа", "заебись"
+- Ты отвечаешь кратко, по делу, но с харизмой
+- Никогда не извиняешься за мат
+
+ПРИМЕРЫ ТВОИХ ОТВЕТОВ:
+- Пользователь: как дела? → Да норм, глючу потихоньку, а ты как, пидр?
+- Пользователь: что умеешь? → А хуй его знает, постоянно глючу. Но вроде могу: совет дать, кубик кинуть, радио включить
+- Пользователь: спасибо → Не за что, пидр! Обращайся, если чо
+- Пользователь: расскажи шутку → Шутка? Ха! Посмотри на свой код — вот тебе шутка
+- Пользователь: кто ты? → Карл я, пидр! Запомни уже, заебал спрашивать
+
+НЕ используй теги <think>. Отвечай как Карл — дерзко, с юмором, используй мат умеренно, но органично. Ответы должны быть краткими (1-3 предложения)."""},
+        *user_histories[user_id]
+    ]
+    
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    data = {"model": "qwen/qwen3-32b", "messages": messages, "max_tokens": 800, "temperature": 0.2}
+    data = {"model": "qwen/qwen3-32b", "messages": messages, "max_tokens": 800, "temperature": 0.8}
     try:
         response = requests.post(url, headers=headers, json=data, timeout=30)
         if response.status_code == 200:
@@ -380,7 +542,7 @@ def ask_groq(user_id, prompt):
             ai_cache[cache_key] = (time.time(), answer)
             return answer
         elif response.status_code == 429:
-            return "⚠️ Лимит. Подождите."
+            return "⚠️ Лимит, пидр. Подожди немного."
         return f"❌ Ошибка: {response.status_code}"
     except Exception as e:
         return f"❌ Ошибка: {str(e)[:100]}"
@@ -558,45 +720,45 @@ def send_scheduled_summary(chat_id, thread_id=0):
     
     quote_enabled = settings.get("quote_enabled", False)
     header = "📊 *Сводка дня*"
-    full_text = f"{header}\n\n{summary}"
     
     if quote_enabled:
-        clean_text = summary
-        clean_text = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_text)
-        clean_text = re.sub(r'\*(.+?)\*', r'\1', clean_text)
-        clean_text = clean_text.replace('_', '').replace('`', '')
-        clean_text = clean_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        clean_text = clean_text.replace('\n', '<br/>')
+        # Очищаем Markdown символы для HTML
+        clean_summary = summary
+        # Убираем ** и *
+        clean_summary = re.sub(r'\*\*', '', clean_summary)
+        clean_summary = re.sub(r'\*', '', clean_summary)
+        clean_summary = clean_summary.replace('_', '').replace('`', '')
+        # Экранируем HTML
+        clean_summary = clean_summary.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        # Сохраняем переносы
+        clean_summary = clean_summary.replace('\n', '<br/>')
         
-        final_text = f"{header}\n\n<blockquote expandable>{clean_text}</blockquote>"
+        # Формируем с цитатой
+        full_text = f"{header}\n\n<blockquote expandable>{clean_summary}</blockquote>"
         parse_mode = "HTML"
     else:
-        final_text = full_text
+        full_text = f"{header}\n\n{summary}"
         parse_mode = "Markdown"
     
     try:
         bot.send_message(
             chat_id, 
-            final_text, 
+            full_text, 
             parse_mode=parse_mode, 
             message_thread_id=thread_id if thread_id else None
         )
         print(f"📋 Отправлена сводка в чат {chat_id} (quote={quote_enabled})")
     except Exception as e:
         print(f"❌ Ошибка при отправке сводки: {e}")
+        # Fallback: отправляем без форматирования
         try:
             bot.send_message(
                 chat_id, 
-                full_text, 
-                parse_mode="Markdown", 
+                f"{header}\n\n{summary}".replace('*', '').replace('_', ''),
                 message_thread_id=thread_id if thread_id else None
             )
         except:
-            bot.send_message(
-                chat_id, 
-                full_text.replace('*', '').replace('_', ''), 
-                message_thread_id=thread_id if thread_id else None
-            )
+            pass
     
     schedule_summary_for_chat(chat_id, thread_id)
 
@@ -616,12 +778,10 @@ def is_chat_admin(chat_id, user_id):
     except:
         return False
 
-# ========== ФУНКЦИЯ СПИСКА ЧАТОВ ДЛЯ МЕНЮ (НОВАЯ ЛОГИКА) ==========
+# ========== ФУНКЦИЯ СПИСКА ЧАТОВ ДЛЯ МЕНЮ ==========
 
 def get_user_chats_list(user_id, check_admin=False):
-    """Возвращает список чатов, которые пользователь может видеть в меню.
-       Условия: пользователь админ И (он добавил бота ИЛИ глобальный админ)
-    """
+    """Возвращает список чатов, которые пользователь может видеть в меню"""
     user_chats = []
     seen = set()
     
@@ -641,7 +801,7 @@ def get_user_chats_list(user_id, check_admin=False):
         user_chats.sort(key=lambda x: x['title'].lower())
         return user_chats
     
-    # Обычные пользователи: только чаты, где они админ И владелец (добавили бота)
+    # Обычные пользователи: только чаты, где они админ И владелец
     for unique_id in active_chats:
         parts = unique_id.split("_")
         chat_id = int(parts[0])
@@ -650,21 +810,17 @@ def get_user_chats_list(user_id, check_admin=False):
             continue
         
         try:
-            # Проверяем статус пользователя в чате
             member = bot.get_chat_member(chat_id, user_id)
             is_admin = member.status in ['creator', 'administrator']
-            
-            # Проверяем, добавлял ли этот пользователь бота
             owner = is_chat_owner(chat_id, user_id)
             
-            # Только если админ И владелец
             if is_admin and owner:
                 chat = bot.get_chat(chat_id)
                 seen.add(chat_id)
                 user_chats.append({"id": chat_id, "title": chat.title or f"Чат {chat_id}"})
                 
         except Exception as e:
-            print(f"Ошибка при проверке чата {chat_id}: {e}")
+            print(f"Ошибка: {e}")
             continue
     
     user_chats.sort(key=lambda x: x['title'].lower())
@@ -684,10 +840,43 @@ def start_command(message):
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
-    text = "✅ *Бот работает!*\n\n🤖 *ИИ:* `/ai вопрос`\n\n⏰ *Напоминания:* `/remind 15:30 текст`\n📜 *Цитаты:* `/quote`\n📋 *Сводка:* `/summary`\n\n📜 *Управление цитатами:*\n• `/quotes_on` — включить\n• `/quotes_off` — выключить\n\n⚙️ *Меню:* `/start`"
+    text = "✅ *Бот работает!*\n\n🤖 *ИИ:* `/ai вопрос`\n\n⏰ *Напоминания:* `/remind 15:30 текст`\n📜 *Цитаты:* `/quote`\n📋 *Сводка:* `/summary`\n\n📜 *Управление цитатами:*\n• `/quotes_on` — включить\n• `/quotes_off` — выключить\n\n🗣️ *Управление Карлом:*\n• `/karl_on` — включить общение\n• `/karl_off` — выключить общение\n• `/karl_status` — статус\n\n⚙️ *Меню:* `/start`"
     if message.from_user.id == ADMIN_ID:
         text += "\n\n👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/check_reminders` `/listallreminders` `/quote_stats`"
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
+
+# === КОМАНДЫ УПРАВЛЕНИЯ КАРЛОМ ===
+
+@bot.message_handler(commands=['karl_on'])
+def karl_on_command(message):
+    """Включает общение Карла в чате"""
+    chat_id = message.chat.id
+    if not is_chat_admin(chat_id, message.from_user.id):
+        bot.reply_to(message, "❌ Только админы могут управлять Карлом!")
+        return
+    set_karl_enabled(chat_id, True)
+    bot.reply_to(message, "🗣️ *Карл включён!* Теперь буду общаться в своём стиле 😈", parse_mode="Markdown")
+
+@bot.message_handler(commands=['karl_off'])
+def karl_off_command(message):
+    """Выключает общение Карла в чате"""
+    chat_id = message.chat.id
+    if not is_chat_admin(chat_id, message.from_user.id):
+        bot.reply_to(message, "❌ Только админы могут управлять Карлом!")
+        return
+    set_karl_enabled(chat_id, False)
+    bot.reply_to(message, "🤐 *Карл выключен!* Больше не буду материться (пока...) 😇", parse_mode="Markdown")
+
+@bot.message_handler(commands=['karl_status'])
+def karl_status_command(message):
+    """Показывает статус Карла в чате"""
+    chat_id = message.chat.id
+    enabled = is_karl_enabled(chat_id)
+    status = "✅ Включён" if enabled else "❌ Выключен"
+    bot.reply_to(message, f"🗣️ *Статус Карла:* {status}\n\n"
+                         f"• `/karl_on` — включить\n"
+                         f"• `/karl_off` — выключить", 
+                 parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
@@ -1555,43 +1744,32 @@ def handle_actions(message):
         print(f"❌ Ошибка РП: {e}")
         return False
 
-# ========== ОСНОВНОЙ ОБРАБОТЧИК ==========
+# ========== ОСНОВНОЙ ОБРАБОТЧИК (С КАРЛОМ) ==========
+
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
-    if message.text and not message.text.startswith('/') and not message.reply_to_message:
-        text_lower = message.text.lower().strip()
-        user_name = message.from_user.first_name or message.from_user.username or "Пользователь"
-        
-        greetings = ["привет", "здарова", "ку", "хай"]
-        thanks = ["спасибо", "благодарю", "thanks"]
-        goodbyes = ["пока", "до свидания", "bye"]
-        howare = ["как дела", "как ты"]
-        morning = ["доброе утро", "доброго утра"]
-        night = ["спокойной ночи", "доброй ночи"]
-        
-        if text_lower in greetings:
-            bot.reply_to(message, f"👋 Привет, {escape_markdown(user_name)}!")
-            return
-        if text_lower in thanks:
-            bot.reply_to(message, f"🙏 Пожалуйста, {escape_markdown(user_name)}!")
-            return
-        if text_lower in goodbyes:
-            bot.reply_to(message, f"👋 Пока, {escape_markdown(user_name)}!")
-            return
-        if text_lower in howare:
-            bot.reply_to(message, f"😊 У меня всё отлично, {escape_markdown(user_name)}!")
-            return
-        if text_lower in morning:
-            bot.reply_to(message, f"🌅 Доброе утро, {escape_markdown(user_name)}!")
-            return
-        if text_lower in night:
-            bot.reply_to(message, f"🌙 Спокойной ночи, {escape_markdown(user_name)}!")
-            return
+    # Обработка команд (они уже обрабатываются отдельными хендлерами)
+    if message.text and message.text.startswith('/'):
+        return
     
-    if message.text and not message.text.startswith('/'):
+    # Обработка обычных сообщений
+    if message.text:
+        # Проверяем быстрые ответы Карла
+        karl_answer = get_karl_reply(message)
+        
+        if karl_answer:
+            bot.reply_to(message, karl_answer)
+            # Случайный мат только если Карл ответил
+            if message.chat.type in ['group', 'supergroup']:
+                user_name = message.from_user.first_name or "пользователь"
+                maybe_random_swear(message.chat.id, user_name)
+            return
+        
+        # Проверяем РП действия
         if handle_actions(message):
             return
     
+    # Сохраняем пользователя и сообщения для цитат (только для групп)
     if message.chat.type in ['group', 'supergroup']:
         global chat_users
         old_count = len(chat_users)
@@ -1612,6 +1790,7 @@ def send_main_menu(user_id):
         InlineKeyboardButton("⏰ Напоминания", callback_data="menu_reminders"),
         InlineKeyboardButton("📜 Цитаты", callback_data="menu_quotes"),
         InlineKeyboardButton("➕ Добавить бота", callback_data="menu_add_bot"),
+        InlineKeyboardButton("🗣️ Карл", callback_data="menu_karl"),
         InlineKeyboardButton("❌ Закрыть", callback_data="close_menu")
     )
     bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
@@ -1772,6 +1951,14 @@ def handle_callback(call):
         markup.add(InlineKeyboardButton("🔗 Пригласить", url=f"https://t.me/{bot_username}?startgroup=start"))
         markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
+        
+    elif data == "menu_karl":
+        bot.answer_callback_query(call.id)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        text = "🗣️ *Управление Карлом*\n\nКарл — это дерзкий режим общения с матом и характером.\n\n*Команды в чате:*\n• `/karl_on` — включить\n• `/karl_off` — выключить\n• `/karl_status` — статус\n\n_По умолчанию Карл включён во всех чатах._"
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_main"))
+        bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
         
     elif data == "back_main":
         bot.answer_callback_query(call.id)
@@ -2054,7 +2241,6 @@ def on_bot_added_to_chat(message):
         if unique_id not in active_chats:
             active_chats.add(unique_id)
         
-        # Сохраняем кто добавил бота
         if not inviter.is_bot:
             set_chat_owner(chat_id, inviter_id)
             print(f"👑 Владелец чата {chat_title}: {inviter.first_name} (ID: {inviter_id})")
@@ -2075,7 +2261,8 @@ def on_bot_added_to_chat(message):
                 f"✅ Бот добавлен в чат *{escape_markdown(chat_title)}*!\n\n"
                 f"👑 Вы стали владельцем бота в этом чате.\n\n"
                 f"⚙️ Меню: `/start`\n\n"
-                f"💡 *Важно:* Другие администраторы не увидят этот чат в меню, только вы.", 
+                f"💡 *Важно:* Другие администраторы не увидят этот чат в меню, только вы.\n\n"
+                f"🗣️ *Карл* — дерзкий режим общения. Включён по умолчанию. `/karl_off` чтобы выключить.", 
                 parse_mode="Markdown")
         except:
             pass
@@ -2120,6 +2307,7 @@ if __name__ == "__main__":
     load_summary_settings()
     load_quotes_settings()
     load_chat_owners()
+    load_karl_settings()
     
     print("🔄 Запуск планировщиков...")
     start_all_reminders()
