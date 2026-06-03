@@ -30,9 +30,9 @@ print("🤖 БОТ ЗАПУЩЕН")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
-# === ПИДОР И СУКА ДНЯ ===
-pidor_of_day = {"user_id": None, "name": None, "date": None}
-suka_of_day = {"user_id": None, "name": None, "date": None}
+# === ПИДОР И СУКА ДНЯ (ДЛЯ КАЖДОГО ЧАТА СВОИ) ===
+pidor_of_day = {}  # {chat_id: {"user_id": ..., "name": ..., "date": ...}}
+suka_of_day = {}   # {chat_id: {"user_id": ..., "name": ..., "date": ...}}
 PIDOR_FILE = "pidor_of_day.json"
 SUKA_FILE = "suka_of_day.json"
 
@@ -42,9 +42,9 @@ def load_pidor():
         try:
             with open(PIDOR_FILE, 'r', encoding='utf-8') as f:
                 pidor_of_day = json.load(f)
-                print(f"Загружен пидор дня: {pidor_of_day.get('name', 'None')}")
+                print(f"🏳️‍🌈 Загружены пидоры дня для {len(pidor_of_day)} чатов")
         except:
-            pass
+            pidor_of_day = {}
 
 def save_pidor():
     try:
@@ -59,9 +59,9 @@ def load_suka():
         try:
             with open(SUKA_FILE, 'r', encoding='utf-8') as f:
                 suka_of_day = json.load(f)
-                print(f"Загружена сука дня: {suka_of_day.get('name', 'None')}")
+                print(f"🐕 Загружены суки дня для {len(suka_of_day)} чатов")
         except:
-            pass
+            suka_of_day = {}
 
 def save_suka():
     try:
@@ -73,54 +73,87 @@ def save_suka():
 def get_random_user_from_chat(chat_id):
     """Получает случайного пользователя из чата (не бота)"""
     try:
-        members = bot.get_chat_administrators(chat_id)
-        if not members:
-            users = list(chat_users.values())
-            if users:
-                random_user = random.choice(users)
-                user_id = random_user.get('id')
-                name = random_user.get('first_name') or random_user.get('username') or "Аноним"
-                if user_id and str(user_id).startswith('manual_'):
-                    return user_id, name
-                return user_id, name
-        else:
-            real_members = [m for m in members if not m.user.is_bot]
-            if real_members:
-                random_member = random.choice(real_members)
-                user = random_member.user
-                return user.id, user.first_name or user.username or "Аноним"
+        # Пробуем получить участников чата
+        all_members = []
+        
+        try:
+            for i in range(0, 200, 50):
+                members = bot.get_chat_members(chat_id, offset=i, limit=50)
+                for m in members:
+                    if not m.user.is_bot and m.user.id != bot.get_me().id:
+                        all_members.append(m)
+                if len(members) < 50:
+                    break
+        except:
+            admins = bot.get_chat_administrators(chat_id)
+            for a in admins:
+                if not a.user.is_bot and a.user.id != bot.get_me().id:
+                    all_members.append(a)
+        
+        if all_members:
+            random_member = random.choice(all_members)
+            user = random_member.user
+            return user.id, user.first_name or user.username or "Аноним"
+        
+        users = list(chat_users.values())
+        real_users = [u for u in users if not str(u.get('id', '')).startswith('manual_')]
+        if real_users:
+            random_user = random.choice(real_users)
+            user_id = random_user.get('id')
+            name = random_user.get('first_name') or random_user.get('username') or "Аноним"
+            return user_id, name
+            
     except Exception as e:
-        print(f"❌ Ошибка получения пользователей: {e}")
+        print(f"❌ Ошибка: {e}")
     
     return None, "Никого"
 
-def update_pidor_and_suka(chat_id):
-    """Обновляет пидора и суку дня (раз в день)"""
-    global pidor_of_day, suka_of_day
+def update_pidor_for_chat(chat_id):
+    """Обновляет пидора дня для конкретного чата"""
+    global pidor_of_day
     
     today = get_today_date()
+    chat_pidor = pidor_of_day.get(str(chat_id), {})
     
-    if pidor_of_day.get("date") != today:
+    if chat_pidor.get("date") != today:
         user_id, name = get_random_user_from_chat(chat_id)
-        pidor_of_day = {
+        pidor_of_day[str(chat_id)] = {
             "user_id": user_id,
             "name": name,
             "date": today
         }
         save_pidor()
-        print(f"Новый пидор дня: {name}")
+        print(f"🏳️‍🌈 Пидор дня в чате {chat_id}: {name}")
+
+def update_suka_for_chat(chat_id):
+    """Обновляет суку дня для конкретного чата"""
+    global suka_of_day
     
-    if suka_of_day.get("date") != today:
+    today = get_today_date()
+    chat_suka = suka_of_day.get(str(chat_id), {})
+    
+    if chat_suka.get("date") != today:
         user_id, name = get_random_user_from_chat(chat_id)
-        if user_id == pidor_of_day.get("user_id"):
+        chat_pidor = pidor_of_day.get(str(chat_id), {})
+        if user_id == chat_pidor.get("user_id"):
             user_id, name = get_random_user_from_chat(chat_id)
-        suka_of_day = {
+        suka_of_day[str(chat_id)] = {
             "user_id": user_id,
             "name": name,
             "date": today
         }
         save_suka()
-        print(f"Новая сука дня: {name}")
+        print(f"🐕 Сука дня в чате {chat_id}: {name}")
+
+def get_pidor_for_chat(chat_id):
+    """Возвращает пидора дня для чата"""
+    update_pidor_for_chat(chat_id)
+    return pidor_of_day.get(str(chat_id), {})
+
+def get_suka_for_chat(chat_id):
+    """Возвращает суку дня для чата"""
+    update_suka_for_chat(chat_id)
+    return suka_of_day.get(str(chat_id), {})
 
 # === НАСТРОЙКИ ОБЩЕНИЯ КАРЛА ===
 karl_chat_settings = {}
@@ -150,7 +183,7 @@ def set_karl_enabled(chat_id, enabled):
     karl_chat_settings[str(chat_id)] = enabled
     save_karl_settings()
 
-# === КАРЛ - БЫСТРЫЕ ОТВЕТЫ (ТОЛЬКО ТОЧНЫЕ СОВПАДЕНИЯ) ===
+# === КАРЛ - БЫСТРЫЕ ОТВЕТЫ ===
 
 KARL_QUICK_REPLIES = {
     "привет": ["Здарова, пидр!", "О, кого принесло!", "Привет, чорт ебаный!"],
@@ -236,17 +269,14 @@ def get_karl_reply(message):
     
     text = message.text.strip().lower()
     
-    # Точное совпадение (короткие фразы)
     for key, replies in KARL_SHORT_REPLIES.items():
         if text == key:
             return random.choice(replies)
     
-    # Точное совпадение (длинные фразы)
     for key, replies in KARL_QUICK_REPLIES.items():
         if text == key:
             return random.choice(replies)
     
-    # Начинается с фразы (для "как дела", "что делаешь")
     for key, replies in KARL_QUICK_REPLIES.items():
         if len(key.split()) > 1 and text.startswith(key):
             return random.choice(replies)
@@ -275,7 +305,7 @@ def maybe_random_swear(chat_id, user_name):
         last_swear_time[chat_id] = now
         print(f"😈 Карл матерится в чате {chat_id}")
     except Exception as e:
-        print(f"❌ Ошибка при отправке мата: {e}")
+        print(f"❌ Ошибка: {e}")
 
 # === КЭШ ИСПОЛЬЗОВАННЫХ ЦИТАТ ===
 used_quotes_cache = {}
@@ -932,8 +962,8 @@ def start_command(message):
 def help_command(message):
     text = """✅ *Бот работает!*
 
-🏳️‍🌈 *Пидор дня:* `/pidor`
-🐕 *Сука дня:* `/suka`
+*ПИДОР ДНЯ:* `/pidor`
+*СУКА ДНЯ:* `/suka`
 🤖 *ИИ:* `/ai вопрос`
 ⏰ *Напоминания:* `/remind 15:30 текст`
 📜 *Цитаты:* `/quote`
@@ -962,10 +992,10 @@ def pidor_command(message):
     chat_id = message.chat.id
     thread_id = message.message_thread_id or 0
     
-    update_pidor_and_suka(chat_id)
+    pidor_data = get_pidor_for_chat(chat_id)
     
-    if pidor_of_day.get("user_id"):
-        text = f"*ПИДОР ДНЯ:* {pidor_of_day['name']}\n\n_{pidor_of_day['name']} официально признан пидором этого дня!_"
+    if pidor_data.get("user_id"):
+        text = f"*ПИДОР ДНЯ:* {pidor_data['name']}\n\n_{pidor_data['name']} официально признан пидором этого дня!_"
     else:
         text = "Не удалось определить пидора дня. Попробуйте позже."
     
@@ -976,10 +1006,10 @@ def suka_command(message):
     chat_id = message.chat.id
     thread_id = message.message_thread_id or 0
     
-    update_pidor_and_suka(chat_id)
+    suka_data = get_suka_for_chat(chat_id)
     
-    if suka_of_day.get("user_id"):
-        text = f"*СУКА ДНЯ:* {suka_of_day['name']}\n\n_{suka_of_day['name']} официально признана сукой этого дня!_"
+    if suka_data.get("user_id"):
+        text = f"*СУКА ДНЯ:* {suka_data['name']}\n\n_{suka_data['name']} официально признана сукой этого дня!_"
     else:
         text = "Не удалось определить суку дня. Попробуйте позже."
     
@@ -992,15 +1022,14 @@ def pidor_reset_command(message):
         bot.reply_to(message, "❌ Только админы могут сбросить пидора дня!")
         return
     
-    global pidor_of_day
     user_id, name = get_random_user_from_chat(chat_id)
-    pidor_of_day = {
+    pidor_of_day[str(chat_id)] = {
         "user_id": user_id,
         "name": name,
         "date": get_today_date()
     }
     save_pidor()
-    bot.reply_to(message, f"Пидор дня принудительно обновлён на {name}")
+    bot.reply_to(message, f"Пидор дня в этом чате принудительно обновлён на {name}")
 
 @bot.message_handler(commands=['suka_reset'])
 def suka_reset_command(message):
@@ -1009,15 +1038,17 @@ def suka_reset_command(message):
         bot.reply_to(message, "❌ Только админы могут сбросить суку дня!")
         return
     
-    global suka_of_day
     user_id, name = get_random_user_from_chat(chat_id)
-    suka_of_day = {
+    chat_pidor = pidor_of_day.get(str(chat_id), {})
+    if user_id == chat_pidor.get("user_id"):
+        user_id, name = get_random_user_from_chat(chat_id)
+    suka_of_day[str(chat_id)] = {
         "user_id": user_id,
         "name": name,
         "date": get_today_date()
     }
     save_suka()
-    bot.reply_to(message, f"Сука дня принудительно обновлена на {name}")
+    bot.reply_to(message, f"Сука дня в этом чате принудительно обновлена на {name}")
 
 # === КОМАНДЫ УПРАВЛЕНИЯ КАРЛОМ ===
 
@@ -1898,13 +1929,10 @@ def handle_actions(message):
 
 @bot.message_handler(func=lambda message: True)
 def main_handler(message):
-    # Обработка команд (они уже обрабатываются отдельными хендлерами)
     if message.text and message.text.startswith('/'):
         return
     
-    # Обработка обычных сообщений
     if message.text:
-        # Проверяем быстрые ответы Карла
         karl_answer = get_karl_reply(message)
         if karl_answer:
             bot.reply_to(message, karl_answer)
@@ -1913,11 +1941,9 @@ def main_handler(message):
                 maybe_random_swear(message.chat.id, user_name)
             return
         
-        # Проверяем РП действия
         if handle_actions(message):
             return
     
-    # Сохраняем пользователя и сообщения для цитат (только для групп)
     if message.chat.type in ['group', 'supergroup']:
         global chat_users
         old_count = len(chat_users)
