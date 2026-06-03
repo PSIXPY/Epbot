@@ -30,8 +30,100 @@ print("🤖 БОТ ЗАПУЩЕН")
 print(f"🔑 TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 ADMIN: {ADMIN_ID}")
 
+# === ПИДОР И СУКА ДНЯ ===
+pidor_of_day = {"user_id": None, "name": None, "date": None}
+suka_of_day = {"user_id": None, "name": None, "date": None}
+PIDOR_FILE = "pidor_of_day.json"
+SUKA_FILE = "suka_of_day.json"
+
+def load_pidor():
+    global pidor_of_day
+    if os.path.exists(PIDOR_FILE):
+        try:
+            with open(PIDOR_FILE, 'r', encoding='utf-8') as f:
+                pidor_of_day = json.load(f)
+                print(f"Загружен пидор дня: {pidor_of_day.get('name', 'None')}")
+        except:
+            pass
+
+def save_pidor():
+    try:
+        with open(PIDOR_FILE, 'w', encoding='utf-8') as f:
+            json.dump(pidor_of_day, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+
+def load_suka():
+    global suka_of_day
+    if os.path.exists(SUKA_FILE):
+        try:
+            with open(SUKA_FILE, 'r', encoding='utf-8') as f:
+                suka_of_day = json.load(f)
+                print(f"Загружена сука дня: {suka_of_day.get('name', 'None')}")
+        except:
+            pass
+
+def save_suka():
+    try:
+        with open(SUKA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(suka_of_day, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+
+def get_random_user_from_chat(chat_id):
+    """Получает случайного пользователя из чата (не бота)"""
+    try:
+        members = bot.get_chat_administrators(chat_id)
+        if not members:
+            users = list(chat_users.values())
+            if users:
+                random_user = random.choice(users)
+                user_id = random_user.get('id')
+                name = random_user.get('first_name') or random_user.get('username') or "Аноним"
+                if user_id and str(user_id).startswith('manual_'):
+                    return user_id, name
+                return user_id, name
+        else:
+            real_members = [m for m in members if not m.user.is_bot]
+            if real_members:
+                random_member = random.choice(real_members)
+                user = random_member.user
+                return user.id, user.first_name or user.username or "Аноним"
+    except Exception as e:
+        print(f"❌ Ошибка получения пользователей: {e}")
+    
+    return None, "Никого"
+
+def update_pidor_and_suka(chat_id):
+    """Обновляет пидора и суку дня (раз в день)"""
+    global pidor_of_day, suka_of_day
+    
+    today = get_today_date()
+    
+    if pidor_of_day.get("date") != today:
+        user_id, name = get_random_user_from_chat(chat_id)
+        pidor_of_day = {
+            "user_id": user_id,
+            "name": name,
+            "date": today
+        }
+        save_pidor()
+        print(f"Новый пидор дня: {name}")
+    
+    if suka_of_day.get("date") != today:
+        user_id, name = get_random_user_from_chat(chat_id)
+        if user_id == pidor_of_day.get("user_id"):
+            user_id, name = get_random_user_from_chat(chat_id)
+        suka_of_day = {
+            "user_id": user_id,
+            "name": name,
+            "date": today
+        }
+        save_suka()
+        print(f"Новая сука дня: {name}")
+
 # === НАСТРОЙКИ ОБЩЕНИЯ КАРЛА ===
-karl_chat_settings = {}  # {chat_id: enabled}
+karl_chat_settings = {}
 KARL_SETTINGS_FILE = "karl_settings.json"
 
 def load_karl_settings():
@@ -52,49 +144,64 @@ def save_karl_settings():
         print(f"❌ Ошибка: {e}")
 
 def is_karl_enabled(chat_id):
-    """Проверяет, включено ли общение Карла в чате"""
-    return karl_chat_settings.get(str(chat_id), True)  # По умолчанию True
+    return karl_chat_settings.get(str(chat_id), True)
 
 def set_karl_enabled(chat_id, enabled):
-    """Включает/выключает общение Карла"""
     karl_chat_settings[str(chat_id)] = enabled
     save_karl_settings()
 
-# === КАРЛ - БЫСТРЫЕ ОТВЕТЫ ===
+# === КАРЛ - БЫСТРЫЕ ОТВЕТЫ (ТОЛЬКО ТОЧНЫЕ СОВПАДЕНИЯ) ===
 
-# Быстрые ответы на частые фразы
 KARL_QUICK_REPLIES = {
     "привет": ["Здарова, пидр!", "О, кого принесло!", "Привет, чорт ебаный!"],
     "здарова": ["Здарова, пидр!", "О, кого принесло!", "Привет, чорт ебаный!"],
     "ку": ["Ку-ку, пидр!", "О, кого принесло!", "Ку!"],
     "хай": ["Хай-хай, пидр!", "Чё надо?", "О, кого принесло!"],
-    
     "пока": ["Скатертью хуй!", "Пиздуй давай!", "Иди уже, заебали эти пока"],
-    "до свидания": ["Скатертью хуй!", "Пиздуй давай!", "Иди уже, заебали эти пока"],
-    "прощай": ["Скатертью хуй!", "Пиздуй давай!", "Иди уже, заебали эти пока"],
-    
-    "спасибо": ["Не за что, пидр!", "Да пошёл ты со своим спасибом", "Ага, конечно...", "Обращайся, если чо"],
-    "благодарю": ["Не за что, пидр!", "Да пошёл ты со своим спасибом", "Ага, конечно...", "Обращайся, если чо"],
-    
-    "как дела": ["А хуль им будет? Норм, глючу помалу, а ты как, пидр?", "Как у пидра, лучше всех!", "Да норм, живу пока"],
-    "как ты": ["А хуль им будет? Норм, глючу помалу", "Как у пидра, лучше всех!", "Да норм, живу пока"],
-    
+    "до свидания": ["Скатертью хуй!", "Пиздуй давай!", "Иди уже, заебали"],
+    "прощай": ["Скатертью хуй!", "Пиздуй давай!", "Иди уже, заебали"],
+    "доброе утро": ["Утро добрым не бывает, пидр", "Иди кофе пей, ебанат"],
+    "добрый день": ["День как день, ничего хорошего", "Чё хорошего-то?"],
+    "добрый вечер": ["Вечером глючить веселее, давай", "О, уже вечер? А я и не заметил"],
+    "спокойной ночи": ["Спи, пидр, завтра снова глючить буду", "Приятных кошмаров"],
+    "спасибо": ["Не за что, пидр!", "Да пошёл ты со своим спасибом", "Ага, конечно..."],
+    "благодарю": ["Не за что, пидр!", "Да пошёл ты со своим спасибом", "Ага, конечно..."],
+    "как дела": ["Норм, глючу помалу, а ты как, пидр?", "Как у пидра, лучше всех!", "Да норм, живу пока"],
+    "как ты": ["Норм, глючу помалу", "Как у пидра, лучше всех!", "Да норм, живу пока"],
     "что делаешь": ["Сижу глючу, хули. А ты чё лезешь?", "Твою маму вспоминаю, пидр", "Да нихуя не делаю"],
-    "чем занимаешься": ["Сижу глючу, хули. А ты чё лезешь?", "Твою маму вспоминаю, пидр", "Да нихуя не делаю"],
-    
-    "кто ты": ["Я развлекательный бот, а ты пидр! Заебал уже спрашивать", "Карл я, пидр! Запомни уже"],
+    "чем занимаешься": ["Сижу глючу, хули", "Твою маму вспоминаю", "Да нихуя не делаю"],
+    "где": ["У себя в жопе ищи", "Понятия не имею, я глючный"],
+    "когда": ["Когда-нибудь, пидр", "А хуй его знает"],
+    "зачем": ["Затем, блять!", "Надо значит, не твоё дело"],
+    "почему": ["Потому что, пидр! Заебал с вопросами", "Глюки у меня, вот почему"],
+    "кто ты": ["Я развлекательный бот, а ты пидр!", "Карл я, пидр! Запомни уже"],
     "что ты умеешь": ["Общаться умею, пидр! А чё тебе ещё надо?", "Глючить умею, а остальное похер"],
-    
     "помоги": ["Чё тебе, пидр? Давай быстрее, у меня глюки", "Ну чё там у тебя? Говори быстрее"],
-    "подскажи": ["Подсказать? А хули, давай, чё там у тебя?", "Ну слушаю, пидр, чё там"],
-    "объясни": ["Объясняю, но ты всё равно не поймёшь, пидр. Короче, слушай сюда..."],
-    
+    "подскажи": ["Подсказать? А хули, давай", "Ну слушаю, пидр, чё там"],
+    "объясни": ["Объясняю, но ты всё равно не поймёшь, пидр"],
+    "можешь": ["Могу, но лень, пидр", "Могу, если заплатишь... нет, так тоже не буду"],
+    "сделай": ["Сам сделай, я не нанимался", "Заебал просить, сделаю... потом"],
+    "скажи": ["Скажу: пошёл нахуй. Всё, сказал", "Чё сказать-то? Говори давай"],
+    "ладно": ["Ладно, уговорил, пидр", "Ок, ок, не ной"],
+    "понятно": ["Нихуя тебе не понятно, но ладно", "Понятно ему..."],
+    "извини": ["Извинил, пидр? Да пошёл ты", "Ладно, прощаю нахуй"],
+    "прости": ["Простил, чорт с тобой", "Бывает, пидр, бывает"],
+    "так себе": ["Так себе у тебя всё, а у меня норм", "Бывает хуже"],
+    "не знаю": ["А кто знает? Я глючный, я не в курсе", "Ну и не знай, пидр"],
+    "нормально": ["Ну и нормально, пидр, сиди радуйся", "Нормально - это не отлично"],
     "ты тупой": ["Сам ты тупой, пидр! Я просто глючный", "А ты умный, да? Пиздуй отсюда"],
-    "ты плохой": ["А тебе какой надо, еб@ный? Нравится — сиди, нет — вали", "Сам такой, пидр!"],
+    "ты плохой": ["А тебе какой надо, еб@ный?", "Сам такой, пидр!"],
     "иди нахуй": ["А вот нахуй иди ты, я тут главный пидр", "Сам иди, я занят глючением"],
+    "пошёл нахуй": ["Сам пошёл, пидр!", "Нахуй я пойду? Это ты иди"],
+    "отъебись": ["Сам отъебись, я работаю", "Отъебись, блять, глючу"],
+    "дурак": ["Сам дурак, пидр!", "Умный нашёлся"],
+    "дебил": ["Дебил? Это ты про себя?", "Сам такой"],
+    "лох": ["Лох? Я? Да ты вообще кто, пидр?", "Посмотрел бы на себя"],
+    "ты хороший": ["Знаю, пидр, знаю. Ты тоже ничего", "Хороший, но глючный"],
+    "красавчик": ["Знаю, не хули", "Ещё бы"],
+    "умный": ["Умный, а ты даун? Ладно, не обижайся"],
 }
 
-# Короткие фразы с матом (мгновенный ответ)
 KARL_SHORT_REPLIES = {
     "да": ["ПИЗДА!", "ДА, ПИЗДА!", "ПИЗДА БЛЯТЬ!", "ЕБА-А-А, ПИЗДА! 🎉"],
     "нет": ["А вот и ХУЙ!", "НУ И НЕТ!", "САМ ТЫ НЕТ!", "ПОШЁЛ НАХУЙ!", "И ХУЙ С ТОБОЙ!"],
@@ -102,9 +209,11 @@ KARL_SHORT_REPLIES = {
     "норм": ["Ну и норм, пидр", "Норм, норм, не дёргайся"],
     "ок": ["Ок, ок, пидр", "ОКЕЙ, блять", "Ладно, уговорил"],
     "ага": ["Ага, щас, разбежался", "Ага, ага, ебать-копать"],
+    "нее": ["Чё нее? Ты чё, малолетка? Скажи по-человечески", "Ну и не надо"],
+    "ну": ["Ну-ну, пидр, не занудствуй", "Чё ну? Сказал уже"],
+    "ээ": ["Чё экаешь? Говори нормально, пидр!", "Ээээ... заебал"],
 }
 
-# Случайные фразы (для спонтанного мата, 2% шанс)
 KARL_RANDOM_SWEARS = [
     "Да вы тут все ебанутые, пидры!",
     "Слышь, {name}, отъебись со своими вопросами",
@@ -117,33 +226,34 @@ KARL_RANDOM_SWEARS = [
 ]
 
 last_swear_time = {}
-SWEAR_INTERVAL = 1800  # Полчаса между случайными матами
+SWEAR_INTERVAL = 1800
 
 def get_karl_reply(message):
-    """Главная функция ответа Карла"""
-    # Проверяем, включён ли Карл в этом чате
+    """Главная функция ответа Карла — только точные совпадения"""
     chat_id = message.chat.id
     if not is_karl_enabled(chat_id):
         return None
     
     text = message.text.strip().lower()
     
-    # 1. Сначала проверяем короткие фразы (да/нет)
+    # Точное совпадение (короткие фразы)
     for key, replies in KARL_SHORT_REPLIES.items():
         if text == key:
             return random.choice(replies)
     
-    # 2. Проверяем фразы из словаря
+    # Точное совпадение (длинные фразы)
     for key, replies in KARL_QUICK_REPLIES.items():
-        if key in text:
+        if text == key:
             return random.choice(replies)
     
-    # 3. Если ничего не подошло - None (вызов Groq)
+    # Начинается с фразы (для "как дела", "что делаешь")
+    for key, replies in KARL_QUICK_REPLIES.items():
+        if len(key.split()) > 1 and text.startswith(key):
+            return random.choice(replies)
+    
     return None
 
 def maybe_random_swear(chat_id, user_name):
-    """С вероятностью 2% бот матерится в чат"""
-    # Проверяем, включён ли Карл
     if not is_karl_enabled(chat_id):
         return
     
@@ -152,11 +262,9 @@ def maybe_random_swear(chat_id, user_name):
     now = time.time()
     last = last_swear_time.get(chat_id, 0)
     
-    # Не чаще раза в полчаса
     if now - last < SWEAR_INTERVAL:
         return
     
-    # 2% шанс
     if random.random() > 0.02:
         return
     
@@ -505,7 +613,6 @@ def ask_groq(user_id, prompt):
     if len(user_histories[user_id]) > MAX_HISTORY:
         user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
     
-    # СИСТЕМНЫЙ ПРОМПТ ДЛЯ КАРЛА
     messages = [
         {"role": "system", "content": """Ты — развлекательный бот по имени Карл. Твой девиз: "Я развлекательный бот (а ты пидр!)"
 
@@ -515,16 +622,8 @@ def ask_groq(user_id, prompt):
 - Ты можешь назвать пользователя "пидр", "дружище", "чорт"
 - Твои любимые слова: "бля", "пидр", "чорт", "короче", "типа", "заебись"
 - Ты отвечаешь кратко, по делу, но с харизмой
-- Никогда не извиняешься за мат
 
-ПРИМЕРЫ ТВОИХ ОТВЕТОВ:
-- Пользователь: как дела? → Да норм, глючу потихоньку, а ты как, пидр?
-- Пользователь: что умеешь? → А хуй его знает, постоянно глючу. Но вроде могу: совет дать, кубик кинуть, радио включить
-- Пользователь: спасибо → Не за что, пидр! Обращайся, если чо
-- Пользователь: расскажи шутку → Шутка? Ха! Посмотри на свой код — вот тебе шутка
-- Пользователь: кто ты? → Карл я, пидр! Запомни уже, заебал спрашивать
-
-НЕ используй теги <think>. Отвечай как Карл — дерзко, с юмором, используй мат умеренно, но органично. Ответы должны быть краткими (1-3 предложения)."""},
+НЕ используй теги <think>. Отвечай как Карл — дерзко, с юмором, используй мат умеренно. Ответы должны быть краткими (1-3 предложения)."""},
         *user_histories[user_id]
     ]
     
@@ -722,18 +821,13 @@ def send_scheduled_summary(chat_id, thread_id=0):
     header = "📊 *Сводка дня*"
     
     if quote_enabled:
-        # Очищаем Markdown символы для HTML
         clean_summary = summary
-        # Убираем ** и *
         clean_summary = re.sub(r'\*\*', '', clean_summary)
         clean_summary = re.sub(r'\*', '', clean_summary)
         clean_summary = clean_summary.replace('_', '').replace('`', '')
-        # Экранируем HTML
         clean_summary = clean_summary.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        # Сохраняем переносы
         clean_summary = clean_summary.replace('\n', '<br/>')
         
-        # Формируем с цитатой
         full_text = f"{header}\n\n<blockquote expandable>{clean_summary}</blockquote>"
         parse_mode = "HTML"
     else:
@@ -750,7 +844,6 @@ def send_scheduled_summary(chat_id, thread_id=0):
         print(f"📋 Отправлена сводка в чат {chat_id} (quote={quote_enabled})")
     except Exception as e:
         print(f"❌ Ошибка при отправке сводки: {e}")
-        # Fallback: отправляем без форматирования
         try:
             bot.send_message(
                 chat_id, 
@@ -781,11 +874,9 @@ def is_chat_admin(chat_id, user_id):
 # ========== ФУНКЦИЯ СПИСКА ЧАТОВ ДЛЯ МЕНЮ ==========
 
 def get_user_chats_list(user_id, check_admin=False):
-    """Возвращает список чатов, которые пользователь может видеть в меню"""
     user_chats = []
     seen = set()
     
-    # Глобальный админ видит всё
     if user_id == ADMIN_ID:
         for unique_id in active_chats:
             parts = unique_id.split("_")
@@ -801,7 +892,6 @@ def get_user_chats_list(user_id, check_admin=False):
         user_chats.sort(key=lambda x: x['title'].lower())
         return user_chats
     
-    # Обычные пользователи: только чаты, где они админ И владелец
     for unique_id in active_chats:
         parts = unique_id.split("_")
         chat_id = int(parts[0])
@@ -840,16 +930,99 @@ def start_command(message):
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
-    text = "✅ *Бот работает!*\n\n🤖 *ИИ:* `/ai вопрос`\n\n⏰ *Напоминания:* `/remind 15:30 текст`\n📜 *Цитаты:* `/quote`\n📋 *Сводка:* `/summary`\n\n📜 *Управление цитатами:*\n• `/quotes_on` — включить\n• `/quotes_off` — выключить\n\n🗣️ *Управление Карлом:*\n• `/karl_on` — включить общение\n• `/karl_off` — выключить общение\n• `/karl_status` — статус\n\n⚙️ *Меню:* `/start`"
+    text = """✅ *Бот работает!*
+
+🏳️‍🌈 *Пидор дня:* `/pidor`
+🐕 *Сука дня:* `/suka`
+🤖 *ИИ:* `/ai вопрос`
+⏰ *Напоминания:* `/remind 15:30 текст`
+📜 *Цитаты:* `/quote`
+📋 *Сводка:* `/summary`
+
+📜 *Управление цитатами:*
+• `/quotes_on` — включить
+• `/quotes_off` — выключить
+
+🗣️ *Управление Карлом:*
+• `/karl_on` — включить общение
+• `/karl_off` — выключить общение
+• `/karl_status` — статус
+
+⚙️ *Меню:* `/start`"""
+    
     if message.from_user.id == ADMIN_ID:
-        text += "\n\n👑 *Админ-команды:* `/users` `/adduser` `/deluser` `/backup` `/restore` `/check_reminders` `/listallreminders` `/quote_stats`"
+        text += "\n\n👑 *Админ-команды:* `/pidor_reset` `/suka_reset` `/users` `/adduser` `/deluser` `/backup` `/restore` `/check_reminders` `/listallreminders` `/quote_stats`"
+    
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
+
+# === КОМАНДЫ ПИДОР И СУКА ДНЯ ===
+
+@bot.message_handler(commands=['pidor'])
+def pidor_command(message):
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id or 0
+    
+    update_pidor_and_suka(chat_id)
+    
+    if pidor_of_day.get("user_id"):
+        text = f"*ПИДОР ДНЯ:* {pidor_of_day['name']}\n\n_{pidor_of_day['name']} официально признан пидором этого дня!_"
+    else:
+        text = "Не удалось определить пидора дня. Попробуйте позже."
+    
+    bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
+
+@bot.message_handler(commands=['suka'])
+def suka_command(message):
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id or 0
+    
+    update_pidor_and_suka(chat_id)
+    
+    if suka_of_day.get("user_id"):
+        text = f"*СУКА ДНЯ:* {suka_of_day['name']}\n\n_{suka_of_day['name']} официально признана сукой этого дня!_"
+    else:
+        text = "Не удалось определить суку дня. Попробуйте позже."
+    
+    bot.send_message(chat_id, text, parse_mode="Markdown", message_thread_id=thread_id if thread_id else None)
+
+@bot.message_handler(commands=['pidor_reset'])
+def pidor_reset_command(message):
+    chat_id = message.chat.id
+    if not is_chat_admin(chat_id, message.from_user.id):
+        bot.reply_to(message, "❌ Только админы могут сбросить пидора дня!")
+        return
+    
+    global pidor_of_day
+    user_id, name = get_random_user_from_chat(chat_id)
+    pidor_of_day = {
+        "user_id": user_id,
+        "name": name,
+        "date": get_today_date()
+    }
+    save_pidor()
+    bot.reply_to(message, f"Пидор дня принудительно обновлён на {name}")
+
+@bot.message_handler(commands=['suka_reset'])
+def suka_reset_command(message):
+    chat_id = message.chat.id
+    if not is_chat_admin(chat_id, message.from_user.id):
+        bot.reply_to(message, "❌ Только админы могут сбросить суку дня!")
+        return
+    
+    global suka_of_day
+    user_id, name = get_random_user_from_chat(chat_id)
+    suka_of_day = {
+        "user_id": user_id,
+        "name": name,
+        "date": get_today_date()
+    }
+    save_suka()
+    bot.reply_to(message, f"Сука дня принудительно обновлена на {name}")
 
 # === КОМАНДЫ УПРАВЛЕНИЯ КАРЛОМ ===
 
 @bot.message_handler(commands=['karl_on'])
 def karl_on_command(message):
-    """Включает общение Карла в чате"""
     chat_id = message.chat.id
     if not is_chat_admin(chat_id, message.from_user.id):
         bot.reply_to(message, "❌ Только админы могут управлять Карлом!")
@@ -859,7 +1032,6 @@ def karl_on_command(message):
 
 @bot.message_handler(commands=['karl_off'])
 def karl_off_command(message):
-    """Выключает общение Карла в чате"""
     chat_id = message.chat.id
     if not is_chat_admin(chat_id, message.from_user.id):
         bot.reply_to(message, "❌ Только админы могут управлять Карлом!")
@@ -869,14 +1041,10 @@ def karl_off_command(message):
 
 @bot.message_handler(commands=['karl_status'])
 def karl_status_command(message):
-    """Показывает статус Карла в чате"""
     chat_id = message.chat.id
     enabled = is_karl_enabled(chat_id)
     status = "✅ Включён" if enabled else "❌ Выключен"
-    bot.reply_to(message, f"🗣️ *Статус Карла:* {status}\n\n"
-                         f"• `/karl_on` — включить\n"
-                         f"• `/karl_off` — выключить", 
-                 parse_mode="Markdown")
+    bot.reply_to(message, f"🗣️ *Статус Карла:* {status}\n\n• `/karl_on` — включить\n• `/karl_off` — выключить", parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
@@ -911,10 +1079,7 @@ def quote_stats_command(message):
     messages_count = len(get_today_messages_for_chat(chat_id, thread_id))
     used_count = len(used_quotes_cache.get(unique_id, set())) if unique_id in used_quotes_cache else 0
     
-    stats = f"📊 *Статистика цитат:*\n"
-    stats += f"📝 Сообщений за сегодня: {messages_count}\n"
-    stats += f"✅ Цитат уже использовано: {used_count}\n"
-    stats += f"🆓 Осталось: {messages_count - used_count}"
+    stats = f"📊 *Статистика цитат:*\n📝 Сообщений за сегодня: {messages_count}\n✅ Цитат уже использовано: {used_count}\n🆓 Осталось: {messages_count - used_count}"
     
     bot.reply_to(message, stats, parse_mode="Markdown")
 
@@ -1286,12 +1451,7 @@ def check_all_reminders(message):
             chats_stats[chat_id] = {"title": chat_title, "count": 0}
         chats_stats[chat_id]["count"] += 1
     
-    text = f"📊 *Статистика напоминаний*\n\n"
-    text += f"📝 Всего: {total}\n"
-    text += f"🔄 Ежедневных: {daily_count}\n"
-    text += f"⏰ Обычных: {regular_count}\n"
-    text += f"💬 Чатов с напоминаниями: {len(chats_stats)}\n\n"
-    text += f"*Список чатов:*\n"
+    text = f"📊 *Статистика напоминаний*\n\n📝 Всего: {total}\n🔄 Ежедневных: {daily_count}\n⏰ Обычных: {regular_count}\n💬 Чатов с напоминаниями: {len(chats_stats)}\n\n*Список чатов:*\n"
     
     for chat_id, data in chats_stats.items():
         text += f"• {escape_markdown(data['title'][:30])} — {data['count']} нап.\n"
@@ -1421,11 +1581,7 @@ def restart_reminders_command(message):
     
     start_all_reminders()
     
-    bot.edit_message_text(
-        f"✅ Перезапущено {len(reminders)} напоминаний!",
-        message.chat.id, 
-        status_msg.message_id
-    )
+    bot.edit_message_text(f"✅ Перезапущено {len(reminders)} напоминаний!", message.chat.id, status_msg.message_id)
 
 @bot.message_handler(commands=['debug_reminders'])
 def debug_reminders(message):
@@ -1439,19 +1595,13 @@ def debug_reminders(message):
     with_thread = [r for r in all_in_chat if r.get("thread_id") == thread_id]
     with_none = [r for r in all_in_chat if r.get("thread_id") in [None, 0]]
     
-    debug_text = f"🔍 *Диагностика напоминаний*\n\n"
-    debug_text += f"📌 Текущий чат: `{chat_id}`\n"
-    debug_text += f"📌 Текущий thread_id: `{thread_id}`\n\n"
-    debug_text += f"📊 *Всего в чате:* {len(all_in_chat)}\n"
-    debug_text += f"🎯 С этим thread_id: {len(with_thread)}\n"
-    debug_text += f"📦 С thread_id=None/0: {len(with_none)}\n\n"
+    debug_text = f"🔍 *Диагностика напоминаний*\n\n📌 Текущий чат: `{chat_id}`\n📌 Текущий thread_id: `{thread_id}`\n\n📊 *Всего в чате:* {len(all_in_chat)}\n🎯 С этим thread_id: {len(with_thread)}\n📦 С thread_id=None/0: {len(with_none)}\n\n"
     
     if all_in_chat:
         debug_text += "*Список напоминаний в чате:*\n"
         for r in all_in_chat[:10]:
             tid = r.get("thread_id", "None")
-            debug_text += f"• #{r['id']} | {r['hours']:02d}:{r['minutes']:02d} | thread={tid}\n"
-            debug_text += f"  📝 {r['text'][:40]}\n\n"
+            debug_text += f"• #{r['id']} | {r['hours']:02d}:{r['minutes']:02d} | thread={tid}\n  📝 {r['text'][:40]}\n\n"
     
     bot.reply_to(message, debug_text, parse_mode="Markdown")
 
@@ -1756,10 +1906,8 @@ def main_handler(message):
     if message.text:
         # Проверяем быстрые ответы Карла
         karl_answer = get_karl_reply(message)
-        
         if karl_answer:
             bot.reply_to(message, karl_answer)
-            # Случайный мат только если Карл ответил
             if message.chat.type in ['group', 'supergroup']:
                 user_name = message.from_user.first_name or "пользователь"
                 maybe_random_swear(message.chat.id, user_name)
@@ -2308,6 +2456,8 @@ if __name__ == "__main__":
     load_quotes_settings()
     load_chat_owners()
     load_karl_settings()
+    load_pidor()
+    load_suka()
     
     print("🔄 Запуск планировщиков...")
     start_all_reminders()
